@@ -1,0 +1,5 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+ip_landscape_store.json
+sample_patents.csv

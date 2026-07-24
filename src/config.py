@@ -1,0 +1,218 @@
+# -*- coding: utf-8 -*-
+"""
+config.py — 전역 상수, 허용 LLM 목록, 임계값·가중치 기본값, 상한(LIMITS).
+
+모든 설정값은 상수로 정의하며, 런타임에는 storage.load_settings()가 반환하는
+사용자 설정(dict)이 이 기본값 위에 overlay 된다. UI 문자열(안내문·면책문구 등)은
+MESSAGES 에 모아 계산 로직과 분리한다.
+"""
+
+APP_NAME = "IP Landscape Advanced Insight"
+APP_VERSION = "3.0.0"  # 1단계=1.x, 2단계=2.x, 3단계=3.x
+
+# =========================
+# 사용 허용할 LLM 목록 (고정)
+# =========================
+ALLOWED_LLM_CANDIDATES = [
+    ("gpt-5.3-chat | dw-aoai-chat-eastus2-cognitiv", "azureopenai:dw-aoai-chat-eastus2-cognitiv:gpt-5.3-chat"),
+    ("gpt-5.4-nano | dw-aoai-chat-eastus2-cognitiv", "azureopenai:dw-aoai-chat-eastus2-cognitiv:gpt-5.4-nano"),
+    ("gpt-5.4-mini | dw-aoai-chat-eastus2-cognitiv", "azureopenai:dw-aoai-chat-eastus2-cognitiv:gpt-5.4-mini"),
+    ("gpt-5.4 | dw-aoai-chat-eastus2-cognitiv", "azureopenai:dw-aoai-chat-eastus2-cognitiv:gpt-5.4"),
+]
+DEFAULT_LLM_ID = "azureopenai:dw-aoai-chat-eastus2-cognitiv:gpt-5.4-nano"
+ALLOWED_LLM_IDS = frozenset(llm_id for _, llm_id in ALLOWED_LLM_CANDIDATES)
+
+# =========================
+# 규모 상한 (Settings 에서 변경 가능 — settings["limits"] 로 overlay)
+# =========================
+LIMITS = {
+    "network_max_nodes": 80,          # 조합 네트워크 노드 상한 (Top-N by weight)
+    "network_max_edges": 250,         # 조합 네트워크 엣지 상한
+    "sankey_max_links": 120,          # Sankey 링크 상한
+    "bubble_max_points": 200,         # 버블차트 포인트 상한
+    "heatmap_max_cells": 2500,        # Plotly 히트맵 셀 상한 (초과 시 ECharts 전환)
+    "echarts_threshold_cells": 100000,  # ECharts 필요 기준 (10만 셀)
+    "matrix_max_rows": 40,            # 문제-해결수단 매트릭스 행 상한
+    "matrix_max_cols": 40,
+    "patents_page_size": 25,          # drill-down 페이지 크기
+    "patents_max_page_size": 200,
+    "export_max_rows": 20000,         # Excel export 행 상한
+    "top_n_default": 10,
+    "max_companies_compare": 12,      # DNA 레이더 최대 기업 수 (초과 시 히트맵)
+    "trajectory_max_companies": 10,
+    "leadlag_max_companies": 20,
+    "claim_density_max_points": 5000, # 지형도 산점 상한 (초과 시 샘플링)
+    "inventor_network_max_edges": 200,
+    "insight_llm_max_chars": 4000,    # LLM 에 전달하는 요약통계 문자열 상한
+}
+
+# =========================
+# 분석 임계값 기본값 (Settings 에서 변경 가능 — settings["thresholds"])
+# =========================
+THRESHOLDS = {
+    "min_combo_patents": 3,        # 조합 최소 표본 (미만 조합 제외)
+    "min_class_patents": 3,        # 기술분류 최소 표본
+    "recent_years": 3,             # "최근" 정의 (년)
+    "fuzzy_match_cutoff": 0.75,    # 컬럼 자동매핑 유사도 임계값
+    "winsor_pct": 0.02,            # Winsorization 양측 백분위
+    "min_years_leadlag": 5,        # 선도-추종 최소 관측연도
+    "min_patents_leadlag": 10,     # 선도-추종 최소 특허 수
+    "max_lag_years": 3,            # 선도-추종 최대 시차
+    "leadlag_min_corr": 0.5,       # 선도-추종 최소 상관
+    "inventor_match_confidence": 0.6,  # 발명자 동일인 판정 신뢰도 임계값
+    "low_confidence_class": 0.5,   # 저신뢰 분류 임계값 (분류 신뢰도 컬럼)
+    "emerging_min_growth": 0.3,    # Emerging 단계 최소 성장률
+    "reemerging_decline_years": 3, # Re-emerging: 과거 감소·정체 기간
+    "insight_small_sample": 10,    # 표본 부족 경고 기준 (건)
+    "sim_topk_per_doc": 20,        # 청구항 유사도 상위 K 이웃만 유지
+}
+
+# =========================
+# 점수 가중치 기본값 (Settings 슬라이더 — settings["weights"])
+# =========================
+WEIGHTS = {
+    # Emerging Combination Score = 가중 기하평균(성장률, Lift, 신규출원인, 다양성)
+    "emerging": {"growth": 1.0, "lift": 1.0, "new_entrants": 1.0, "diversity": 0.5},
+    # Opportunity Score = 매력도(기회) x 진입가능성(1/장벽)
+    "opportunity": {
+        "growth": 1.0, "new_entrants": 1.0, "combo_growth": 0.7,
+        "keyword_growth": 0.5, "problem_recurrence": 0.5, "adjacency": 0.7,
+        "barrier": 1.0,  # 분모(권리장벽)
+    },
+    # Influence Score
+    "influence": {
+        "direct_citations": 1.0, "indirect_citations": 0.7, "cross_class": 0.8,
+        "cross_company": 0.8, "family_expansion": 0.6, "legal_strength": 0.6,
+    },
+    # 기업 유형 분류 기준값 (표준화 점수 기준, 사용자가 조정 가능)
+    "dna_type_cutoff": 0.6,
+}
+
+# =========================
+# 법적상태 정규화 카테고리 (원본값 보존, normalized 컬럼 병행)
+# =========================
+LEGAL_STATUS_CATEGORIES = [
+    "Pending", "Granted-Active", "Granted-Expired", "Abandoned",
+    "Withdrawn", "Rejected", "Lapsed", "Unknown",
+]
+ACTIVE_LEGAL_STATUSES = frozenset(["Granted-Active", "Pending"])
+GRANTED_LEGAL_STATUSES = frozenset(["Granted-Active", "Granted-Expired"])
+
+# 법적상태 원본 → 정규화 매핑 (소문자 부분일치, 순서 = 우선순위)
+LEGAL_STATUS_PATTERNS = [
+    ("존속기간만료", "Granted-Expired"), ("granted-expired", "Granted-Expired"),
+    ("expired", "Granted-Expired"), ("만료", "Granted-Expired"),
+    ("granted-active", "Granted-Active"), ("등록유지", "Granted-Active"),
+    ("in force", "Granted-Active"), ("active", "Granted-Active"),
+    ("유효", "Granted-Active"), ("존속", "Granted-Active"),
+    ("소멸", "Lapsed"), ("lapsed", "Lapsed"), ("연차료불납", "Lapsed"),
+    ("non-payment", "Lapsed"), ("포기", "Abandoned"), ("abandon", "Abandoned"),
+    ("취하", "Withdrawn"), ("withdraw", "Withdrawn"),
+    ("거절", "Rejected"), ("reject", "Rejected"), ("refus", "Rejected"),
+    ("무효", "Rejected"),
+    ("등록", "Granted-Active"), ("grant", "Granted-Active"), ("registered", "Granted-Active"),
+    ("출원계속", "Pending"), ("심사중", "Pending"), ("pending", "Pending"),
+    ("공개", "Pending"), ("published", "Pending"), ("examination", "Pending"),
+    ("출원", "Pending"), ("filed", "Pending"),
+]
+
+# 분석 단위
+ANALYSIS_UNITS = ["family", "publication", "application", "registration"]
+DEFAULT_ANALYSIS_UNIT = "family"
+
+# 다중 기술분류 집계 방식
+MULTICLASS_MODES = ["duplicate", "fractional", "primary", "level_separate"]
+DEFAULT_MULTICLASS_MODE = "duplicate"
+
+# 생애주기 단계
+LIFECYCLE_PHASES = ["Emerging", "Growing", "Competitive", "Mature", "Declining", "Re-emerging"]
+
+# 기업 유형 (4.5 규칙 기반 분류)
+COMPANY_TYPES = ["선도 개척형", "권리 장벽형", "집중 방어형", "융합 확장형", "추격 확장형", "양적 출원형"]
+
+# =========================
+# UI 문자열 (계산 로직과 분리)
+# =========================
+MESSAGES = {
+    "disclaimer": ("본 분석은 특허 데이터에 기반한 탐색적 스크리닝 결과이며, "
+                   "법률적 FTO 판단, 특허 유효성 판단 또는 인과관계를 의미하지 않습니다."),
+    "small_sample": "현재 표본 수가 적어 추세를 확정하기 어렵습니다.",
+    "missing_columns": "필수 컬럼이 없습니다. 컬럼 매핑 화면에서 다음 컬럼을 매핑하세요: {cols}",
+    "no_data": "필터 조건에 해당하는 데이터가 없어 계산할 수 없습니다.",
+    "not_implemented": "이 분석은 아직 구현되지 않았습니다 (다음 단계 예정).",
+    "no_dataset": "Dataset 이 선택되지 않았습니다. Settings 에서 Dataset 을 선택하세요.",
+    "llm_fallback": "LLM 응답에 실패하여 규칙 기반 인사이트로 대체되었습니다.",
+    "estimated_move": "추정 이동",
+}
+
+# 오류 코드
+ERR_BAD_REQUEST = 400
+ERR_NOT_FOUND = 404
+ERR_NOT_IMPLEMENTED = 501
+ERR_INTERNAL = 500
+
+# 데모 모드 기본값 (사용자가 Settings 에서 명시적으로 켠 경우에만 샘플 데이터 사용)
+DEFAULT_SETTINGS = {
+    "dataset": None,
+    "demo_mode": False,
+    "analysis_unit": DEFAULT_ANALYSIS_UNIT,
+    "multiclass_mode": DEFAULT_MULTICLASS_MODE,
+    "llm_id": DEFAULT_LLM_ID,
+    "llm_insights_enabled": False,
+    "embedding_adapter": {"type": "none"},  # none | dataset | rest
+    "limits": {}, "thresholds": {}, "weights": {},
+    "transition_mode": "cooccurrence",  # 4.1 전이 정의 기본값
+    "trajectory_weighting": "share",    # share | tfidf
+    "dna_type_cutoffs": {},
+    "own_company_names": [],            # 자사 표준 출원인명 목록
+    "own_capability_keywords": [],      # 사용자가 입력한 보유 기술목록
+}
+
+
+def merged_settings(user_settings):
+    """DEFAULT_SETTINGS 위에 사용자 설정을 overlay 한 dict 반환 (dict 값은 개별 병합)."""
+    out = {}
+    for k, v in DEFAULT_SETTINGS.items():
+        out[k] = dict(v) if isinstance(v, dict) else (list(v) if isinstance(v, list) else v)
+    for k, v in (user_settings or {}).items():
+        if isinstance(v, dict) and isinstance(out.get(k), dict):
+            out[k].update(v)
+        else:
+            out[k] = v
+    return out
+
+
+def get_limit(settings, key):
+    """상한값 조회: 사용자 설정 → 기본 LIMITS."""
+    try:
+        v = (settings or {}).get("limits", {}).get(key)
+        if v is not None:
+            return int(v)
+    except Exception:
+        pass
+    return LIMITS[key]
+
+
+def get_threshold(settings, key):
+    """임계값 조회: 사용자 설정 → 기본 THRESHOLDS."""
+    try:
+        v = (settings or {}).get("thresholds", {}).get(key)
+        if v is not None:
+            return float(v)
+    except Exception:
+        pass
+    return THRESHOLDS[key]
+
+
+def get_weights(settings, group):
+    """가중치 그룹 조회: 기본 WEIGHTS[group] 위에 사용자 설정 overlay."""
+    base = dict(WEIGHTS.get(group, {}))
+    user = (settings or {}).get("weights", {}).get(group, {})
+    if isinstance(user, dict):
+        for k, v in user.items():
+            if k in base:
+                try:
+                    base[k] = float(v)
+                except (TypeError, ValueError):
+                    pass
+    return base

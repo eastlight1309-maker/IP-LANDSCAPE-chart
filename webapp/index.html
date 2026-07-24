@@ -1,0 +1,86 @@
+<!-- ======================================================================
+IP Landscape Advanced Insight Webapp — Dataiku Standard Webapp "HTML" 탭.
+시각화 라이브러리: Plotly.js / Cytoscape.js / Apache ECharts (CDN).
+Dataiku 인스턴스가 외부 CDN 접근 불가라면 관리자 설정의 JS 라이브러리로 동일
+버전을 추가하고 아래 <script> 3줄을 제거하세요.
+====================================================================== -->
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js" charset="utf-8"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.30.2/cytoscape.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js"></script>
+
+<div id="ipls-app">
+  <!-- 좌측 메뉴 -->
+  <nav id="ipls-sidebar">
+    <div class="brand">
+      <div class="brand-title">IP Landscape</div>
+      <div class="brand-sub">Advanced Insight</div>
+    </div>
+    <ul id="ipls-menu">
+      <li data-view="overview" class="active">📊 Executive Overview</li>
+      <li data-view="evolution">🧬 Technology Evolution</li>
+      <li data-view="competitor">🏢 Competitor Intelligence</li>
+      <li data-view="whitespace">🎯 White Space &amp; R&amp;D</li>
+      <li data-view="power">⚖️ Patent Power</li>
+      <li data-view="quality">🧪 Data Quality</li>
+      <li data-view="settings">⚙️ Settings &amp; Admin</li>
+    </ul>
+    <div id="ipls-datainfo">
+      <div id="ipls-dataset-name">Dataset: -</div>
+      <div id="ipls-generated-at"></div>
+    </div>
+  </nav>
+
+  <!-- 본문 -->
+  <main id="ipls-main">
+    <!-- 상단 공통 필터 바 -->
+    <header id="ipls-topbar">
+      <div id="ipls-filterbar">
+        <div class="filter-item">
+          <label>기간</label>
+          <input type="number" id="f-year-from" class="year-input" placeholder="from">
+          <span>–</span>
+          <input type="number" id="f-year-to" class="year-input" placeholder="to">
+        </div>
+        <div class="filter-item"><label>출원인</label><select id="f-applicants" multiple></select></div>
+        <div class="filter-item"><label>대분류</label><select id="f-tech-l1" multiple></select></div>
+        <div class="filter-item"><label>중분류</label><select id="f-tech-l2" multiple></select></div>
+        <div class="filter-item"><label>소분류</label><select id="f-tech-l3" multiple></select></div>
+        <div class="filter-item"><label>국가</label><select id="f-countries" multiple></select></div>
+        <div class="filter-item"><label>법적상태</label><select id="f-legal" multiple></select></div>
+        <div class="filter-item checkbox">
+          <label><input type="checkbox" id="f-active-only"> 유효특허만</label>
+        </div>
+        <button id="btn-apply-filters" class="btn primary">적용</button>
+        <button id="btn-reset-filters" class="btn">초기화</button>
+        <button id="btn-save-project" class="btn" title="현재 필터·설정을 프로젝트로 저장">저장</button>
+        <select id="project-list" title="저장된 프로젝트 불러오기"><option value="">프로젝트…</option></select>
+      </div>
+    </header>
+
+    <!-- 뷰 컨테이너 -->
+    <section id="ipls-content"></section>
+  </main>
+
+  <!-- 우측/하단 근거 특허 Drill-down 모달 -->
+  <div id="ipls-modal" class="hidden">
+    <div class="modal-box">
+      <div class="modal-head">
+        <span id="modal-title">근거 특허</span>
+        <span class="modal-actions">
+          <button id="modal-export" class="btn small">Excel 다운로드</button>
+          <button id="modal-close" class="btn small">닫기</button>
+        </span>
+      </div>
+      <div id="modal-body"></div>
+      <div class="modal-foot">
+        <button id="modal-prev" class="btn small">◀ 이전</button>
+        <span id="modal-page-info"></span>
+        <button id="modal-next" class="btn small">다음 ▶</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Spinner / Toast -->
+  <div id="ipls-spinner" class="hidden"><div class="spin"></div><div id="spinner-text">계산 중…</div></div>
+  <div id="ipls-toasts"></div>
+</div>
