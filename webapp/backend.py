@@ -2055,10 +2055,26 @@ def load_raw_dataframe(dataset_name, columns=None):
         return df.copy()
     if _dataiku_mod is not None:
         ds = _dataiku_mod.Dataset(name)
-        kwargs = {"infer_with_pandas": True}
-        if columns:
-            kwargs["columns"] = [c for c in columns if c]
-        return ds.get_dataframe(**kwargs)
+        wanted = [c for c in (columns or []) if c]
+        if wanted:
+            # 스키마에 실존하는 컬럼만 요청 (매핑이 오래된 경우 방어)
+            try:
+                schema_cols = set(get_dataset_columns(name))
+                requested = [c for c in wanted if c in schema_cols] or wanted
+            except Exception:
+                requested = wanted
+            try:
+                return ds.get_dataframe(columns=requested, infer_with_pandas=True)
+            except Exception as e:
+                # 특수문자([·] 등) 포함 컬럼명은 Dataiku 컬럼 지정 스트림 로딩이
+                # 실패할 수 있음 → 전체 로딩 후 부분 선택으로 폴백
+                logger.warning("컬럼 지정 로딩 실패(%s) — 전체 로딩 폴백", e)
+        df = ds.get_dataframe(infer_with_pandas=True)
+        if wanted:
+            keep = [c for c in wanted if c in df.columns]
+            if keep:
+                df = df[keep]
+        return df
     path = os.path.join(_LOCAL_DATA_DIR, name + ".csv")
     df = pd.read_csv(path)
     if columns:

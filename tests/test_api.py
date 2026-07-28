@@ -203,3 +203,57 @@ def test_merged_backend_builds_and_serves(raw_df, tmp_path):
                        content_type="application/json").get_json()
             assert r["status"] in ("ok", "empty", "disabled"), \
                 "%s → %s" % (path, r)
+
+
+def test_dataiku_column_stream_fallback(monkeypatch):
+    """특수문자 컬럼명([KR] 등)으로 컬럼 지정 로딩이 실패하면 전체 로딩으로 폴백."""
+    import pandas as pd
+    from src import data_access
+
+    df = pd.DataFrame({
+        "공개번호": ["KR10-2020-0000001A", "KR10-2021-0000002A"],
+        "상태정보[KR]": ["등록", "공개"],
+        "발명의 명칭": ["패키지 구조", "본딩 방법"],
+        "출원일": ["2020-01-01", "2021-02-02"],
+        "기술 대분류": ["패키징", "본딩"],
+    })
+
+    calls = {"restricted": 0, "full": 0}
+
+    class FakeDataset:
+        def __init__(self, name):
+            assert name == "fake_ds"
+
+        def read_schema(self):
+            return [{"name": c} for c in df.columns]
+
+        def get_dataframe(self, columns=None, infer_with_pandas=True):
+            if columns is not None:
+                calls["restricted"] += 1
+                raise Exception(
+                    "Failed to read dataset stream data: Column 상태정보[KR "
+                    "does not exist in dataset")
+            calls["full"] += 1
+            return df.copy()
+
+    class FakeProject:
+        def list_datasets(self):
+            return [{"name": "fake_ds"}]
+
+    class FakeClient:
+        def get_default_project(self):
+            return FakeProject()
+
+    class FakeDataikuModule:
+        Dataset = FakeDataset
+
+        @staticmethod
+        def api_client():
+            return FakeClient()
+
+    monkeypatch.setattr(data_access, "_dataiku_mod", FakeDataikuModule)
+    out = data_access.load_raw_dataframe(
+        "fake_ds", columns=["공개번호", "상태정보[KR]", "출원일", "기술 대분류"])
+    assert calls["restricted"] == 1 and calls["full"] == 1  # 폴백 발생
+    assert "상태정보[KR]" in out.columns
+    assert "발명의 명칭" not in out.columns  # 부분 선택은 유지
