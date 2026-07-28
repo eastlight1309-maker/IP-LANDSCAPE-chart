@@ -55,11 +55,11 @@ from src.config import (APP_NAME, APP_VERSION, ALLOWED_LLM_CANDIDATES, MESSAGES,
                         merged_settings, get_limit)
 from src.cache import cached_analysis, get_run_log, clear_all_caches
 from src.column_mapping import (suggest_mapping, clean_mapping, analysis_availability,
-                                concept_catalog, CONCEPTS)
+                                concept_catalog, validate_mapping_values, CONCEPTS)
 from src.preprocessing import apply_filters, filter_options, auto_standardize_name, \
     split_names
 from src.data_access import (list_datasets, validate_dataset_name, get_dataset_columns,
-                             get_prepared, inject_dataset)
+                             get_prepared, inject_dataset, load_sample_dataframe)
 from src import storage
 from src.insights import llm_augment_insight, build_insight
 from src.viz_payload import jsonable, empty_result
@@ -157,6 +157,22 @@ def _resolve_dataset(body):
     return valid, settings
 
 
+def _validated_auto_mapping(dataset, actual_cols):
+    """자동 추천 매핑 + 샘플 값 검증 (형식 불일치 오매핑 제거). 실패 시 검증 생략."""
+    auto = suggest_mapping(actual_cols)
+    mapping = {k: v["column"] for k, v in auto.items()}
+    try:
+        sample = load_sample_dataframe(dataset, sorted(set(mapping.values())), limit=300)
+        if len(sample):
+            mapping, dropped = validate_mapping_values(sample, mapping)
+            for d in dropped:
+                logger.info("자동 매핑 제외: %s → %s (%s)",
+                            d["label"], d["column"], d["reason"])
+    except Exception as e:
+        logger.warning("자동 매핑 값 검증 실패(생략): %s", e)
+    return mapping
+
+
 def _prepared_for(body):
     """요청 → (필터 적용된 표준 프레임, settings, dataset, mapping). 공통 진입점."""
     dataset, settings = _resolve_dataset(body)
@@ -164,8 +180,7 @@ def _prepared_for(body):
     actual_cols = get_dataset_columns(dataset)
     mapping, warnings = clean_mapping(saved, actual_cols)
     if not mapping:
-        auto = suggest_mapping(actual_cols)
-        mapping = {k: v["column"] for k, v in auto.items()}
+        mapping = _validated_auto_mapping(dataset, actual_cols)
     rules = storage.load_applicant_rules()
     df, _ = get_prepared(dataset, mapping, rules, settings.get("analysis_unit", "family"))
     filters = (body or {}).get("filters") or {}
@@ -249,7 +264,7 @@ def register_routes(app):
                 cols = get_dataset_columns(dataset)
                 mapping, _w = clean_mapping(storage.load_mapping_for(dataset), cols)
                 if not mapping and cols:
-                    mapping = {k: v["column"] for k, v in suggest_mapping(cols).items()}
+                    mapping = _validated_auto_mapping(dataset, cols)
                 availability = analysis_availability(mapping)
             except Exception as e:
                 logger.warning("config availability failed: %s", e)
@@ -301,9 +316,29 @@ def register_routes(app):
             cols = get_dataset_columns(name)
             saved, warnings = clean_mapping(storage.load_mapping_for(name), cols)
             suggestion = suggest_mapping(cols)
-            effective = dict({k: v["column"] for k, v in suggestion.items()}, **saved)
+            # 샘플 값 검증: 형식 불일치 추천은 invalid 표시 + effective 에서 제외
+            samples = {}
+            try:
+                sample_df = load_sample_dataframe(name, None, limit=120)
+                for col in cols:
+                    if col in sample_df.columns:
+                        vals = sample_df[col].dropna().astype(str).str.strip()
+                        vals = vals[(vals != "") & (~vals.str.lower().isin(["nan", "none"]))]
+                        samples[col] = [v[:48] for v in vals.head(3).tolist()]
+                auto_map = {k: v["column"] for k, v in suggestion.items()}
+                _valid, dropped = validate_mapping_values(sample_df, auto_map)
+                for d in dropped:
+                    if d["concept"] in suggestion:
+                        suggestion[d["concept"]]["valid"] = False
+                        suggestion[d["concept"]]["reason"] = d["reason"]
+                        warnings.append("자동 추천 제외: %s → %s (%s)"
+                                        % (d["label"], d["column"], d["reason"]))
+            except Exception as e:
+                logger.warning("매핑 샘플 검증 실패(생략): %s", e)
+            effective = dict({k: v["column"] for k, v in suggestion.items()
+                              if v.get("valid", True)}, **saved)
             return {"status": "ok", "dataset": name, "columns": cols,
-                    "saved": saved, "suggested": suggestion,
+                    "saved": saved, "suggested": suggestion, "samples": samples,
                     "effective": effective, "warnings": warnings,
                     "availability": analysis_availability(effective),
                     "concepts": concept_catalog()}

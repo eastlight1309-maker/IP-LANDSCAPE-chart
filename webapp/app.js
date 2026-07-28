@@ -1566,13 +1566,24 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
       Api.get('/api/column-mapping?dataset=' + encodeURIComponent(dsName)).then(function (m) {
         c5.body.innerHTML = '';
         var current = Object.assign({}, m.effective);
+        function sampleText(col) {
+          var vals = (m.samples || {})[col] || [];
+          return vals.length ? vals.map(Ui.esc).join(' · ') : '';
+        }
         var rows = (m.concepts || []).map(function (con) {
           var tr = document.createElement('tr');
           var sug = m.suggested[con.key];
+          var sugHtml = '-';
+          if (sug) {
+            sugHtml = Ui.esc(sug.column) + ' <span class="badge">' + sug.method + ' ' +
+              sug.score + '</span>';
+            if (sug.valid === false) {
+              sugHtml += ' <span class="badge warn" title="' + Ui.esc(sug.reason || '') +
+                '">형식 불일치로 제외</span>';
+            }
+          }
           tr.innerHTML = '<td>' + Ui.esc(con.label) + '</td><td style="color:#93a5b4">' +
-            Ui.esc(con.dtype) + '</td><td>' +
-            (sug ? Ui.esc(sug.column) + ' <span class="badge">' + sug.method + ' ' +
-              sug.score + '</span>' : '-') + '</td>';
+            Ui.esc(con.dtype) + '</td><td>' + sugHtml + '</td>';
           var td = document.createElement('td');
           var sel = document.createElement('select');
           sel.appendChild(Ui.el('<option value="">(매핑 안 함)</option>'));
@@ -1582,15 +1593,21 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
             if (current[con.key] === col) o.selected = true;
             sel.appendChild(o);
           });
+          var tdSample = document.createElement('td');
+          tdSample.style.color = '#7a8fa0';
+          tdSample.style.fontSize = '11px';
+          tdSample.innerHTML = sampleText(current[con.key] || '');
           sel.addEventListener('change', function () {
             if (sel.value) current[con.key] = sel.value;
             else delete current[con.key];
+            tdSample.innerHTML = sampleText(sel.value);
           });
           td.appendChild(sel);
           tr.appendChild(td);
+          tr.appendChild(tdSample);
           return tr;
         });
-        var tbl = Ui.el(simpleTable(['개념 컬럼', '형식', '자동 추천', '매핑'], []));
+        var tbl = Ui.el(simpleTable(['개념 컬럼', '형식', '자동 추천', '매핑', '예시 값(선택 컬럼)'], []));
         rows.forEach(function (tr) { tbl.querySelector('tbody').appendChild(tr); });
         var wrap = Ui.el('<div style="max-height:420px;overflow:auto"></div>');
         wrap.appendChild(tbl);

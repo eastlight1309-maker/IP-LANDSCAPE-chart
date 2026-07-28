@@ -40,7 +40,7 @@ import pandas as pd
 from src.config import get_threshold, get_limit, get_weights
 from src.metrics import robust_growth, normalize_series, weighted_geometric_mean, \
     cosine_sim_vec, safe_div
-from src.analyses.common import tech_year_matrix, combo_counts
+from src.analyses.common import tech_year_matrix, combo_counts, diagnose_year_tech
 from src.insights import build_insight, fmt_num, fmt_pct, period_label, check_small_sample
 from src.viz_payload import ok_result, empty_result
 
@@ -129,7 +129,7 @@ def compute_opportunity(df, settings):
     mode = settings.get("multiclass_mode", "duplicate")
     mat = tech_year_matrix(df, multiclass_mode=mode)
     if mat.empty:
-        return empty_result("연도·기술분류 데이터가 없어 계산할 수 없습니다.")
+        return empty_result(diagnose_year_tech(df))
     recent = int(get_threshold(settings, "recent_years"))
     min_n = get_threshold(settings, "min_class_patents")
     y_max = int(mat.columns.max())

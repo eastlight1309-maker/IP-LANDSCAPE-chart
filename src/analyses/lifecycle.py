@@ -41,7 +41,7 @@ import pandas as pd
 
 from src.config import get_threshold, get_limit, LIFECYCLE_PHASES
 from src.metrics import robust_growth, hhi, linreg_slope, normalize_series
-from src.analyses.common import tech_year_matrix, combo_counts
+from src.analyses.common import tech_year_matrix, combo_counts, diagnose_year_tech
 from src.insights import build_insight, fmt_num, fmt_pct, period_label, check_small_sample
 from src.viz_payload import ok_result, empty_result, bubble_chart
 
@@ -99,7 +99,7 @@ def compute_lifecycle(df, settings):
     mode = settings.get("multiclass_mode", "duplicate")
     mat = tech_year_matrix(df, multiclass_mode=mode)
     if mat.empty:
-        return empty_result("연도·기술분류 데이터가 없어 계산할 수 없습니다.")
+        return empty_result(diagnose_year_tech(df))
     recent = int(get_threshold(settings, "recent_years"))
     min_n = get_threshold(settings, "min_class_patents")
     decline_years = int(get_threshold(settings, "reemerging_decline_years"))

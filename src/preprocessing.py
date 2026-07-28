@@ -51,7 +51,13 @@ def parse_bool(value):
 
 
 def parse_dates(series):
-    """날짜 시리즈 파싱: pandas 추론 + YYYYMMDD/YYYY.MM.DD 보정. 실패값은 NaT."""
+    """날짜 시리즈 파싱: pandas 추론 + YYYYMMDD 보정 + 문자열 내 날짜 추출.
+
+    '출원번호(출원일)' 처럼 번호와 날짜가 한 컬럼에 섞인 WIPS 헤더도 지원:
+    해석 실패 값에서 (19|20)YY[.-/년]MM[.-/월]DD 패턴 또는 8자리 날짜를 추출한다.
+    (앞뒤가 숫자인 경우는 제외해 출원번호 일련부를 날짜로 오인하지 않음)
+    실패값은 NaT.
+    """
     if series is None:
         return None
     s = series.astype(str).str.strip().replace({"": None, "nan": None, "None": None, "NaT": None})
@@ -61,6 +67,21 @@ def parse_dates(series):
     mask = out.isna() & s.notna() & s.str.fullmatch(r"\d{8}", na=False)
     if mask.any():
         out.loc[mask] = pd.to_datetime(s[mask], format="%Y%m%d", errors="coerce")
+    # 문자열 내 날짜 추출 (예: "10-2020-0123456 (2020-01-02)")
+    mask = out.isna() & s.notna()
+    if mask.any():
+        ext = s[mask].str.extract(
+            r"(?<!\d)((?:19|20)\d{2})[\-년]\s?(\d{1,2})[\-월]\s?(\d{1,2})(?!\d)")
+        good = ext.notna().all(axis=1)
+        if good.any():
+            combined = (ext.loc[good, 0] + "-" + ext.loc[good, 1].str.zfill(2)
+                        + "-" + ext.loc[good, 2].str.zfill(2))
+            out.loc[combined.index] = pd.to_datetime(combined, errors="coerce")
+        ext8 = s[mask & out.isna()].str.extract(r"(?<!\d)((?:19|20)\d{6})(?!\d)")
+        good8 = ext8[0].notna()
+        if good8.any():
+            out.loc[ext8.index[good8]] = pd.to_datetime(
+                ext8.loc[good8, 0], format="%Y%m%d", errors="coerce")
     return out
 
 
@@ -587,23 +608,52 @@ def explode_tech(df, mode=None, level=None):
     return exploded.drop(columns=["_x_n"])
 
 
+_PURE_NUMBER_RE = re.compile(r"^[+-]?\d+(\.\d+)?$")
+_DATEISH_RE = re.compile(r"^(19|20)\d{2}([.\-/]\d{1,2}){0,2}\.?$|^(19|20)\d{6}$")
+_COUNTRY_CODE_RE = re.compile(r"^[A-Z]{2,3}$")
+
+
+def _clean_option_values(values):
+    """필터 옵션 오염값 제거: 순수 숫자·날짜형 값은 범주가 아니므로 제외."""
+    out = []
+    for v in values:
+        sv = str(v).strip()
+        if not sv or sv.lower() in ("nan", "none"):
+            continue
+        if _PURE_NUMBER_RE.match(sv) or _DATEISH_RE.match(sv):
+            continue
+        out.append(v)
+    return out
+
+
 def filter_options(df):
-    """필터바 옵션 생성: 연도범위/출원인/국가/법적상태/기술분류 목록 (Top 값 순)."""
+    """필터바 옵션 생성: 연도범위/출원인/국가/법적상태/기술분류 목록 (Top 값 순).
+
+    매핑 오류로 섞여 들어온 숫자·날짜형 값은 옵션에서 제외한다 (오염 방지).
+    국가는 2~3자 알파벳 코드만 노출한다.
+    """
     years = df["_base_year"].dropna()
+    countries = []
+    if "country" in df.columns:
+        raw = df["country"].astype(str).str.strip().str.upper().replace("", np.nan) \
+            .replace("NAN", np.nan).dropna().value_counts().index.tolist()
+        countries = [c for c in raw if _COUNTRY_CODE_RE.match(str(c))]
+        if not countries:  # 코드가 아닌 국가명(한글 등)만 있는 경우: 날짜·숫자만 제거
+            countries = _clean_option_values(raw)[:50]
     opts = {
         "year_min": int(years.min()) if len(years) else None,
         "year_max": int(years.max()) if len(years) else None,
-        "applicants": df["applicant_display"].astype(str).replace("", np.nan).dropna()
-                        .value_counts().head(300).index.tolist(),
-        "countries": (df["country"].astype(str).str.strip().str.upper().replace("", np.nan)
-                      .replace("NAN", np.nan).dropna().value_counts().index.tolist()
-                      if "country" in df.columns else []),
+        "applicants": _clean_option_values(
+            df["applicant_display"].astype(str).replace("", np.nan).dropna()
+              .value_counts().head(400).index.tolist())[:300],
+        "countries": countries,
         "legal_statuses": df["legal_status_norm"].value_counts().index.tolist(),
         "tech_l1": _level_values(df, "_tech_l1_list"),
         "tech_l2": _level_values(df, "_tech_l2_list"),
         "tech_l3": _level_values(df, "_tech_l3_list"),
-        "tech": pd.Series([t for lst in df["_tech_list"] for t in lst])
-                  .value_counts().head(300).index.tolist() if len(df) else [],
+        "tech": _clean_option_values(
+            pd.Series([t for lst in df["_tech_list"] for t in lst])
+              .value_counts().head(400).index.tolist())[:300] if len(df) else [],
     }
     return opts
 
@@ -611,5 +661,6 @@ def filter_options(df):
 def _level_values(df, col):
     if col not in df.columns or not len(df):
         return []
-    return pd.Series([t for lst in df[col] for t in (lst or [])]) \
-        .value_counts().head(200).index.tolist()
+    return _clean_option_values(
+        pd.Series([t for lst in df[col] for t in (lst or [])])
+        .value_counts().head(300).index.tolist())[:200]

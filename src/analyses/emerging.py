@@ -33,7 +33,7 @@ from src.config import get_threshold, get_limit, get_weights
 from src.metrics import lift as lift_fn, robust_growth, year_counts, \
     normalize_series, weighted_geometric_mean
 from src.preprocessing import build_l1_lookup
-from src.analyses.common import combo_counts
+from src.analyses.common import combo_counts, diagnose_year_tech
 from src.insights import build_insight, fmt_num, fmt_pct, period_label, check_small_sample
 from src.viz_payload import ok_result, empty_result, bubble_chart
 
@@ -44,7 +44,7 @@ def compute_emerging(df, settings):
         return empty_result()
     years = df["_base_year"].dropna()
     if not len(years):
-        return empty_result("연도 정보(출원일/우선일/공개일)가 없어 계산할 수 없습니다.")
+        return empty_result(diagnose_year_tech(df))
     recent = int(get_threshold(settings, "recent_years"))
     recent_from = int(years.max()) - recent + 1
     pairs, tech_counts, n_docs = combo_counts(df, recent_year_from=recent_from)

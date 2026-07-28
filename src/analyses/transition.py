@@ -32,6 +32,7 @@ import numpy as np
 
 from src.config import get_threshold, get_limit
 from src.preprocessing import build_l1_lookup
+from src.analyses.common import diagnose_year_tech
 from src.insights import build_insight, fmt_num, check_small_sample
 from src.viz_payload import ok_result, empty_result, sankey, color_for
 
@@ -125,7 +126,7 @@ def compute_transition(df, settings, mode=None, period_years=None):
     period_years = int(period_years or get_threshold(settings, "recent_years"))
     split = _split_periods(df, period_years)
     if split is None:
-        return empty_result("연도 정보가 없어 기간을 나눌 수 없습니다.")
+        return empty_result(diagnose_year_tech(df))
     prev, cur, label_prev, label_cur = split
     if not len(prev) or not len(cur):
         return empty_result("이전/다음 기간 중 한쪽에 데이터가 없어 전이를 계산할 수 없습니다.")

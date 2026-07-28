@@ -20,6 +20,25 @@ def _pair_key(a, b):
     return (a, b) if a <= b else (b, a)
 
 
+def diagnose_year_tech(df):
+    """연도·기술분류 부족 시 사용자 조치가 가능한 진단 메시지 생성."""
+    n = len(df)
+    n_year = int(df["_base_year"].notna().sum()) if "_base_year" in df.columns else 0
+    n_tech = int(df["_tech_list"].map(lambda lst: bool(lst)).sum()) \
+        if "_tech_list" in df.columns else 0
+    problems = []
+    if n_year == 0:
+        problems.append("연도를 해석할 수 있는 문헌이 없습니다 — 출원일/우선일/공개일 매핑과 "
+                        "날짜 형식(YYYY-MM-DD, YYYY.MM.DD, YYYYMMDD)을 확인하세요")
+    if n_tech == 0:
+        problems.append("기술분류가 있는 문헌이 없습니다 — 기술 대/중/소분류 또는 다중 기술분류 "
+                        "매핑을 확인하세요")
+    detail = " / ".join(problems) if problems else "표본이 부족합니다"
+    return ("계산 불가: %s. (전체 %d건 중 연도 해석 %d건, 기술분류 보유 %d건) "
+            "Settings → 컬럼 매핑에서 매핑된 실제 컬럼과 예시 값을 확인하세요."
+            % (detail, n, n_year, n_tech))
+
+
 def combo_counts(df, recent_year_from=None):
     """기술분류 pair 동시출현 집계.
 

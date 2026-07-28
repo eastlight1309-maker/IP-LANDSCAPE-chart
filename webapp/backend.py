@@ -538,6 +538,8 @@ column_mapping.py — 개념 컬럼 매핑 사전 + 자동 매핑 로직.
 import difflib
 import re
 
+import pandas as pd
+
 
 # ---------------------------------------------------------------------------
 # 개념 컬럼 정의: key -> {label(한글), dtype(형식 안내), variants([헤더 변형...])}
@@ -776,6 +778,49 @@ ANALYSIS_REQUIREMENTS = {
 
 _NORM_RE = re.compile(r"[\s\(\)\[\]\{\}\-_/\\.,:;'\"·|]+")
 
+# ---------------------------------------------------------------------------
+# 개념·헤더 형식(kind) — 부분/유사도 매칭 시 형식이 어긋나는 오매핑 방지
+#   예: 출원인(text) ↛ "출원인 수"(number), 국가(text) ↛ "우선권…일자"(date)
+# ---------------------------------------------------------------------------
+CONCEPT_KINDS = {
+    "app_date": "date", "pub_date": "date", "reg_date": "date",
+    "priority_date": "date", "expiry_date": "date",
+    "cites_backward": "number", "cites_forward": "number", "family_size": "number",
+    "family_country_count": "number", "class_confidence": "number",
+    "is_granted": "bool", "is_active": "bool", "is_own": "bool",
+    "country": "country",
+}
+
+
+def concept_kind(concept):
+    return CONCEPT_KINDS.get(concept, "text")
+
+
+def _header_kind(ncol):
+    """정규화 헤더의 형식 추정: number(건수류) / text(번호·일반) / date(일자류)."""
+    if ncol.endswith(("수", "count", "cnt")) or "건수" in ncol or "횟수" in ncol \
+            or "countof" in ncol or ncol.endswith("숫자"):
+        return "number"
+    if "번호" in ncol or "number" in ncol or ncol.endswith("no"):
+        return "text"  # 문헌번호류는 '…일'을 포함해도 텍스트 취급 (예: 출원번호출원일)
+    if "일자" in ncol or "date" in ncol or "년월일" in ncol or ncol.endswith("일"):
+        return "date"
+    return "text"
+
+
+def _kind_compatible(concept, method, ncol):
+    """부분/유사도 매칭의 형식 호환성. 완전일치(exact)는 항상 허용."""
+    if method == "exact":
+        return True
+    ck = concept_kind(concept)
+    hk = _header_kind(ncol)
+    if ck == "date":
+        return hk == "date"
+    if ck == "number":
+        return hk == "number"
+    # text / bool / country 개념은 건수·일자 형태 헤더에 매칭 금지
+    return hk == "text"
+
 
 def _norm(s):
     """헤더 정규화: 소문자화 + 공백/특수문자 제거."""
@@ -787,7 +832,8 @@ def _norm(s):
 def suggest_mapping(actual_columns, cutoff=None):
     """실제 컬럼 목록 → {concept: {column, method, score}} 자동 추천 매핑.
 
-    매칭 순서: 완전일치(1.0) → 부분일치(0.85) → difflib 유사도(cutoff 이상).
+    매칭 순서: 완전일치(1.0) → 부분일치(0.8~0.9, 겹침 비율 반영) → difflib 유사도.
+    부분/유사도 매칭에는 형식 가드(_kind_compatible) 적용.
     하나의 실제 컬럼은 하나의 개념에만 배정 (점수 높은 순 greedy).
     """
     if cutoff is None:
@@ -805,17 +851,21 @@ def suggest_mapping(actual_columns, cutoff=None):
             if ncol in norm_variants:
                 best = (1.0, "exact")
             else:
+                # 부분일치: 변형↔헤더 겹침 비율로 점수 차등 (긴 일치 우선)
+                part_score = 0.0
                 for nv in norm_variants:
                     if len(nv) >= 2 and (nv in ncol or ncol in nv):
-                        best = (0.85, "partial")
-                        break
+                        coverage = min(len(nv), len(ncol)) / float(max(len(nv), len(ncol)))
+                        part_score = max(part_score, 0.8 + 0.1 * coverage)
+                if part_score:
+                    best = (round(part_score, 3), "partial")
                 if best is None:
                     ratio = max(
                         (difflib.SequenceMatcher(None, ncol, nv).ratio() for nv in norm_variants),
                         default=0.0)
                     if ratio >= cutoff:
                         best = (round(ratio, 3), "fuzzy")
-            if best:
+            if best and _kind_compatible(concept, best[1], ncol):
                 candidates.append((best[0], concept, col, best[1]))
 
     candidates.sort(key=lambda t: (-t[0], t[1], t[2]))
@@ -827,6 +877,88 @@ def suggest_mapping(actual_columns, cutoff=None):
         used_concepts.add(concept)
         used_cols.add(col)
     return mapping
+
+
+# ---------------------------------------------------------------------------
+# 실제 값 기반 매핑 검증 (샘플 데이터로 형식 불일치 오매핑 제거)
+# ---------------------------------------------------------------------------
+_NUMERIC_VALUE_RE = re.compile(r"^[+-]?\d+(\.\d+)?$")
+_DATE_VALUE_RE = re.compile(
+    r"^(19|20)\d{2}([.\-/년]\s?\d{1,2}([.\-/월일]\s?\d{0,2})?)?[.\s일)]*$|^(19|20)\d{6}$")
+_COUNTRY_VALUE_RE = re.compile(r"^[A-Za-z]{2,3}$")
+
+
+def _clean_sample(series, n=200):
+    s = series.dropna().astype(str).str.strip()
+    s = s[(s != "") & (~s.str.lower().isin(["nan", "none", "null"]))]
+    return s.head(n)
+
+
+def _fraction(series, pattern):
+    if not len(series):
+        return 0.0
+    return float(series.str.fullmatch(pattern).mean())
+
+
+def _date_parse_fraction(series):
+    """샘플 값의 날짜 해석 성공 비율 (구분자 통일 + 문자열 내 날짜 추출 포함)."""
+    if not len(series):
+        return 0.0
+    s = series.str.replace(r"[./]", "-", regex=True)
+    parsed = pd.to_datetime(s, errors="coerce", format="mixed")
+    ok = parsed.notna()
+    ext = s[~ok].str.extract(
+        r"(?<!\d)((?:19|20)\d{2})[.\-/년]\s?(\d{1,2})[.\-/월]\s?(\d{1,2})(?!\d)")
+    ok2 = ext.notna().all(axis=1) if len(ext) else pd.Series(dtype=bool)
+    return float((ok.sum() + (ok2.sum() if len(ext) else 0)) / len(series))
+
+
+def validate_mapping_values(sample_df, mapping):
+    """자동 매핑을 샘플 값과 대조해 형식 불일치 항목 제거.
+
+    반환: (검증 통과 mapping, dropped: [{concept, column, reason}]).
+    - date 개념: 날짜 해석 성공 비율 >= 0.3
+    - number 개념: 숫자 비율 >= 0.5
+    - country 개념: 2~3자 알파벳/짧은 국가명 비율 >= 0.5, 날짜·숫자 지배 시 제외
+    - text 개념: 순수 숫자 비율 >= 0.7 또는 날짜형 비율 >= 0.7 이면 제외
+      (출원인에 0.0, 기술분류에 날짜가 들어가는 오염 방지)
+    값이 전혀 없는 컬럼은 판단 보류(유지). 사용자 저장 매핑에는 적용하지 않는다.
+    """
+    ok, dropped = {}, []
+    for concept, col in (mapping or {}).items():
+        if col not in getattr(sample_df, "columns", []):
+            ok[concept] = col
+            continue
+        s = _clean_sample(sample_df[col])
+        if not len(s):
+            ok[concept] = col
+            continue
+        kind = concept_kind(concept)
+        reason = None
+        num_frac = _fraction(s, _NUMERIC_VALUE_RE)
+        date_frac = _date_parse_fraction(s)
+        if kind == "date":
+            if date_frac < 0.3:
+                reason = "값이 날짜 형식이 아님 (해석 성공 %.0f%%)" % (date_frac * 100)
+        elif kind == "number":
+            if num_frac < 0.5:
+                reason = "값이 숫자가 아님 (숫자 비율 %.0f%%)" % (num_frac * 100)
+        elif kind == "country":
+            c_frac = _fraction(s, _COUNTRY_VALUE_RE)
+            short_frac = float((s.str.len() <= 8).mean())
+            if date_frac >= 0.5 or num_frac >= 0.5 or (c_frac < 0.5 and short_frac < 0.5):
+                reason = "값이 국가코드 형태가 아님"
+        else:  # text / bool
+            if num_frac >= 0.7:
+                reason = "값이 대부분 숫자 (%.0f%%)" % (num_frac * 100)
+            elif date_frac >= 0.7 and _fraction(s, _DATE_VALUE_RE) >= 0.5:
+                reason = "값이 대부분 날짜 (%.0f%%)" % (date_frac * 100)
+        if reason:
+            dropped.append({"concept": concept, "column": col, "reason": reason,
+                            "label": CONCEPTS[concept]["label"]})
+        else:
+            ok[concept] = col
+    return ok, dropped
 
 
 def clean_mapping(mapping, actual_columns):
@@ -938,7 +1070,13 @@ def parse_bool(value):
 
 
 def parse_dates(series):
-    """날짜 시리즈 파싱: pandas 추론 + YYYYMMDD/YYYY.MM.DD 보정. 실패값은 NaT."""
+    """날짜 시리즈 파싱: pandas 추론 + YYYYMMDD 보정 + 문자열 내 날짜 추출.
+
+    '출원번호(출원일)' 처럼 번호와 날짜가 한 컬럼에 섞인 WIPS 헤더도 지원:
+    해석 실패 값에서 (19|20)YY[.-/년]MM[.-/월]DD 패턴 또는 8자리 날짜를 추출한다.
+    (앞뒤가 숫자인 경우는 제외해 출원번호 일련부를 날짜로 오인하지 않음)
+    실패값은 NaT.
+    """
     if series is None:
         return None
     s = series.astype(str).str.strip().replace({"": None, "nan": None, "None": None, "NaT": None})
@@ -948,6 +1086,21 @@ def parse_dates(series):
     mask = out.isna() & s.notna() & s.str.fullmatch(r"\d{8}", na=False)
     if mask.any():
         out.loc[mask] = pd.to_datetime(s[mask], format="%Y%m%d", errors="coerce")
+    # 문자열 내 날짜 추출 (예: "10-2020-0123456 (2020-01-02)")
+    mask = out.isna() & s.notna()
+    if mask.any():
+        ext = s[mask].str.extract(
+            r"(?<!\d)((?:19|20)\d{2})[\-년]\s?(\d{1,2})[\-월]\s?(\d{1,2})(?!\d)")
+        good = ext.notna().all(axis=1)
+        if good.any():
+            combined = (ext.loc[good, 0] + "-" + ext.loc[good, 1].str.zfill(2)
+                        + "-" + ext.loc[good, 2].str.zfill(2))
+            out.loc[combined.index] = pd.to_datetime(combined, errors="coerce")
+        ext8 = s[mask & out.isna()].str.extract(r"(?<!\d)((?:19|20)\d{6})(?!\d)")
+        good8 = ext8[0].notna()
+        if good8.any():
+            out.loc[ext8.index[good8]] = pd.to_datetime(
+                ext8.loc[good8, 0], format="%Y%m%d", errors="coerce")
     return out
 
 
@@ -1474,23 +1627,52 @@ def explode_tech(df, mode=None, level=None):
     return exploded.drop(columns=["_x_n"])
 
 
+_PURE_NUMBER_RE = re.compile(r"^[+-]?\d+(\.\d+)?$")
+_DATEISH_RE = re.compile(r"^(19|20)\d{2}([.\-/]\d{1,2}){0,2}\.?$|^(19|20)\d{6}$")
+_COUNTRY_CODE_RE = re.compile(r"^[A-Z]{2,3}$")
+
+
+def _clean_option_values(values):
+    """필터 옵션 오염값 제거: 순수 숫자·날짜형 값은 범주가 아니므로 제외."""
+    out = []
+    for v in values:
+        sv = str(v).strip()
+        if not sv or sv.lower() in ("nan", "none"):
+            continue
+        if _PURE_NUMBER_RE.match(sv) or _DATEISH_RE.match(sv):
+            continue
+        out.append(v)
+    return out
+
+
 def filter_options(df):
-    """필터바 옵션 생성: 연도범위/출원인/국가/법적상태/기술분류 목록 (Top 값 순)."""
+    """필터바 옵션 생성: 연도범위/출원인/국가/법적상태/기술분류 목록 (Top 값 순).
+
+    매핑 오류로 섞여 들어온 숫자·날짜형 값은 옵션에서 제외한다 (오염 방지).
+    국가는 2~3자 알파벳 코드만 노출한다.
+    """
     years = df["_base_year"].dropna()
+    countries = []
+    if "country" in df.columns:
+        raw = df["country"].astype(str).str.strip().str.upper().replace("", np.nan) \
+            .replace("NAN", np.nan).dropna().value_counts().index.tolist()
+        countries = [c for c in raw if _COUNTRY_CODE_RE.match(str(c))]
+        if not countries:  # 코드가 아닌 국가명(한글 등)만 있는 경우: 날짜·숫자만 제거
+            countries = _clean_option_values(raw)[:50]
     opts = {
         "year_min": int(years.min()) if len(years) else None,
         "year_max": int(years.max()) if len(years) else None,
-        "applicants": df["applicant_display"].astype(str).replace("", np.nan).dropna()
-                        .value_counts().head(300).index.tolist(),
-        "countries": (df["country"].astype(str).str.strip().str.upper().replace("", np.nan)
-                      .replace("NAN", np.nan).dropna().value_counts().index.tolist()
-                      if "country" in df.columns else []),
+        "applicants": _clean_option_values(
+            df["applicant_display"].astype(str).replace("", np.nan).dropna()
+              .value_counts().head(400).index.tolist())[:300],
+        "countries": countries,
         "legal_statuses": df["legal_status_norm"].value_counts().index.tolist(),
         "tech_l1": _level_values(df, "_tech_l1_list"),
         "tech_l2": _level_values(df, "_tech_l2_list"),
         "tech_l3": _level_values(df, "_tech_l3_list"),
-        "tech": pd.Series([t for lst in df["_tech_list"] for t in lst])
-                  .value_counts().head(300).index.tolist() if len(df) else [],
+        "tech": _clean_option_values(
+            pd.Series([t for lst in df["_tech_list"] for t in lst])
+              .value_counts().head(400).index.tolist())[:300] if len(df) else [],
     }
     return opts
 
@@ -1498,8 +1680,9 @@ def filter_options(df):
 def _level_values(df, col):
     if col not in df.columns or not len(df):
         return []
-    return pd.Series([t for lst in df[col] for t in (lst or [])]) \
-        .value_counts().head(200).index.tolist()
+    return _clean_option_values(
+        pd.Series([t for lst in df[col] for t in (lst or [])])
+        .value_counts().head(300).index.tolist())[:200]
 
 
 # ===========================================================================
@@ -2081,6 +2264,33 @@ def load_raw_dataframe(dataset_name, columns=None):
         cols = [c for c in columns if c in df.columns]
         df = df[cols]
     return df
+
+
+def load_sample_dataframe(dataset_name, columns=None, limit=300):
+    """검증·미리보기용 샘플 로딩 (head limit). 실패 시 빈 DataFrame."""
+    name = validate_dataset_name(dataset_name)
+    if name is None:
+        return pd.DataFrame()
+    wanted = [c for c in (columns or []) if c]
+    try:
+        if name in _INJECTED_DATASETS:
+            df = _INJECTED_DATASETS[name].head(int(limit))
+        elif _dataiku_mod is not None:
+            ds = _dataiku_mod.Dataset(name)
+            try:
+                df = ds.get_dataframe(limit=int(limit), infer_with_pandas=True)
+            except TypeError:  # 구버전 API: limit 미지원
+                df = ds.get_dataframe(infer_with_pandas=True).head(int(limit))
+        else:
+            df = pd.read_csv(os.path.join(_LOCAL_DATA_DIR, name + ".csv"), nrows=int(limit))
+    except Exception as e:
+        logger.warning("sample load failed for %s: %s", name, e)
+        return pd.DataFrame()
+    if wanted:
+        keep = [c for c in wanted if c in df.columns]
+        if keep:
+            df = df[keep]
+    return df.copy()
 
 
 def needed_raw_columns(mapping):
@@ -2774,6 +2984,25 @@ import pandas as pd
 
 def _pair_key(a, b):
     return (a, b) if a <= b else (b, a)
+
+
+def diagnose_year_tech(df):
+    """연도·기술분류 부족 시 사용자 조치가 가능한 진단 메시지 생성."""
+    n = len(df)
+    n_year = int(df["_base_year"].notna().sum()) if "_base_year" in df.columns else 0
+    n_tech = int(df["_tech_list"].map(lambda lst: bool(lst)).sum()) \
+        if "_tech_list" in df.columns else 0
+    problems = []
+    if n_year == 0:
+        problems.append("연도를 해석할 수 있는 문헌이 없습니다 — 출원일/우선일/공개일 매핑과 "
+                        "날짜 형식(YYYY-MM-DD, YYYY.MM.DD, YYYYMMDD)을 확인하세요")
+    if n_tech == 0:
+        problems.append("기술분류가 있는 문헌이 없습니다 — 기술 대/중/소분류 또는 다중 기술분류 "
+                        "매핑을 확인하세요")
+    detail = " / ".join(problems) if problems else "표본이 부족합니다"
+    return ("계산 불가: %s. (전체 %d건 중 연도 해석 %d건, 기술분류 보유 %d건) "
+            "Settings → 컬럼 매핑에서 매핑된 실제 컬럼과 예시 값을 확인하세요."
+            % (detail, n, n_year, n_tech))
 
 
 def combo_counts(df, recent_year_from=None):
@@ -3491,7 +3720,7 @@ def compute_emerging(df, settings):
         return empty_result()
     years = df["_base_year"].dropna()
     if not len(years):
-        return empty_result("연도 정보(출원일/우선일/공개일)가 없어 계산할 수 없습니다.")
+        return empty_result(diagnose_year_tech(df))
     recent = int(get_threshold(settings, "recent_years"))
     recent_from = int(years.max()) - recent + 1
     pairs, tech_counts, n_docs = combo_counts(df, recent_year_from=recent_from)
@@ -3694,7 +3923,7 @@ def compute_lifecycle(df, settings):
     mode = settings.get("multiclass_mode", "duplicate")
     mat = tech_year_matrix(df, multiclass_mode=mode)
     if mat.empty:
-        return empty_result("연도·기술분류 데이터가 없어 계산할 수 없습니다.")
+        return empty_result(diagnose_year_tech(df))
     recent = int(get_threshold(settings, "recent_years"))
     min_n = get_threshold(settings, "min_class_patents")
     decline_years = int(get_threshold(settings, "reemerging_decline_years"))
@@ -3969,7 +4198,7 @@ def compute_opportunity(df, settings):
     mode = settings.get("multiclass_mode", "duplicate")
     mat = tech_year_matrix(df, multiclass_mode=mode)
     if mat.empty:
-        return empty_result("연도·기술분류 데이터가 없어 계산할 수 없습니다.")
+        return empty_result(diagnose_year_tech(df))
     recent = int(get_threshold(settings, "recent_years"))
     min_n = get_threshold(settings, "min_class_patents")
     y_max = int(mat.columns.max())
@@ -4479,7 +4708,7 @@ def compute_transition(df, settings, mode=None, period_years=None):
     period_years = int(period_years or get_threshold(settings, "recent_years"))
     split = _split_periods(df, period_years)
     if split is None:
-        return empty_result("연도 정보가 없어 기간을 나눌 수 없습니다.")
+        return empty_result(diagnose_year_tech(df))
     prev, cur, label_prev, label_cur = split
     if not len(prev) or not len(cur):
         return empty_result("이전/다음 기간 중 한쪽에 데이터가 없어 전이를 계산할 수 없습니다.")
@@ -6090,6 +6319,22 @@ def _resolve_dataset(body):
     return valid, settings
 
 
+def _validated_auto_mapping(dataset, actual_cols):
+    """자동 추천 매핑 + 샘플 값 검증 (형식 불일치 오매핑 제거). 실패 시 검증 생략."""
+    auto = suggest_mapping(actual_cols)
+    mapping = {k: v["column"] for k, v in auto.items()}
+    try:
+        sample = load_sample_dataframe(dataset, sorted(set(mapping.values())), limit=300)
+        if len(sample):
+            mapping, dropped = validate_mapping_values(sample, mapping)
+            for d in dropped:
+                logger.info("자동 매핑 제외: %s → %s (%s)",
+                            d["label"], d["column"], d["reason"])
+    except Exception as e:
+        logger.warning("자동 매핑 값 검증 실패(생략): %s", e)
+    return mapping
+
+
 def _prepared_for(body):
     """요청 → (필터 적용된 표준 프레임, settings, dataset, mapping). 공통 진입점."""
     dataset, settings = _resolve_dataset(body)
@@ -6097,8 +6342,7 @@ def _prepared_for(body):
     actual_cols = get_dataset_columns(dataset)
     mapping, warnings = clean_mapping(saved, actual_cols)
     if not mapping:
-        auto = suggest_mapping(actual_cols)
-        mapping = {k: v["column"] for k, v in auto.items()}
+        mapping = _validated_auto_mapping(dataset, actual_cols)
     rules = storage.load_applicant_rules()
     df, _ = get_prepared(dataset, mapping, rules, settings.get("analysis_unit", "family"))
     filters = (body or {}).get("filters") or {}
@@ -6181,7 +6425,7 @@ def register_routes(app):
                 cols = get_dataset_columns(dataset)
                 mapping, _w = clean_mapping(storage.load_mapping_for(dataset), cols)
                 if not mapping and cols:
-                    mapping = {k: v["column"] for k, v in suggest_mapping(cols).items()}
+                    mapping = _validated_auto_mapping(dataset, cols)
                 availability = analysis_availability(mapping)
             except Exception as e:
                 logger.warning("config availability failed: %s", e)
@@ -6233,9 +6477,29 @@ def register_routes(app):
             cols = get_dataset_columns(name)
             saved, warnings = clean_mapping(storage.load_mapping_for(name), cols)
             suggestion = suggest_mapping(cols)
-            effective = dict({k: v["column"] for k, v in suggestion.items()}, **saved)
+            # 샘플 값 검증: 형식 불일치 추천은 invalid 표시 + effective 에서 제외
+            samples = {}
+            try:
+                sample_df = load_sample_dataframe(name, None, limit=120)
+                for col in cols:
+                    if col in sample_df.columns:
+                        vals = sample_df[col].dropna().astype(str).str.strip()
+                        vals = vals[(vals != "") & (~vals.str.lower().isin(["nan", "none"]))]
+                        samples[col] = [v[:48] for v in vals.head(3).tolist()]
+                auto_map = {k: v["column"] for k, v in suggestion.items()}
+                _valid, dropped = validate_mapping_values(sample_df, auto_map)
+                for d in dropped:
+                    if d["concept"] in suggestion:
+                        suggestion[d["concept"]]["valid"] = False
+                        suggestion[d["concept"]]["reason"] = d["reason"]
+                        warnings.append("자동 추천 제외: %s → %s (%s)"
+                                        % (d["label"], d["column"], d["reason"]))
+            except Exception as e:
+                logger.warning("매핑 샘플 검증 실패(생략): %s", e)
+            effective = dict({k: v["column"] for k, v in suggestion.items()
+                              if v.get("valid", True)}, **saved)
             return {"status": "ok", "dataset": name, "columns": cols,
-                    "saved": saved, "suggested": suggestion,
+                    "saved": saved, "suggested": suggestion, "samples": samples,
                     "effective": effective, "warnings": warnings,
                     "availability": analysis_availability(effective),
                     "concepts": concept_catalog()}

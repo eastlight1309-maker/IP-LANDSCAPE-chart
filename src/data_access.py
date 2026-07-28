@@ -134,6 +134,33 @@ def load_raw_dataframe(dataset_name, columns=None):
     return df
 
 
+def load_sample_dataframe(dataset_name, columns=None, limit=300):
+    """검증·미리보기용 샘플 로딩 (head limit). 실패 시 빈 DataFrame."""
+    name = validate_dataset_name(dataset_name)
+    if name is None:
+        return pd.DataFrame()
+    wanted = [c for c in (columns or []) if c]
+    try:
+        if name in _INJECTED_DATASETS:
+            df = _INJECTED_DATASETS[name].head(int(limit))
+        elif _dataiku_mod is not None:
+            ds = _dataiku_mod.Dataset(name)
+            try:
+                df = ds.get_dataframe(limit=int(limit), infer_with_pandas=True)
+            except TypeError:  # 구버전 API: limit 미지원
+                df = ds.get_dataframe(infer_with_pandas=True).head(int(limit))
+        else:
+            df = pd.read_csv(os.path.join(_LOCAL_DATA_DIR, name + ".csv"), nrows=int(limit))
+    except Exception as e:
+        logger.warning("sample load failed for %s: %s", name, e)
+        return pd.DataFrame()
+    if wanted:
+        keep = [c for c in wanted if c in df.columns]
+        if keep:
+            df = df[keep]
+    return df.copy()
+
+
 def needed_raw_columns(mapping):
     """매핑에서 실제 로딩할 원본 컬럼 목록."""
     return sorted(set(c for c in (mapping or {}).values() if c))

@@ -20,6 +20,8 @@ column_mapping.py — 개념 컬럼 매핑 사전 + 자동 매핑 로직.
 import difflib
 import re
 
+import pandas as pd
+
 from src.config import THRESHOLDS
 
 # ---------------------------------------------------------------------------
@@ -259,6 +261,49 @@ ANALYSIS_REQUIREMENTS = {
 
 _NORM_RE = re.compile(r"[\s\(\)\[\]\{\}\-_/\\.,:;'\"·|]+")
 
+# ---------------------------------------------------------------------------
+# 개념·헤더 형식(kind) — 부분/유사도 매칭 시 형식이 어긋나는 오매핑 방지
+#   예: 출원인(text) ↛ "출원인 수"(number), 국가(text) ↛ "우선권…일자"(date)
+# ---------------------------------------------------------------------------
+CONCEPT_KINDS = {
+    "app_date": "date", "pub_date": "date", "reg_date": "date",
+    "priority_date": "date", "expiry_date": "date",
+    "cites_backward": "number", "cites_forward": "number", "family_size": "number",
+    "family_country_count": "number", "class_confidence": "number",
+    "is_granted": "bool", "is_active": "bool", "is_own": "bool",
+    "country": "country",
+}
+
+
+def concept_kind(concept):
+    return CONCEPT_KINDS.get(concept, "text")
+
+
+def _header_kind(ncol):
+    """정규화 헤더의 형식 추정: number(건수류) / text(번호·일반) / date(일자류)."""
+    if ncol.endswith(("수", "count", "cnt")) or "건수" in ncol or "횟수" in ncol \
+            or "countof" in ncol or ncol.endswith("숫자"):
+        return "number"
+    if "번호" in ncol or "number" in ncol or ncol.endswith("no"):
+        return "text"  # 문헌번호류는 '…일'을 포함해도 텍스트 취급 (예: 출원번호출원일)
+    if "일자" in ncol or "date" in ncol or "년월일" in ncol or ncol.endswith("일"):
+        return "date"
+    return "text"
+
+
+def _kind_compatible(concept, method, ncol):
+    """부분/유사도 매칭의 형식 호환성. 완전일치(exact)는 항상 허용."""
+    if method == "exact":
+        return True
+    ck = concept_kind(concept)
+    hk = _header_kind(ncol)
+    if ck == "date":
+        return hk == "date"
+    if ck == "number":
+        return hk == "number"
+    # text / bool / country 개념은 건수·일자 형태 헤더에 매칭 금지
+    return hk == "text"
+
 
 def _norm(s):
     """헤더 정규화: 소문자화 + 공백/특수문자 제거."""
@@ -270,7 +315,8 @@ def _norm(s):
 def suggest_mapping(actual_columns, cutoff=None):
     """실제 컬럼 목록 → {concept: {column, method, score}} 자동 추천 매핑.
 
-    매칭 순서: 완전일치(1.0) → 부분일치(0.85) → difflib 유사도(cutoff 이상).
+    매칭 순서: 완전일치(1.0) → 부분일치(0.8~0.9, 겹침 비율 반영) → difflib 유사도.
+    부분/유사도 매칭에는 형식 가드(_kind_compatible) 적용.
     하나의 실제 컬럼은 하나의 개념에만 배정 (점수 높은 순 greedy).
     """
     if cutoff is None:
@@ -288,17 +334,21 @@ def suggest_mapping(actual_columns, cutoff=None):
             if ncol in norm_variants:
                 best = (1.0, "exact")
             else:
+                # 부분일치: 변형↔헤더 겹침 비율로 점수 차등 (긴 일치 우선)
+                part_score = 0.0
                 for nv in norm_variants:
                     if len(nv) >= 2 and (nv in ncol or ncol in nv):
-                        best = (0.85, "partial")
-                        break
+                        coverage = min(len(nv), len(ncol)) / float(max(len(nv), len(ncol)))
+                        part_score = max(part_score, 0.8 + 0.1 * coverage)
+                if part_score:
+                    best = (round(part_score, 3), "partial")
                 if best is None:
                     ratio = max(
                         (difflib.SequenceMatcher(None, ncol, nv).ratio() for nv in norm_variants),
                         default=0.0)
                     if ratio >= cutoff:
                         best = (round(ratio, 3), "fuzzy")
-            if best:
+            if best and _kind_compatible(concept, best[1], ncol):
                 candidates.append((best[0], concept, col, best[1]))
 
     candidates.sort(key=lambda t: (-t[0], t[1], t[2]))
@@ -310,6 +360,88 @@ def suggest_mapping(actual_columns, cutoff=None):
         used_concepts.add(concept)
         used_cols.add(col)
     return mapping
+
+
+# ---------------------------------------------------------------------------
+# 실제 값 기반 매핑 검증 (샘플 데이터로 형식 불일치 오매핑 제거)
+# ---------------------------------------------------------------------------
+_NUMERIC_VALUE_RE = re.compile(r"^[+-]?\d+(\.\d+)?$")
+_DATE_VALUE_RE = re.compile(
+    r"^(19|20)\d{2}([.\-/년]\s?\d{1,2}([.\-/월일]\s?\d{0,2})?)?[.\s일)]*$|^(19|20)\d{6}$")
+_COUNTRY_VALUE_RE = re.compile(r"^[A-Za-z]{2,3}$")
+
+
+def _clean_sample(series, n=200):
+    s = series.dropna().astype(str).str.strip()
+    s = s[(s != "") & (~s.str.lower().isin(["nan", "none", "null"]))]
+    return s.head(n)
+
+
+def _fraction(series, pattern):
+    if not len(series):
+        return 0.0
+    return float(series.str.fullmatch(pattern).mean())
+
+
+def _date_parse_fraction(series):
+    """샘플 값의 날짜 해석 성공 비율 (구분자 통일 + 문자열 내 날짜 추출 포함)."""
+    if not len(series):
+        return 0.0
+    s = series.str.replace(r"[./]", "-", regex=True)
+    parsed = pd.to_datetime(s, errors="coerce", format="mixed")
+    ok = parsed.notna()
+    ext = s[~ok].str.extract(
+        r"(?<!\d)((?:19|20)\d{2})[.\-/년]\s?(\d{1,2})[.\-/월]\s?(\d{1,2})(?!\d)")
+    ok2 = ext.notna().all(axis=1) if len(ext) else pd.Series(dtype=bool)
+    return float((ok.sum() + (ok2.sum() if len(ext) else 0)) / len(series))
+
+
+def validate_mapping_values(sample_df, mapping):
+    """자동 매핑을 샘플 값과 대조해 형식 불일치 항목 제거.
+
+    반환: (검증 통과 mapping, dropped: [{concept, column, reason}]).
+    - date 개념: 날짜 해석 성공 비율 >= 0.3
+    - number 개념: 숫자 비율 >= 0.5
+    - country 개념: 2~3자 알파벳/짧은 국가명 비율 >= 0.5, 날짜·숫자 지배 시 제외
+    - text 개념: 순수 숫자 비율 >= 0.7 또는 날짜형 비율 >= 0.7 이면 제외
+      (출원인에 0.0, 기술분류에 날짜가 들어가는 오염 방지)
+    값이 전혀 없는 컬럼은 판단 보류(유지). 사용자 저장 매핑에는 적용하지 않는다.
+    """
+    ok, dropped = {}, []
+    for concept, col in (mapping or {}).items():
+        if col not in getattr(sample_df, "columns", []):
+            ok[concept] = col
+            continue
+        s = _clean_sample(sample_df[col])
+        if not len(s):
+            ok[concept] = col
+            continue
+        kind = concept_kind(concept)
+        reason = None
+        num_frac = _fraction(s, _NUMERIC_VALUE_RE)
+        date_frac = _date_parse_fraction(s)
+        if kind == "date":
+            if date_frac < 0.3:
+                reason = "값이 날짜 형식이 아님 (해석 성공 %.0f%%)" % (date_frac * 100)
+        elif kind == "number":
+            if num_frac < 0.5:
+                reason = "값이 숫자가 아님 (숫자 비율 %.0f%%)" % (num_frac * 100)
+        elif kind == "country":
+            c_frac = _fraction(s, _COUNTRY_VALUE_RE)
+            short_frac = float((s.str.len() <= 8).mean())
+            if date_frac >= 0.5 or num_frac >= 0.5 or (c_frac < 0.5 and short_frac < 0.5):
+                reason = "값이 국가코드 형태가 아님"
+        else:  # text / bool
+            if num_frac >= 0.7:
+                reason = "값이 대부분 숫자 (%.0f%%)" % (num_frac * 100)
+            elif date_frac >= 0.7 and _fraction(s, _DATE_VALUE_RE) >= 0.5:
+                reason = "값이 대부분 날짜 (%.0f%%)" % (date_frac * 100)
+        if reason:
+            dropped.append({"concept": concept, "column": col, "reason": reason,
+                            "label": CONCEPTS[concept]["label"]})
+        else:
+            ok[concept] = col
+    return ok, dropped
 
 
 def clean_mapping(mapping, actual_columns):
