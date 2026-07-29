@@ -732,9 +732,17 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
             c.body.appendChild(holder);
             Render.plotly(holder, r.figure);
             setTarget({ kind: 'plotly', el: holder });
+            c.body.appendChild(Ui.el('<div class="disclaimer">' +
+              (r.chart_kind === 'radar'
+                ? '레이더 축 값은 비교 대상 기업들 사이에서 상대 평가한 0~1 표준화 점수입니다 ' +
+                  '(1 = 비교 기업 중 최고). 지표의 실제 원값은 마우스를 올리면 함께 표시됩니다.'
+                : '히트맵 색상은 비교 대상 기업들 사이의 0~1 표준화 점수입니다 (진할수록 높음). ' +
+                  '원값은 마우스를 올리면 표시됩니다.') + '</div>'));
             var ph = Ui.el('<div class="chart-holder" style="min-height:300px"></div>');
             c.body.appendChild(ph);
             Render.plotly(ph, r.parcoords);
+            c.body.appendChild(Ui.el('<div class="disclaimer">평행좌표: 각 세로축은 지표별 ' +
+              '0~1 표준화 점수이며, 하나의 꺾은선이 한 기업입니다.</div>'));
             var rows = (r.companies || []).map(function (x) {
               var tr = document.createElement('tr');
               var td0 = document.createElement('td');
@@ -771,6 +779,9 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
             c.body.appendChild(holder);
             Render.plotly(holder, r.figure, plotlyDrill);
             setTarget({ kind: 'plotly', el: holder });
+            c.body.appendChild(Ui.el('<div class="disclaimer">좌표축(주성분 1·2)은 기술 구성비를 ' +
+              '2차원으로 압축한 것으로 절대 단위가 없습니다. 점 사이의 거리 = 포트폴리오 구성 차이, ' +
+              '화살표 = 연도에 따른 전략 이동 방향으로 해석하세요.</div>'));
             var rows = (r.companies || []).map(function (x) {
               var tr = document.createElement('tr');
               var td0 = document.createElement('td');
@@ -821,11 +832,16 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
               c.body.appendChild(s);
               Render.plotly(s, r.similarity);
               setTarget({ kind: 'plotly', el: s });
+              c.body.appendChild(Ui.el('<div class="disclaimer">가로·세로축은 모두 기업이며, ' +
+                '셀 값은 두 기업의 기술분류 구성비가 얼마나 비슷한지(코사인 유사도, 0~1)입니다. ' +
+                '1에 가까울수록 두 기업의 기술 포트폴리오 구성이 동일합니다.</div>'));
             }
             if (r.overlap) {
               var o = Ui.el('<div class="chart-holder"></div>');
               c.body.appendChild(o);
               Render.plotly(o, r.overlap);
+              c.body.appendChild(Ui.el('<div class="disclaimer">중첩도는 두 기업이 활동하는 ' +
+                '기술분류 집합이 얼마나 겹치는지(Jaccard, 0~1)입니다. 1 = 완전히 같은 분류에서 활동.</div>'));
             }
           }
         });

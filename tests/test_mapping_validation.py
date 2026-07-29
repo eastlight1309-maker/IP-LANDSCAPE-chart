@@ -102,3 +102,89 @@ def test_diagnose_message_when_dates_unparseable():
     r = compute_lifecycle(prep, merged_settings({}))
     assert r["status"] == "empty"
     assert "연도" in r["message"] and "매핑" in r["message"]
+
+
+def test_parse_dates_year_only_and_excel_serial():
+    """연도만 있는 값(2020, 2020.0)과 Excel 일련번호에서 연도 자동 추출."""
+    s = pd.Series(["2020", "2021.0", "44562", "2019-03-01", "10-2020-0012345"])
+    out = parse_dates(s)
+    assert out.iloc[0].year == 2020
+    assert out.iloc[1].year == 2021
+    assert out.iloc[2] == pd.Timestamp("2022-01-01")  # Excel serial 44562
+    assert out.iloc[3].year == 2019
+    assert pd.isna(out.iloc[4])  # 순수 출원번호는 날짜로 오인하지 않음
+
+
+def test_base_year_fallback_from_raw_year():
+    """날짜 해석이 전부 실패해도 출원일 원본에서 4자리 연도를 추출해 반영."""
+    df = pd.DataFrame({
+        "공개번호": ["A1", "A2", "A3"],
+        "출원인": ["갑", "을", "병"],
+        "기술 대분류": ["패키징", "본딩", "패키징"],
+        "출원일": ["2020년 출원", "출원연도: 2021", "2019 (심사중)"],  # 날짜 형식 아님
+    })
+    prep = make_prepared(df)
+    assert prep["_base_year"].notna().all()
+    assert sorted(prep["_base_year"].astype(int)) == [2019, 2020, 2021]
+
+
+def test_applicant_display_prefers_std_column():
+    """표준화 출원인 컬럼이 있으면 '기업' 값으로 그 값을 그대로 사용."""
+    df = pd.DataFrame({
+        "공개번호": ["A1", "A2"],
+        "출원인": ["삼성전자 주식회사", "에스케이하이닉스 주식회사"],
+        "표준화 출원인": ["삼성전자", "SK하이닉스"],
+        "기술 대분류": ["패키징", "본딩"],
+        "출원일": ["2020-01-01", "2021-01-01"],
+    })
+    prep = make_prepared(df)
+    assert list(prep["applicant_display"]) == ["삼성전자", "SK하이닉스"]
+
+
+def test_applicant_numeric_column_ignored():
+    """출원인 개념이 숫자 컬럼에 매핑돼 있어도 표준화 출원인이 있으면 그쪽 사용."""
+    from src.preprocessing import build_standard_frame
+    df = pd.DataFrame({
+        "번호": ["A1", "A2", "A3"],
+        "숫자컬럼": [0.0, 4.0, 2.0],
+        "표준명": ["삼성전자", "TSMC", "네패스"],
+        "출원일": ["2020-01-01", "2021-01-01", "2022-01-01"],
+        "대분류": ["패키징", "본딩", "패키징"],
+    })
+    mapping = {"pub_number": "번호", "applicant": "숫자컬럼", "applicant_std": "표준명",
+               "app_date": "출원일", "tech_l1": "대분류"}
+    prep = build_standard_frame(df, mapping)
+    assert list(prep["applicant_display"]) == ["삼성전자", "TSMC", "네패스"]
+    # 두 컬럼 모두 숫자면 빈 값 (0.0 이 기업으로 노출되지 않음)
+    mapping2 = {"pub_number": "번호", "applicant": "숫자컬럼",
+                "app_date": "출원일", "tech_l1": "대분류"}
+    prep2 = build_standard_frame(df, mapping2)
+    assert (prep2["applicant_display"] == "").all()
+
+
+def test_country_derived_from_doc_number():
+    """국가 컬럼이 없으면 공개번호 선두 국가코드에서 파생."""
+    df = pd.DataFrame({
+        "공개번호": ["KR10-2020-0000001A", "US2021123456A1", "JP2019-123456A", "KR10-2022-0000002A"],
+        "출원인": ["갑", "을", "병", "정"],
+        "기술 대분류": ["패키징", "본딩", "패키징", "본딩"],
+        "출원일": ["2020-01-01", "2021-01-01", "2019-01-01", "2022-01-01"],
+    })
+    prep = make_prepared(df)
+    assert list(prep["country"]) == ["KR", "US", "JP", "KR"]
+    opts = filter_options(prep)
+    assert set(opts["countries"]) == {"KR", "US", "JP"}
+
+
+def test_filter_options_junk_tokens_removed():
+    df = pd.DataFrame({
+        "공개번호": ["P%d" % i for i in range(6)],
+        "출원인": ["삼성전자", "or", "SK하이닉스", "a", "-", "네패스"],
+        "기술 대분류": ["패키징; or", "본딩", "a; 패키징", "테스트", "본딩", "패키징"],
+        "출원일": ["2020-01-01"] * 6,
+    })
+    prep = make_prepared(df)
+    opts = filter_options(prep)
+    assert "or" not in opts["applicants"] and "a" not in opts["applicants"]
+    assert "or" not in opts["tech_l1"] and "a" not in opts["tech_l1"]
+    assert "패키징" in opts["tech_l1"]

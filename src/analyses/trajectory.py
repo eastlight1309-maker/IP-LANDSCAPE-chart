@@ -130,8 +130,10 @@ def compute_trajectory(df, settings, companies=None, method="pca", weighting=Non
                               "years": years,
                               "drill": {"type": "applicant", "applicant": company}})
     layout = base_layout("Technology Trajectory Map (%s, %s 가중)" % (used_method, weighting),
-                         xaxis={"title": "Dim 1", "zeroline": False},
-                         yaxis={"title": "Dim 2", "zeroline": False})
+                         xaxis={"title": "주성분 1 (단위 없음 — 상대 위치)", "zeroline": False,
+                                "showticklabels": False},
+                         yaxis={"title": "주성분 2 (단위 없음 — 상대 위치)", "zeroline": False,
+                                "showticklabels": False})
     layout["annotations"] = annotations
     fig = {"data": traces, "layout": layout}
 

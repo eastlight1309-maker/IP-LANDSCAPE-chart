@@ -227,11 +227,15 @@ def compute_company_dna(df, settings, companies=None):
                 ov_row.append(round(inter / union, 3))
             sim_z.append(sim_row)
             ov_z.append(ov_row)
-        sim_matrix = heatmap(sim_z, available, available, title="전략 유사도 (코사인)",
+        sim_matrix = heatmap(sim_z, available, available,
+                             title="전략 유사도 (기술 구성비 코사인, 0~1 · 1=구성 동일)",
                              colorscale="Blues", colorbar_title="유사도")
         overlap_matrix = heatmap(ov_z, available, available,
-                                 title="포트폴리오 중첩도 (Jaccard)",
+                                 title="포트폴리오 중첩도 (활동 분류 Jaccard, 0~1 · 1=완전 중첩)",
                                  colorscale="Purples", colorbar_title="중첩도")
+        for fig_ in (sim_matrix, overlap_matrix):
+            fig_["layout"]["xaxis"]["title"] = "기업"
+            fig_["layout"]["yaxis"]["title"] = "기업"
 
     type_counts = {}
     for p in companies_payload:

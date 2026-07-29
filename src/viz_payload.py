@@ -169,9 +169,12 @@ def heatmap(z, x_labels, y_labels, title=None, colorscale="YlOrRd", hovertext=No
         trace["hoverinfo"] = "text"
     if zmid is not None:
         trace["zmid"] = zmid
+    # 축을 범주형으로 고정: 라벨이 숫자처럼 보여도 수치축으로 오인 렌더링되지 않도록
     return {"data": [trace],
-            "layout": base_layout(title, xaxis={"tickangle": -40, "automargin": True},
-                                  yaxis={"automargin": True})}
+            "layout": base_layout(title,
+                                  xaxis={"tickangle": -40, "automargin": True,
+                                         "type": "category"},
+                                  yaxis={"automargin": True, "type": "category"})}
 
 
 def echarts_heatmap(z, x_labels, y_labels, title=None):
@@ -266,8 +269,14 @@ def radar_chart(categories, series_list, title=None):
                           for c, v, r in zip(cats, vals, raws)],
             "hoverinfo": "text",
         })
-    return {"data": data, "layout": base_layout(
-        title, polar={"radialaxis": {"visible": True, "range": [0, 1]}})}
+    layout = base_layout(
+        title, polar={"radialaxis": {"visible": True, "range": [0, 1],
+                                     "tickvals": [0, 0.25, 0.5, 0.75, 1.0]}})
+    layout["annotations"] = [{
+        "x": 0.5, "y": -0.22, "xref": "paper", "yref": "paper", "showarrow": False,
+        "text": "축 값 = 0~1 표준화 점수 (비교 기업 집합 내 상대값, 1=최고) · Hover 에 원값 표시",
+        "font": {"size": 10.5, "color": "#8aa0b2"}}]
+    return {"data": data, "layout": layout}
 
 
 def cytoscape_network(nodes, edges):

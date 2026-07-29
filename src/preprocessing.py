@@ -82,6 +82,22 @@ def parse_dates(series):
         if good8.any():
             out.loc[ext8.index[good8]] = pd.to_datetime(
                 ext8.loc[good8, 0], format="%Y%m%d", errors="coerce")
+    # 연도만 있는 값 ("2020", "2020.0" — 숫자형 컬럼 캐스팅 포함) → 해당 연도 1월 1일
+    mask = out.isna() & s.notna()
+    if mask.any():
+        yr = s[mask].str.extract(r"^((?:19|20)\d{2})(?:-0+)?$")[0]
+        good_yr = yr.notna()
+        if good_yr.any():
+            out.loc[yr.index[good_yr]] = pd.to_datetime(
+                yr[good_yr] + "-01-01", errors="coerce")
+    # Excel 날짜 일련번호 (5자리, 1954~2064년 범위) → 1899-12-30 기준 일수
+    mask = out.isna() & s.notna() & s.str.fullmatch(r"\d{5}(-0+)?", na=False)
+    if mask.any():
+        serial = pd.to_numeric(s[mask].str.split("-").str[0], errors="coerce")
+        in_range = serial.between(20000, 60000)
+        if in_range.any():
+            out.loc[serial.index[in_range]] = pd.to_datetime(
+                serial[in_range], unit="D", origin="1899-12-30", errors="coerce")
     return out
 
 
@@ -308,38 +324,56 @@ def split_names(value):
     return [s]
 
 
+_NUMERIC_ONLY_RE = re.compile(r"^[+-]?\d+(\.\d+)?$")
+
+
+def _mostly_numeric(series, threshold=0.7):
+    """시리즈 값이 대부분 순수 숫자인지 (오매핑된 건수 컬럼 등 판별)."""
+    s = series.dropna().astype(str).str.strip()
+    s = s[(s != "") & (~s.str.lower().isin(["nan", "none"]))]
+    if not len(s):
+        return False
+    return float(s.str.fullmatch(_NUMERIC_ONLY_RE).mean()) >= threshold
+
+
 def standardize_applicants(df, applicant_rules=None):
     """출원인 표준화 컬럼 생성.
 
     applicant_rules: storage 에 저장된 사용자 규칙
       {"mapping": {원본명: 표준명}, "groups": {구성사 표준명: 그룹 대표명}}
     생성 컬럼:
-      applicant_display : 분석에 사용하는 최종 표준명
-        (우선순위: 사용자 mapping > 데이터의 표준화 출원인 컬럼 > 자동 표준화)
+      applicant_display : 분석·필터('기업')에 사용하는 최종 표준명
+        (우선순위: 사용자 mapping > 데이터의 표준화 출원인 컬럼(값 그대로) > 자동 표준화)
       applicant_auto_std: 자동 표준화 후보값 (사용자 검토·승인 대상)
       applicant_raw     : 원본 첫 출원인 (복원용)
+
+    방어: 출원인/표준화 출원인 컬럼의 값이 대부분 숫자(오매핑된 건수 컬럼 등)이면
+    해당 컬럼을 무시하고 다른 소스를 사용한다.
     """
     rules = applicant_rules or {}
     user_map = {str(k).strip(): v for k, v in (rules.get("mapping") or {}).items()}
     groups = {str(k).strip(): v for k, v in (rules.get("groups") or {}).items()}
 
-    if "applicant" in df.columns:
-        raw_first = df["applicant"].map(lambda v: (split_names(v) or [""])[0])
-    elif "applicant_std" in df.columns:
-        raw_first = df["applicant_std"].map(lambda v: (split_names(v) or [""])[0])
-    else:
+    app_col = "applicant" if ("applicant" in df.columns
+                              and not _mostly_numeric(df["applicant"])) else None
+    std_col = "applicant_std" if ("applicant_std" in df.columns
+                                  and not _mostly_numeric(df["applicant_std"])) else None
+    raw_source = app_col or std_col
+    if raw_source is None:
         df["applicant_raw"] = ""
         df["applicant_auto_std"] = ""
         df["applicant_display"] = ""
+        df["_co_applicants"] = [[] for _ in range(len(df))]
         return df
 
+    raw_first = df[raw_source].map(lambda v: (split_names(v) or [""])[0])
     df["applicant_raw"] = raw_first
     df["applicant_auto_std"] = raw_first.map(auto_standardize_name)
 
-    if "applicant_std" in df.columns:
-        provided = df["applicant_std"].map(
-            lambda v: (split_names(v) or [""])[0]).map(
-            lambda s: auto_standardize_name(s) if s else "")
+    # 표준화 출원인 컬럼이 있으면 그 값을 그대로 사용 (재표준화하지 않음)
+    if std_col:
+        provided = df[std_col].map(lambda v: (split_names(v) or [""])[0].strip())
+        provided = provided.map(lambda s: "" if s.lower() in ("nan", "none") else s)
     else:
         provided = pd.Series([""] * len(df), index=df.index)
 
@@ -351,8 +385,41 @@ def standardize_applicants(df, applicant_rules=None):
 
     df["applicant_display"] = [
         _final(r, p, a) for r, p, a in zip(df["applicant_raw"], provided, df["applicant_auto_std"])]
-    df["_co_applicants"] = (df["applicant"].map(split_names)
-                            if "applicant" in df.columns else [[] for _ in range(len(df))])
+    df["_co_applicants"] = (df[app_col].map(split_names)
+                            if app_col else [[] for _ in range(len(df))])
+    return df
+
+
+def _derive_country(df):
+    """국가 컬럼 검증·파생.
+
+    국가 컬럼이 없거나 값이 국가 형태(2~3자 코드 또는 짧은 비숫자 텍스트)가 아니면,
+    공개번호/출원번호/등록번호의 선두 2자리 알파벳(KR10-…, US2020…)에서 파생한다.
+    기존 값은 country_raw 로 보존. 파생 성공률 30% 미만이면 변경하지 않는다.
+    """
+    def _country_like_frac(series):
+        s = series.dropna().astype(str).str.strip()
+        s = s[(s != "") & (~s.str.lower().isin(["nan", "none"]))]
+        if not len(s):
+            return 0.0
+        code = float(s.str.fullmatch(r"[A-Za-z]{2,3}").mean())
+        short_text = float(((s.str.len() <= 8)
+                            & (~s.str.fullmatch(_NUMERIC_ONLY_RE).fillna(False))
+                            & (~s.str.contains(r"\d{4}", regex=True))).mean())
+        return max(code, short_text)
+
+    has_valid = "country" in df.columns and _country_like_frac(df["country"]) >= 0.3
+    if has_valid:
+        return df
+    for id_col in ("pub_number", "app_number", "reg_number"):
+        if id_col not in df.columns:
+            continue
+        prefix = df[id_col].astype(str).str.extract(r"^\s*([A-Za-z]{2})")[0].str.upper()
+        if float(prefix.notna().mean()) >= 0.3:
+            if "country" in df.columns:
+                df["country_raw"] = df["country"]
+            df["country"] = prefix
+            break
     return df
 
 
@@ -378,8 +445,10 @@ def build_standard_frame(raw_df, mapping, applicant_rules=None):
     # 동일 실제 컬럼이 두 개념에 매핑될 수는 없음(automap 이 보장) — 방어적으로 중복 제거
     df = df.loc[:, ~df.columns.duplicated()]
 
+    raw_date_strs = {}
     for date_col in ("app_date", "pub_date", "reg_date", "priority_date", "expiry_date"):
         if date_col in df.columns:
+            raw_date_strs[date_col] = df[date_col].astype(str)
             df[date_col] = parse_dates(df[date_col])
             df[date_col + "_year"] = df[date_col].dt.year
 
@@ -387,7 +456,22 @@ def build_standard_frame(raw_df, mapping, applicant_rules=None):
     for date_col in ("app_date_year", "priority_date_year", "pub_date_year"):
         if date_col in df.columns:
             base_year = base_year.fillna(df[date_col])
+    # 폴백: 날짜 해석이 전부 실패하면 원본 문자열에서 4자리 연도만 추출 (출원일 우선)
+    if not base_year.notna().any():
+        for date_col in ("app_date", "priority_date", "pub_date"):
+            raw = raw_date_strs.get(date_col)
+            if raw is None:
+                continue
+            ext = raw.str.extract(r"(?<!\d)((?:19|20)\d{2})(?!\d)")[0]
+            years = pd.to_numeric(ext, errors="coerce")
+            base_year = base_year.fillna(years)
+            if date_col + "_year" in df.columns:
+                df[date_col + "_year"] = df[date_col + "_year"].fillna(years)
     df["_base_year"] = base_year
+
+    # 국가 폴백: 국가 컬럼이 없거나 값이 오염(숫자·날짜·빈값)됐으면 문헌번호 앞
+    # 2자리 국가코드(KR10-…, US…)에서 파생. 원본은 country_raw 로 보존.
+    df = _derive_country(df)
 
     if "legal_status" in df.columns:
         df["legal_status_raw"] = df["legal_status"]
@@ -613,12 +697,22 @@ _DATEISH_RE = re.compile(r"^(19|20)\d{2}([.\-/]\d{1,2}){0,2}\.?$|^(19|20)\d{6}$"
 _COUNTRY_CODE_RE = re.compile(r"^[A-Z]{2,3}$")
 
 
+_JUNK_TOKENS = frozenset(["nan", "none", "null", "n/a", "na", "-", "or", "and", "of",
+                          "the", "etc", "true", "false", "y", "n", "yes", "no"])
+
+
 def _clean_option_values(values):
-    """필터 옵션 오염값 제거: 순수 숫자·날짜형 값은 범주가 아니므로 제외."""
+    """필터 옵션 오염값 제거.
+
+    순수 숫자·날짜형 값, 접속사류 잔여 토큰(or/and 등), 1글자 값(문헌 종류코드 a 등)은
+    범주가 아니므로 제외한다.
+    """
     out = []
     for v in values:
         sv = str(v).strip()
-        if not sv or sv.lower() in ("nan", "none"):
+        if not sv or len(sv) <= 1:
+            continue
+        if sv.lower() in _JUNK_TOKENS:
             continue
         if _PURE_NUMBER_RE.match(sv) or _DATEISH_RE.match(sv):
             continue
