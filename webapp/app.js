@@ -366,7 +366,74 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
       }
       return div;
     }
-    return { box: box };
+
+    function aiPanel(analysisName, result, description) {
+      /* 그래프별 AI 인사이트 패널: 인사이트 요청 버튼 + 추가 질문 챗 입력창.
+         요약 통계·규칙 문장만 서버로 전달하며, LLM 미가용 시 규칙 기반으로 폴백. */
+      var ins = (result && result.insight) || { sentences: [], metrics: {} };
+      var history = [];
+      var panel = Ui.el(
+        '<div class="ai-panel">' +
+        '<div class="ai-head"><span class="ai-title">🤖 AI 인사이트</span>' +
+        '<button class="btn small primary ai-ask">인사이트 요청</button></div>' +
+        '<div class="chat-log"></div>' +
+        '<div class="chat-wait" style="display:none">AI 응답 생성 중…</div>' +
+        '<div class="chat-input-row">' +
+        '<input type="text" placeholder="이 그래프에 대해 추가로 질문하세요… (예: 가장 위험한 영역은?)">' +
+        '<button class="btn small">질문</button></div></div>');
+      var log = panel.querySelector('.chat-log');
+      var waitEl = panel.querySelector('.chat-wait');
+      var input = panel.querySelector('.chat-input-row input');
+      var sendBtn = panel.querySelector('.chat-input-row button');
+      var askBtn = panel.querySelector('.ai-ask');
+
+      function addMsg(role, text, source) {
+        var m = Ui.el('<div class="chat-msg ' + role + '"></div>');
+        m.textContent = text;
+        if (role === 'assistant') {
+          m.appendChild(Ui.el('<span class="chat-src">' +
+            (source === 'llm' ? 'LLM 생성 (요약 통계 기반)' : '규칙 기반 폴백') + '</span>'));
+        }
+        log.appendChild(m);
+        log.scrollTop = log.scrollHeight;
+      }
+
+      function ask(question) {
+        if (question) {
+          addMsg('user', question);
+          history.push({ role: 'user', content: question });
+        }
+        waitEl.style.display = '';
+        askBtn.disabled = true; sendBtn.disabled = true;
+        Api.post('/api/insight', {
+          analysis: analysisName, chat: true, question: question || null,
+          history: history.slice(-8),
+          metrics: ins.metrics || {}, sentences: ins.sentences || [],
+          description: (description || '').slice(0, 500)
+        }, 'AI 인사이트 생성 중…').then(function (d) {
+          addMsg('assistant', d.answer || '(응답 없음)', d.source);
+          history.push({ role: 'assistant', content: (d.answer || '').slice(0, 800) });
+        }).catch(function (e) {
+          addMsg('assistant', '요청 실패: ' + e.message, 'rule');
+        }).finally(function () {
+          waitEl.style.display = 'none';
+          askBtn.disabled = false; sendBtn.disabled = false;
+        });
+      }
+      askBtn.addEventListener('click', function () { ask(null); });
+      function submit() {
+        var q = input.value.trim();
+        if (!q) return;
+        input.value = '';
+        ask(q);
+      }
+      sendBtn.addEventListener('click', submit);
+      input.addEventListener('keydown', function (ev) {
+        if (ev.key === 'Enter') submit();
+      });
+      return panel;
+    }
+    return { box: box, aiPanel: aiPanel };
   })();
 
   /* ---------------------------------------------------------------- Drill */
@@ -424,11 +491,14 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
 
   /* ----------------------------------------------------- 공통 카드 빌더 */
   function card(title, helpText) {
+    // 설명(helpText)은 hover 툴팁이 아니라 카드 상단에 상시 표시한다.
     var c = Ui.el(
       '<div class="card"><div class="card-head"><span class="card-title">' + Ui.esc(title) +
-      (helpText ? '<span class="help" title="' + Ui.esc(helpText) + '">ⓘ</span>' : '') +
-      '</span><span class="card-controls"></span></div><div class="card-body"></div></div>');
-    return { root: c, controls: c.querySelector('.card-controls'), body: c.querySelector('.card-body') };
+      '</span><span class="card-controls"></span></div>' +
+      (helpText ? '<div class="card-desc">' + Ui.esc(helpText) + '</div>' : '') +
+      '<div class="card-body"></div></div>');
+    return { root: c, controls: c.querySelector('.card-controls'),
+             body: c.querySelector('.card-body'), desc: helpText || '' };
   }
 
   function simpleTable(headers, rows) {
@@ -569,6 +639,8 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
       listCard('핵심특허·핵심기업 경보', alertRows, 'power');
       c.body.appendChild(lists);
       c.body.appendChild(Insight.box(r, 'overview'));
+      c.body.appendChild(Insight.aiPanel('overview', r,
+        'Executive Overview — 포트폴리오 전반의 성장/쇠퇴 기술, 신규 조합, 경쟁사 전략변화, 권리장벽·공백영역 요약'));
       c.controls.appendChild(Render.excelButton(null, 'overview_patents'));
     }).catch(function (e) { c.body.innerHTML = Render.statusBlock({ status: 'error', message: e.message }); });
   };
@@ -592,6 +664,7 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
         if (r.status !== 'ok') { c.body.innerHTML = Render.statusBlock(r); return; }
         opts.renderOk(r, c, function (t) { chartTarget = t; });
         c.body.appendChild(Insight.box(r, opts.analysis));
+        c.body.appendChild(Insight.aiPanel(opts.analysis, r, opts.title + ' — ' + (c.desc || '')));
       }).catch(function (e) {
         c.body.innerHTML = Render.statusBlock({ status: 'error', message: e.message });
       });
@@ -602,6 +675,93 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
   }
 
   function plotlyDrill(drill) { Drill.open(drill, '근거 특허'); }
+
+  /* ---------- 버블차트 X/Y축 직접 선택 ----------
+     각 포인트의 customdata.m(지표 dict)을 이용해 서버 재계산 없이 축을 재배치한다. */
+  var AXIS_FIELDS = {
+    'emerging-combinations': {
+      fields: { n_ab: '조합 누적 특허 수', growth: '최근 성장률', lift: 'Lift',
+                new_applicants: '신규 출원인 수', active_ratio: '유효특허 비율',
+                score: 'Emerging Score' } },
+    'lifecycle': {
+      fields: { maturity: '성숙도(정규화)', momentum: '모멘텀(정규화)', total: '누적 건수',
+                growth: '최근 성장률', age: '경과연수', concentration: '출원인 집중도(HHI)',
+                new_entrants: '신규 출원인 수', n_applicants: '출원인 수',
+                active_ratio: '유효특허 비율', combo_growth: '조합 증가율',
+                avg_citations: '평균 피인용' } },
+    'opportunity': {
+      fields: { attractiveness: '매력도', entry_possibility: '진입 가능성',
+                opportunity_score: 'Opportunity Score', barrier: '권리장벽',
+                total: '특허 수', growth: '최근 성장률', new_entrants: '신규 출원인 수',
+                active_granted: '유효등록 수', cr3: '상위3사 점유율(CR3)' } }
+  };
+
+  function attachAxisPicker(c, holder, analysis) {
+    var def = AXIS_FIELDS[analysis];
+    if (!def || !holder.data) return;
+    function axTitle(ax) {
+      if (!ax || !ax.title) return '';
+      return typeof ax.title === 'string' ? ax.title : (ax.title.text || '');
+    }
+    var orig = {
+      traces: (holder.data || []).map(function (tr) {
+        return { x: (tr.x || []).slice(), y: (tr.y || []).slice() };
+      }),
+      xTitle: axTitle(holder.layout.xaxis), yTitle: axTitle(holder.layout.yaxis),
+      xType: holder.layout.xaxis ? holder.layout.xaxis.type : null,
+      xRange: (holder.layout.xaxis && holder.layout.xaxis.range)
+        ? holder.layout.xaxis.range.slice() : null,
+      yRange: (holder.layout.yaxis && holder.layout.yaxis.range)
+        ? holder.layout.yaxis.range.slice() : null,
+      shapes: (holder.layout.shapes || []).slice(),
+      annotations: (holder.layout.annotations || []).slice()
+    };
+    var wrap = Ui.el('<span class="axis-picker"><span>축 선택</span></span>');
+    function mkSel(axisLabel) {
+      var sel = document.createElement('select');
+      sel.appendChild(Ui.el('<option value="">' + axisLabel + ': 기본</option>'));
+      Object.keys(def.fields).forEach(function (k) {
+        var o = document.createElement('option');
+        o.value = k; o.textContent = axisLabel + ': ' + def.fields[k];
+        sel.appendChild(o);
+      });
+      return sel;
+    }
+    var xSel = mkSel('X'), ySel = mkSel('Y');
+    function metricArray(tr, key) {
+      return (tr.customdata || []).map(function (cd) {
+        var v = cd && cd.m ? cd.m[key] : null;
+        return (v === undefined || v === null) ? null : v;
+      });
+    }
+    function apply() {
+      var xk = xSel.value, yk = ySel.value;
+      var custom = !!(xk || yk);
+      (holder.data || []).forEach(function (tr, i) {
+        if (tr.mode !== 'markers' || !tr.customdata) return;
+        var xs = xk ? metricArray(tr, xk) : orig.traces[i].x;
+        var ys = yk ? metricArray(tr, yk) : orig.traces[i].y;
+        Plotly.restyle(holder, { x: [xs], y: [ys] }, [i]);
+      });
+      var re = {
+        'xaxis.title.text': xk ? def.fields[xk] : orig.xTitle,
+        'yaxis.title.text': yk ? def.fields[yk] : orig.yTitle,
+        'xaxis.type': xk ? 'linear' : (orig.xType || 'linear'),
+        shapes: custom ? [] : orig.shapes,
+        annotations: custom ? [] : orig.annotations
+      };
+      if (custom || !orig.xRange) { re['xaxis.autorange'] = true; }
+      else { re['xaxis.range'] = orig.xRange; }
+      if (custom || !orig.yRange) { re['yaxis.autorange'] = true; }
+      else { re['yaxis.range'] = orig.yRange; }
+      Plotly.relayout(holder, re);
+    }
+    xSel.addEventListener('change', apply);
+    ySel.addEventListener('change', apply);
+    wrap.appendChild(xSel);
+    wrap.appendChild(ySel);
+    c.controls.prepend(wrap);
+  }
 
   /* ---------- 2. Technology Evolution ---------- */
   Views.evolution = function (content) {
@@ -615,6 +775,7 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
             c.body.appendChild(holder);
             Render.plotly(holder, r.figure, plotlyDrill);
             setTarget({ kind: 'plotly', el: holder });
+            attachAxisPicker(c, holder, 'lifecycle');
             var counts = r.phase_counts;
             var badges = Object.keys(counts).filter(function (p) { return counts[p]; })
               .map(function (p) { return '<span class="badge">' + Ui.esc(p) + ' ' + counts[p] + '</span>'; }).join('');
@@ -657,6 +818,7 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
             c.body.appendChild(holder);
             Render.plotly(holder, r.figure, plotlyDrill);
             setTarget({ kind: 'plotly', el: holder });
+            attachAxisPicker(c, holder, 'emerging-combinations');
             var rows = (r.combos || []).slice(0, 15).map(function (x) {
               var tr = document.createElement('tr');
               var td0 = document.createElement('td');
@@ -899,9 +1061,10 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
         c.body.appendChild(holder);
         Render.plotly(holder, r.figure, plotlyDrill);
         setTarget({ kind: 'plotly', el: holder });
-        // 가중치 슬라이더 (클라이언트 즉시 재계산)
+        attachAxisPicker(c, holder, 'opportunity');
+        // 가중치 슬라이더 (클라이언트 즉시 재계산 — 기본 축 보기에서 동작)
         sliderBox = Ui.el('<div style="margin-top:8px;border-top:1px dashed #e0e8ef;padding-top:8px">' +
-          '<b style="font-size:12px">가중치 (즉시 반영)</b></div>');
+          '<b style="font-size:12px">가중치 (즉시 반영 · 축 선택이 기본일 때 적용)</b></div>');
         var labels = { growth: '성장률', new_entrants: '신규 출원인', combo_growth: '조합 증가',
           keyword_growth: '키워드 증가', problem_recurrence: '과제 반복', adjacency: '인접 연결성',
           barrier: '권리장벽(분모)' };

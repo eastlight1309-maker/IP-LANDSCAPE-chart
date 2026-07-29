@@ -109,7 +109,13 @@ def compute_emerging(df, settings):
             "label": "%s×%s" % (r["a"][:8], r["b"][:8]), "hover": hover,
             "line_width": 1 + 3 * (r["active_ratio"] or 0),
             "customdata": {"drill": {"type": "combo", "a": r["a"], "b": r["b"]},
-                           "score": r["score"]},
+                           "score": r["score"],
+                           # 축 선택 기능용 포인트별 지표 (프론트에서 X/Y 재배치)
+                           "m": {"n_ab": r["n_ab"], "growth": r["growth"],
+                                 "lift": round(r["lift"], 3),
+                                 "new_applicants": r["new_applicants"],
+                                 "active_ratio": r["active_ratio"],
+                                 "score": r["score"]}},
         })
     x_vals = [p["x"] for p in points]
     y_vals = [p["y"] for p in points]

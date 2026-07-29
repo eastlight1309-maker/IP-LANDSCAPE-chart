@@ -212,7 +212,18 @@ def compute_lifecycle(df, settings):
                        "size": (r["n_active"] or r["total"]),
                        "color": r["n_applicants"], "label": r["tech"], "hover": hover,
                        "customdata": {"drill": {"type": "tech", "tech": r["tech"]},
-                                      "phase": r["phase"]}})
+                                      "phase": r["phase"],
+                                      # 축 선택 기능용 포인트별 지표
+                                      "m": {"maturity": r["maturity"],
+                                            "momentum": r["momentum"],
+                                            "total": r["total"], "growth": r["growth"],
+                                            "age": r["age"],
+                                            "concentration": r["concentration"],
+                                            "new_entrants": r["new_entrants"],
+                                            "n_applicants": r["n_applicants"],
+                                            "active_ratio": r["active_ratio"],
+                                            "combo_growth": r["combo_growth"],
+                                            "avg_citations": r["avg_citations"]}}})
     fig = bubble_chart(points, "기술 성숙도 (정규화)", "최근 성장 모멘텀 (정규화)",
                        title="기술 생애주기 Phase Map",
                        quadrants={"x_mid": 0.5, "y_mid": 0.5,

@@ -61,7 +61,7 @@ from src.preprocessing import apply_filters, filter_options, auto_standardize_na
 from src.data_access import (list_datasets, validate_dataset_name, get_dataset_columns,
                              get_prepared, inject_dataset, load_sample_dataframe)
 from src import storage
-from src.insights import llm_augment_insight, build_insight
+from src.insights import llm_augment_insight, llm_chat, build_insight
 from src.viz_payload import jsonable, empty_result
 from src.analyses.common import select_patents, patent_records, export_dataframe
 from src.analyses.overview import compute_overview
@@ -481,14 +481,33 @@ def register_routes(app):
     @app.route("/api/insight", methods=["POST"])
     @wrap
     def api_insight():
-        """POST {"analysis","metrics":{요약 통계},"sentences":[규칙 문장...]} →
-        LLM 인사이트 (실패·비활성 시 규칙 기반 그대로). 원문 데이터는 전달하지 않는다.
+        """그래프별 LLM 인사이트·챗.
+
+        POST {"analysis", "metrics":{요약 통계}, "sentences":[규칙 문장...],
+              "question"?: 사용자 추가 질문, "history"?: [{"role","content"}...],
+              "description"?: 그래프 설명, "chat"?: true}
+        - chat/question 모드 → {"status":"ok","answer":…,"source":"llm|rule"}
+          (LLM 미가용·실패 시 규칙 기반 요약으로 자동 폴백)
+        - 그 외(기존 방식) → 문장 목록 {"sentences":[...], "source":…}
+        원문 특허 데이터는 전달하지 않는다 (요약 통계만).
         """
         body = json_body()
         settings = _settings()
-        rule = build_insight(body.get("sentences") or [], body.get("metrics") or {})
-        out = llm_augment_insight(str(body.get("analysis", ""))[:60], rule,
-                                  body.get("metrics") or {}, settings)
+        analysis = str(body.get("analysis", ""))[:60]
+        metrics = body.get("metrics") or {}
+        sentences = body.get("sentences") or []
+        if body.get("chat") or body.get("question"):
+            history = body.get("history")
+            if not isinstance(history, list):
+                history = []
+            history = [h for h in history if isinstance(h, dict)][-8:]
+            out = llm_chat(analysis, metrics, sentences, body.get("question"),
+                           history, settings,
+                           description=body.get("description"))
+            out["status"] = "ok"
+            return out
+        rule = build_insight(sentences, metrics)
+        out = llm_augment_insight(analysis, rule, metrics, settings)
         out["status"] = "ok"
         return out
 

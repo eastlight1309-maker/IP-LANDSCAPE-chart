@@ -259,7 +259,16 @@ def compute_opportunity(df, settings):
              "customdata": {"drill": {"type": "tech", "tech": r["tech"]},
                             "components": r["components"], "barrier": r["barrier"],
                             "total": r["total"], "tech": r["tech"],
-                            "own": bool(r["own_capability"])}}
+                            "own": bool(r["own_capability"]),
+                            # 축 선택 기능용 포인트별 지표
+                            "m": {"attractiveness": r["attractiveness"],
+                                  "entry_possibility": r["entry_possibility"],
+                                  "opportunity_score": r["opportunity_score"],
+                                  "barrier": r["barrier"], "total": r["total"],
+                                  "growth": round(r["growth"], 4),
+                                  "new_entrants": r["new_entrants"],
+                                  "active_granted": r["active_granted"],
+                                  "cr3": r["cr3"]}}}
         (own_points if r["own_capability"] else points).append(p)
 
     def _trace(pts, symbol, name):

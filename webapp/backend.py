@@ -3032,6 +3032,48 @@ def check_small_sample(n, settings):
     return n < get_threshold(settings, "insight_small_sample")
 
 
+def llm_chat(analysis_name, metrics, sentences, question, history, settings,
+             description=None):
+    """그래프별 LLM 챗 인사이트 (요약 통계만 전달, 실패 시 규칙 기반 폴백).
+
+    question: 사용자 추가 질문 (없으면 '이 그래프의 인사이트를 도출' 기본 요청).
+    history: [{"role":"user|assistant","content":…}] 최근 대화 (최대 6턴만 사용).
+    반환: {"answer": str, "source": "llm|rule"} — 원문 특허 데이터는 전달하지 않는다.
+    """
+    rule_summary = " / ".join(str(s) for s in (sentences or [])[:6])
+    try:
+        stats_json = json.dumps(metrics or {}, ensure_ascii=False, default=str)[:2500]
+    except (TypeError, ValueError):
+        stats_json = str(metrics)[:2500]
+    parts = [
+        "다음은 특허 IP Landscape 분석 화면 '%s' 의 요약 정보입니다."
+        % sanitize_for_llm(analysis_name, 80)]
+    if description:
+        parts.append("그래프 설명: %s" % sanitize_for_llm(description, 500))
+    if rule_summary:
+        parts.append("규칙 기반 요약: %s" % sanitize_for_llm(rule_summary, 1200))
+    parts.append("요약 지표(JSON): %s" % sanitize_for_llm(stats_json))
+    for turn in (history or [])[-6:]:
+        role = "질문" if str(turn.get("role")) == "user" else "이전 답변"
+        parts.append("%s: %s" % (role, sanitize_for_llm(str(turn.get("content", "")), 500)))
+    q = sanitize_for_llm(str(question or ""), 500).strip()
+    if q:
+        parts.append("사용자 질문: %s" % q)
+        parts.append("위 요약 정보만 근거로 사용자 질문에 한국어로 답하세요.")
+    else:
+        parts.append("위 요약 정보만 근거로 이 그래프에서 도출할 수 있는 핵심 인사이트를 "
+                     "3~5문장의 한국어로 작성하세요. 긍정 요인과 위험 요인을 구분하세요.")
+    parts.append("규칙: 통계에 없는 수치를 만들지 말 것. 법률적 판단(FTO/유효성)이나 "
+                 "인과관계 단정을 하지 말 것. 표본이 적으면 그 한계를 언급할 것.")
+    text = call_llm("\n".join(parts), llm_id=(settings or {}).get("llm_id"),
+                    max_tokens=700)
+    if text:
+        return {"answer": text.strip(), "source": "llm"}
+    fallback = rule_summary or MESSAGES["no_data"]
+    return {"answer": "%s (근거: 규칙 기반 요약) %s"
+            % (MESSAGES["llm_fallback"], fallback), "source": "rule"}
+
+
 def llm_augment_insight(analysis_name, rule_insight, summary_stats, settings):
     """LLM 인사이트 생성 시도. 실패 시 규칙 기반 그대로 반환 (+폴백 안내).
 
@@ -3888,7 +3930,13 @@ def compute_emerging(df, settings):
             "label": "%s×%s" % (r["a"][:8], r["b"][:8]), "hover": hover,
             "line_width": 1 + 3 * (r["active_ratio"] or 0),
             "customdata": {"drill": {"type": "combo", "a": r["a"], "b": r["b"]},
-                           "score": r["score"]},
+                           "score": r["score"],
+                           # 축 선택 기능용 포인트별 지표 (프론트에서 X/Y 재배치)
+                           "m": {"n_ab": r["n_ab"], "growth": r["growth"],
+                                 "lift": round(r["lift"], 3),
+                                 "new_applicants": r["new_applicants"],
+                                 "active_ratio": r["active_ratio"],
+                                 "score": r["score"]}},
         })
     x_vals = [p["x"] for p in points]
     y_vals = [p["y"] for p in points]
@@ -4139,7 +4187,18 @@ def compute_lifecycle(df, settings):
                        "size": (r["n_active"] or r["total"]),
                        "color": r["n_applicants"], "label": r["tech"], "hover": hover,
                        "customdata": {"drill": {"type": "tech", "tech": r["tech"]},
-                                      "phase": r["phase"]}})
+                                      "phase": r["phase"],
+                                      # 축 선택 기능용 포인트별 지표
+                                      "m": {"maturity": r["maturity"],
+                                            "momentum": r["momentum"],
+                                            "total": r["total"], "growth": r["growth"],
+                                            "age": r["age"],
+                                            "concentration": r["concentration"],
+                                            "new_entrants": r["new_entrants"],
+                                            "n_applicants": r["n_applicants"],
+                                            "active_ratio": r["active_ratio"],
+                                            "combo_growth": r["combo_growth"],
+                                            "avg_citations": r["avg_citations"]}}})
     fig = bubble_chart(points, "기술 성숙도 (정규화)", "최근 성장 모멘텀 (정규화)",
                        title="기술 생애주기 Phase Map",
                        quadrants={"x_mid": 0.5, "y_mid": 0.5,
@@ -4431,7 +4490,16 @@ def compute_opportunity(df, settings):
              "customdata": {"drill": {"type": "tech", "tech": r["tech"]},
                             "components": r["components"], "barrier": r["barrier"],
                             "total": r["total"], "tech": r["tech"],
-                            "own": bool(r["own_capability"])}}
+                            "own": bool(r["own_capability"]),
+                            # 축 선택 기능용 포인트별 지표
+                            "m": {"attractiveness": r["attractiveness"],
+                                  "entry_possibility": r["entry_possibility"],
+                                  "opportunity_score": r["opportunity_score"],
+                                  "barrier": r["barrier"], "total": r["total"],
+                                  "growth": round(r["growth"], 4),
+                                  "new_entrants": r["new_entrants"],
+                                  "active_granted": r["active_granted"],
+                                  "cr3": r["cr3"]}}}
         (own_points if r["own_capability"] else points).append(p)
 
     def _trace(pts, symbol, name):
@@ -6751,14 +6819,33 @@ def register_routes(app):
     @app.route("/api/insight", methods=["POST"])
     @wrap
     def api_insight():
-        """POST {"analysis","metrics":{요약 통계},"sentences":[규칙 문장...]} →
-        LLM 인사이트 (실패·비활성 시 규칙 기반 그대로). 원문 데이터는 전달하지 않는다.
+        """그래프별 LLM 인사이트·챗.
+
+        POST {"analysis", "metrics":{요약 통계}, "sentences":[규칙 문장...],
+              "question"?: 사용자 추가 질문, "history"?: [{"role","content"}...],
+              "description"?: 그래프 설명, "chat"?: true}
+        - chat/question 모드 → {"status":"ok","answer":…,"source":"llm|rule"}
+          (LLM 미가용·실패 시 규칙 기반 요약으로 자동 폴백)
+        - 그 외(기존 방식) → 문장 목록 {"sentences":[...], "source":…}
+        원문 특허 데이터는 전달하지 않는다 (요약 통계만).
         """
         body = json_body()
         settings = _settings()
-        rule = build_insight(body.get("sentences") or [], body.get("metrics") or {})
-        out = llm_augment_insight(str(body.get("analysis", ""))[:60], rule,
-                                  body.get("metrics") or {}, settings)
+        analysis = str(body.get("analysis", ""))[:60]
+        metrics = body.get("metrics") or {}
+        sentences = body.get("sentences") or []
+        if body.get("chat") or body.get("question"):
+            history = body.get("history")
+            if not isinstance(history, list):
+                history = []
+            history = [h for h in history if isinstance(h, dict)][-8:]
+            out = llm_chat(analysis, metrics, sentences, body.get("question"),
+                           history, settings,
+                           description=body.get("description"))
+            out["status"] = "ok"
+            return out
+        rule = build_insight(sentences, metrics)
+        out = llm_augment_insight(analysis, rule, metrics, settings)
         out["status"] = "ok"
         return out
 
