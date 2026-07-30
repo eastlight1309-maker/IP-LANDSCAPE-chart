@@ -335,3 +335,24 @@ def test_portfolio_index_payload(client):
     assert data["bubble"]["data"][0]["customdata"][0]["m"]["avg_ci"] is not None
     assert "유사 지표" in data["meta"]["note"]
     assert data["top_patents"]
+
+
+def test_portfolio_index_pai_charts(client):
+    """PAI/MC/패밀리 버블 차트 payload + 연도축 정수 포맷."""
+    data = _post(client, "/api/portfolio-index", {"filters": {}}).get_json()
+    assert data["status"] == "ok"
+    fb = data["family_bubble"]["data"][0]
+    assert fb["mode"] == "markers+text"          # 버블에 출원인 라벨 표시
+    assert fb["text"] and fb["customdata"][0]["m"]["families"] is not None
+    assert data["family_bubble"]["layout"]["xaxis"]["title"] == "특허 패밀리 건수"
+    assert "Competitive Impact" in data["family_bubble"]["layout"]["yaxis"]["title"]
+    assert data["mc_bar"]["data"]
+    assert "Patent Asset Index" in data["rank"]["layout"]["title"]["text"]
+    assert data["companies"][0]["families"] >= 1
+    if data.get("trend"):
+        assert data["trend"]["layout"]["xaxis"]["tickformat"] == "d"
+
+
+def test_basic_stats_year_axis_integer(client):
+    data = _post(client, "/api/basic-stats", {"filters": {}}).get_json()
+    assert data["annual"]["layout"]["xaxis"]["tickformat"] == "d"

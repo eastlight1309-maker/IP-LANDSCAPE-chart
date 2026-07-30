@@ -61,7 +61,8 @@ def compute_basic_stats(df, settings):
     if active_s.sum() > 0:
         series_list.append({"name": "유효", "x": [int(y) for y in active_s.index],
                             "y": [float(v) for v in active_s.values]})
-    fig_annual = line_chart(series_list, "연도", "건수", title="연도별 출원 동향")
+    fig_annual = line_chart(series_list, "연도", "건수", title="연도별 출원 동향",
+                            year_axis=True)
     for tr in fig_annual["data"]:
         tr["customdata"] = [{"drill": {"type": "year", "year": int(x)}} for x in tr["x"]]
 

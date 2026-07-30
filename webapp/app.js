@@ -695,8 +695,10 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
                 total: '특허 수', growth: '최근 성장률', new_entrants: '신규 출원인 수',
                 active_granted: '유효등록 수', cr3: '상위3사 점유율(CR3)' } },
     'portfolio-index': {
-      fields: { n: '포트폴리오 규모(건수)', avg_ci: '평균 CI(질)',
-                portfolio_index: 'Portfolio Index', avg_tr: '평균 TR(기술 영향력)',
+      fields: { families: '특허 패밀리 건수', n: '문헌 수',
+                avg_ci: '평균 Competitive Impact',
+                portfolio_index: 'Patent Asset Index',
+                avg_tr: '평균 TR(기술 영향력)',
                 avg_mc: '평균 MC(시장 커버리지)', growth: '최근 성장률' } }
   };
 
@@ -812,10 +814,35 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
       { label: '기술분류 동향', render: statsTab('기술분류별 건수 · 연도 동향',
           '기술분류별 누적 건수 순위와 분류×연도 동향 매트릭스입니다. 다중분류는 Settings 의 처리방식을 따르지 않고 각 분류에 1건씩 계산합니다.',
           ['tech', 'tech_year']) },
-      { label: 'Portfolio Index', render: function (h) {
+      { label: 'Patent Asset Index', render: function (h) {
         analysisCard({
           analysis: 'portfolio-index', holder: h,
-          title: '포트폴리오 가치 지표 (PatentSight 유사 지표)',
+          title: 'Patent Asset Index · Competitive Impact · Market Coverage (PatentSight 유사 지표)',
+          help: 'TR(기술 영향력)=출원연도 코호트로 보정한 피인용, MC(시장 커버리지)=패밀리 국가 수 표준화(1.0=전체 평균), CI(Competitive Impact)=TR×MC, Patent Asset Index(PAI)=유효특허 CI 합계입니다. 버블차트: X=특허 패밀리 건수, Y=평균 Competitive Impact, 버블 크기=패밀리 건수, 라벨=출원인. 상단 축 선택으로 X·Y 지표를 자유롭게 바꿀 수 있습니다. PatentSight 공식 산식과 동일하지 않은 유사 지표입니다.',
+          renderOk: function (r, c, setTarget) {
+            var fb = Ui.el('<div class="chart-holder tall"></div>');
+            c.body.appendChild(fb);
+            Render.plotly(fb, r.family_bubble, plotlyDrill);
+            setTarget({ kind: 'plotly', el: fb });
+            attachAxisPicker(c, fb, 'portfolio-index');
+            c.body.appendChild(Ui.el('<div class="disclaimer">버블 크기는 특허 패밀리 건수를 ' +
+              '화면에 맞게 면적 비례로 스케일한 것입니다. 버블을 클릭하면 해당 출원인의 근거 ' +
+              '특허 목록이 열립니다.</div>'));
+            if (r.mc_bar) {
+              var mc = Ui.el('<div class="chart-holder"></div>');
+              c.body.appendChild(mc);
+              Render.plotly(mc, r.mc_bar, plotlyDrill);
+            }
+            var pai = Ui.el('<div class="chart-holder"></div>');
+            c.body.appendChild(pai);
+            Render.plotly(pai, r.rank, plotlyDrill);
+          }
+        });
+      } },
+      { label: 'Portfolio 종합', render: function (h) {
+        analysisCard({
+          analysis: 'portfolio-index', holder: h,
+          title: '포트폴리오 가치 지표 종합 (PatentSight 유사 지표)',
           help: 'TR(기술 영향력)=출원연도 코호트로 보정한 피인용, MC(시장 커버리지)=패밀리 국가 수 표준화, CI=TR×MC, Portfolio Index=유효특허 CI 합계입니다. PatentSight 의 PAI/CI/TR/MC 에서 착안한 유사 지표로 공식 산식과 동일하지 않습니다. 버블: X=규모, Y=평균 CI(질), 크기=Portfolio Index, 색=최근 성장률.',
           renderOk: function (r, c, setTarget) {
             var rank = Ui.el('<div class="chart-holder"></div>');
@@ -1261,7 +1288,8 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
             panel.body.appendChild(trendHolder);
             Render.plotly(trendHolder, {
               data: [{ type: 'bar', x: d.trend.years, y: d.trend.counts }],
-              layout: { margin: { l: 40, r: 10, t: 10, b: 30 }, height: 190 }
+              layout: { margin: { l: 40, r: 10, t: 10, b: 30 }, height: 190,
+                        xaxis: { tickformat: 'd', hoverformat: 'd' } }
             });
             var db = Ui.el('<button class="btn small">근거 특허 보기</button>');
             db.addEventListener('click', function () {

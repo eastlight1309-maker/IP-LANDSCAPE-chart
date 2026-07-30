@@ -2938,15 +2938,21 @@ def sankey(nodes, links, title=None):
     return {"data": [trace], "layout": base_layout(title, margin={"l": 10, "r": 10, "t": 40, "b": 10})}
 
 
-def line_chart(series_list, x_title, y_title, title=None):
-    """복수 시계열 라인차트. series_list: [{name, x:[..], y:[..], color?}]."""
+def line_chart(series_list, x_title, y_title, title=None, year_axis=False):
+    """복수 시계열 라인차트. series_list: [{name, x:[..], y:[..], color?}].
+
+    year_axis=True 면 X축을 정수 연도로 고정 (소수점 눈금 방지).
+    """
     data = []
     for i, s in enumerate(series_list):
         data.append({"type": "scatter", "mode": "lines+markers", "name": s["name"],
                      "x": s["x"], "y": s["y"],
                      "line": {"color": s.get("color", PALETTE[i % len(PALETTE)])}})
+    xaxis = {"title": x_title}
+    if year_axis:
+        xaxis.update({"tickformat": "d", "hoverformat": "d"})
     return {"data": data, "layout": base_layout(
-        title, xaxis={"title": x_title}, yaxis={"title": y_title})}
+        title, xaxis=xaxis, yaxis={"title": y_title})}
 
 
 def bar_chart(x, y, title=None, orientation="v", hovertext=None, colors=None,
@@ -6477,7 +6483,8 @@ def compute_basic_stats(df, settings):
     if active_s.sum() > 0:
         series_list.append({"name": "유효", "x": [int(y) for y in active_s.index],
                             "y": [float(v) for v in active_s.values]})
-    fig_annual = line_chart(series_list, "연도", "건수", title="연도별 출원 동향")
+    fig_annual = line_chart(series_list, "연도", "건수", title="연도별 출원 동향",
+                            year_axis=True)
     for tr in fig_annual["data"]:
         tr["customdata"] = [{"drill": {"type": "year", "year": int(x)}} for x in tr["x"]]
 
@@ -6682,17 +6689,19 @@ def compute_portfolio_index(df, settings):
     recent = int(get_threshold(settings, "recent_years"))
     top_n = int(get_limit(settings, "top_n_default")) + 5
 
+    has_family = "family_id" in scoped.columns and scoped["family_id"].notna().any()
     rows = []
     for company, grp in scoped.groupby("applicant_display"):
         n = len(grp)
         if n < min_n:
             continue
         pai = float(grp["_ci"].sum())
+        families = int(grp["family_id"].astype(str).nunique()) if has_family else n
         all_grp = work[work["applicant_display"] == company]
         yrs = all_grp["_base_year"].dropna().astype(int)
         growth, _ = (robust_growth(year_counts(yrs), recent_years=recent)
                      if len(yrs) else (None, "n/a"))
-        rows.append({"company": str(company), "n": n,
+        rows.append({"company": str(company), "n": n, "families": families,
                      "portfolio_index": round(pai, 2),
                      "avg_ci": round(safe_div(pai, n, 0.0), 3),
                      "avg_tr": round(float(grp["_tr"].mean()), 3),
@@ -6709,8 +6718,8 @@ def compute_portfolio_index(df, settings):
     fig_rank = bar_chart(
         [r["company"] for r in top_bar][::-1],
         [r["portfolio_index"] for r in top_bar][::-1],
-        title="Portfolio Index 순위 (%s 기준)" % scope_label, orientation="h",
-        x_title="Portfolio Index (Σ CI)",
+        title="Patent Asset Index (PAI 유사) 순위 — %s 기준" % scope_label,
+        orientation="h", x_title="Patent Asset Index (Σ Competitive Impact)",
         hovertext=["%s — PI %s / %s건 / 평균 CI %s (TR %s × MC %s)"
                    % (r["company"], fmt_num(r["portfolio_index"]), fmt_num(r["n"]),
                       r["avg_ci"], r["avg_tr"], r["avg_mc"]) for r in top_bar][::-1],
@@ -6731,7 +6740,8 @@ def compute_portfolio_index(df, settings):
                       for r in shown],
         "hoverinfo": "text",
         "customdata": [{"drill": r["drill"],
-                        "m": {"n": r["n"], "avg_ci": r["avg_ci"],
+                        "m": {"n": r["n"], "families": r["families"],
+                              "avg_ci": r["avg_ci"],
                               "portfolio_index": r["portfolio_index"],
                               "avg_tr": r["avg_tr"], "avg_mc": r["avg_mc"],
                               "growth": r["growth"]}} for r in shown],
@@ -6745,6 +6755,49 @@ def compute_portfolio_index(df, settings):
         "포트폴리오 규모 vs 질 (크기=Portfolio Index)",
         xaxis={"title": "%s 수 (규모)" % scope_label},
         yaxis={"title": "평균 Competitive Impact (질)"})}
+
+    # ②-b 요청 사양 버블: X=특허 패밀리 건수, Y=평균 Competitive Impact,
+    #      크기=패밀리 건수(화면 최적화 스케일), 라벨=출원인, 색=평균 MC
+    fam_sizes = [max(r["families"], 1) for r in shown]
+    fmax = max(fam_sizes)
+    family_bubble = {"data": [{
+        "type": "scatter", "mode": "markers+text",
+        "x": [r["families"] for r in shown], "y": [r["avg_ci"] for r in shown],
+        "text": [r["company"][:12] for r in shown], "textposition": "top center",
+        "textfont": {"size": 10, "color": "#2b445c"},
+        "hovertext": ["<b>%s</b><br>패밀리 %s건 / 평균 CI %s<br>PAI %s / TR %s / MC %s"
+                      % (r["company"], fmt_num(r["families"]), r["avg_ci"],
+                         fmt_num(r["portfolio_index"]), r["avg_tr"], r["avg_mc"])
+                      for r in shown],
+        "hoverinfo": "text",
+        "customdata": [{"drill": r["drill"],
+                        "m": {"families": r["families"], "n": r["n"],
+                              "avg_ci": r["avg_ci"],
+                              "portfolio_index": r["portfolio_index"],
+                              "avg_tr": r["avg_tr"], "avg_mc": r["avg_mc"],
+                              "growth": r["growth"]}} for r in shown],
+        "marker": {"size": fam_sizes, "sizemode": "area",
+                   "sizeref": 2.0 * fmax / (46 ** 2), "sizemin": 9,
+                   "color": [r["avg_mc"] for r in shown],
+                   "colorscale": "Blues", "showscale": True,
+                   "colorbar": {"title": "평균 MC", "thickness": 12},
+                   "line": {"width": 1, "color": "#33506a"}, "opacity": 0.88},
+    }], "layout": base_layout(
+        "기업별 패밀리 규모 × Competitive Impact (크기=패밀리 건수)",
+        xaxis={"title": "특허 패밀리 건수"},
+        yaxis={"title": "평균 Competitive Impact (CI)"})}
+
+    # ②-c Market Coverage 차트: 기업별 평균 MC 막대
+    mc_sorted = sorted(shown, key=lambda r: -r["avg_mc"])[:top_n]
+    fig_mc = bar_chart(
+        [r["company"] for r in mc_sorted][::-1],
+        [r["avg_mc"] for r in mc_sorted][::-1],
+        title="Market Coverage (평균 MC — %s 표준화)" % mc_source, orientation="h",
+        x_title="평균 Market Coverage (1.0 = 전체 평균)",
+        hovertext=["%s — 평균 MC %s / 패밀리 %s건 / PAI %s"
+                   % (r["company"], r["avg_mc"], fmt_num(r["families"]),
+                      fmt_num(r["portfolio_index"])) for r in mc_sorted][::-1],
+        customdata=[{"drill": r["drill"]} for r in mc_sorted][::-1])
 
     # ③ 상위 5개사 연도별 CI 합 추이
     fig_trend = None
@@ -6764,7 +6817,8 @@ def compute_portfolio_index(df, settings):
                                     "y": [round(float(v), 2) for v in ci_by_year.values]})
         if series_list:
             fig_trend = line_chart(series_list, "출원연도", "CI 합",
-                                   title="기업별 연도 CI 추이 (상위 5개사)")
+                                   title="기업별 연도 CI 추이 (상위 5개사)",
+                                   year_axis=True)
 
     # ④ CI 상위 특허
     id_col = "pub_number" if "pub_number" in scoped.columns else \
@@ -6801,6 +6855,7 @@ def compute_portfolio_index(df, settings):
                             drills=[{"label": "1위 기업 특허", "drill": top["drill"]}],
                             small_sample=check_small_sample(len(scoped), settings))
     return ok_result({"rank": fig_rank, "bubble": bubble, "trend": fig_trend,
+                      "family_bubble": family_bubble, "mc_bar": fig_mc,
                       "companies": shown, "top_patents": top_patents,
                       "scope": scope_label, "mc_source": mc_source},
                      insight=insight,

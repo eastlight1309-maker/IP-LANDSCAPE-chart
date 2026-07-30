@@ -222,15 +222,21 @@ def sankey(nodes, links, title=None):
     return {"data": [trace], "layout": base_layout(title, margin={"l": 10, "r": 10, "t": 40, "b": 10})}
 
 
-def line_chart(series_list, x_title, y_title, title=None):
-    """복수 시계열 라인차트. series_list: [{name, x:[..], y:[..], color?}]."""
+def line_chart(series_list, x_title, y_title, title=None, year_axis=False):
+    """복수 시계열 라인차트. series_list: [{name, x:[..], y:[..], color?}].
+
+    year_axis=True 면 X축을 정수 연도로 고정 (소수점 눈금 방지).
+    """
     data = []
     for i, s in enumerate(series_list):
         data.append({"type": "scatter", "mode": "lines+markers", "name": s["name"],
                      "x": s["x"], "y": s["y"],
                      "line": {"color": s.get("color", PALETTE[i % len(PALETTE)])}})
+    xaxis = {"title": x_title}
+    if year_axis:
+        xaxis.update({"tickformat": "d", "hoverformat": "d"})
     return {"data": data, "layout": base_layout(
-        title, xaxis={"title": x_title}, yaxis={"title": y_title})}
+        title, xaxis=xaxis, yaxis={"title": y_title})}
 
 
 def bar_chart(x, y, title=None, orientation="v", hovertext=None, colors=None,
