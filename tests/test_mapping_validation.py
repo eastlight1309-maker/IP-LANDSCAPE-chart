@@ -188,3 +188,16 @@ def test_filter_options_junk_tokens_removed():
     assert "or" not in opts["applicants"] and "a" not in opts["applicants"]
     assert "or" not in opts["tech_l1"] and "a" not in opts["tech_l1"]
     assert "패키징" in opts["tech_l1"]
+
+
+def test_parse_numeric_variants():
+    from src.preprocessing import parse_numeric
+    s = pd.Series(["1,234", "3건", "5 회", "12회 인용", "7", None, "값없음"])
+    out = parse_numeric(s)
+    assert list(out.dropna().astype(int)) == [1234, 3, 5, 12, 7]
+
+
+def test_number_validation_accepts_units():
+    sample = pd.DataFrame({"인용": ["1,234", "3건", "5 회", "0"]})
+    ok, dropped = validate_mapping_values(sample, {"cites_forward": "인용"})
+    assert ok.get("cites_forward") == "인용" and not dropped

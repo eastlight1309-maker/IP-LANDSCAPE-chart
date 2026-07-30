@@ -46,6 +46,8 @@ MODULE_ORDER = [
     "src/analyses/citation_influence.py",
     "src/analyses/inventor_mobility.py",
     "src/analyses/classification_quality.py",
+    "src/analyses/basic_stats.py",
+    "src/analyses/portfolio_index.py",
     "src/api.py",
 ]
 

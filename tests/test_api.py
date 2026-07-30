@@ -84,6 +84,7 @@ ANALYSIS_PATHS = [
     "/api/technology-transition", "/api/trajectory", "/api/company-dna",
     "/api/lead-lag", "/api/claim-density", "/api/citation-diffusion",
     "/api/inventor-mobility", "/api/classification-quality",
+    "/api/basic-stats", "/api/portfolio-index",
 ]
 
 
@@ -192,6 +193,8 @@ def test_merged_backend_builds_and_serves(raw_df, tmp_path):
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)  # app 생성 + register_routes 실행
     mod.inject_dataset(DATASET, raw_df)
+    mod.storage.save_settings({"dataset": DATASET})
+    mod.clear_all_caches()
     mod.app.testing = True
     with mod.app.test_client() as c:
         cfg = c.get("/api/config").get_json()
@@ -292,3 +295,43 @@ def test_bubble_customdata_metrics(client):
         assert marker_traces, path
         cd = marker_traces[0]["customdata"][0]
         assert isinstance(cd.get("m"), dict) and len(cd["m"]) >= 4, path
+
+
+def test_saved_partial_mapping_merged_with_auto(client, raw_df):
+    """회귀: 일부만 저장된 매핑이 있어도 자동 추천이 병합되어 분석이 동작해야 함.
+
+    (과거 버그: 저장 매핑만 사용 → 화면에는 피인용 수가 매핑된 것으로 보이지만
+    분석에서는 '피인용 수 컬럼이 없다'고 비활성화)
+    """
+    partial = {"pub_number": "공개번호", "app_date": "출원일",
+               "tech_l1": "기술 대분류", "applicant": "출원인"}  # 피인용 수 없음
+    _post(client, "/api/column-mapping", {"dataset": DATASET, "mapping": partial})
+    try:
+        data = _post(client, "/api/citation-diffusion", {"filters": {}}).get_json()
+        assert data["status"] == "ok", data.get("message")
+        cfg = client.get("/api/config").get_json()
+        assert cfg["availability"]["citation-diffusion"]["available"]
+    finally:
+        got = client.get("/api/column-mapping?dataset=%s" % DATASET).get_json()
+        _post(client, "/api/column-mapping",
+              {"dataset": DATASET, "mapping": got["effective"]})
+
+
+def test_basic_stats_payload(client):
+    data = _post(client, "/api/basic-stats", {"filters": {}}).get_json()
+    assert data["status"] == "ok"
+    assert data["kpi"]["total"] > 0
+    assert data["annual"]["data"]
+    assert data["applicants"] and data["tech"]
+    assert data["applicant_year"]["data"][0]["type"] == "heatmap"
+
+
+def test_portfolio_index_payload(client):
+    data = _post(client, "/api/portfolio-index", {"filters": {}}).get_json()
+    assert data["status"] == "ok"
+    comp = data["companies"][0]
+    for key in ("portfolio_index", "avg_ci", "avg_tr", "avg_mc", "n"):
+        assert key in comp
+    assert data["bubble"]["data"][0]["customdata"][0]["m"]["avg_ci"] is not None
+    assert "유사 지표" in data["meta"]["note"]
+    assert data["top_patents"]

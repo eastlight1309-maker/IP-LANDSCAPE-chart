@@ -693,7 +693,11 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
       fields: { attractiveness: '매력도', entry_possibility: '진입 가능성',
                 opportunity_score: 'Opportunity Score', barrier: '권리장벽',
                 total: '특허 수', growth: '최근 성장률', new_entrants: '신규 출원인 수',
-                active_granted: '유효등록 수', cr3: '상위3사 점유율(CR3)' } }
+                active_granted: '유효등록 수', cr3: '상위3사 점유율(CR3)' } },
+    'portfolio-index': {
+      fields: { n: '포트폴리오 규모(건수)', avg_ci: '평균 CI(질)',
+                portfolio_index: 'Portfolio Index', avg_tr: '평균 TR(기술 영향력)',
+                avg_mc: '평균 MC(시장 커버리지)', growth: '최근 성장률' } }
   };
 
   function attachAxisPicker(c, holder, analysis) {
@@ -762,6 +766,92 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
     wrap.appendChild(ySel);
     c.controls.prepend(wrap);
   }
+
+  /* ---------- 1.5 Basic Statistics (WIPS·PatentSight 스타일) ---------- */
+  Views.basic = function (content) {
+    function statsTab(title, help, keys) {
+      return function (h) {
+        analysisCard({
+          analysis: 'basic-stats', holder: h, title: title, help: help,
+          renderOk: function (r, c, setTarget) {
+            if (r.kpi && keys.indexOf('annual') >= 0) {
+              var k = r.kpi;
+              var grid = Ui.el('<div class="kpi-grid" style="margin-bottom:10px"></div>');
+              [[Ui.num(k.total, 0), '분석 문헌 수'],
+               [k.grant_rate !== null ? Ui.pct(k.grant_rate) : '-', '등록률'],
+               [k.active_rate !== null ? Ui.pct(k.active_rate) : '-', '유효율'],
+               [k.growth !== null ? Ui.pct(k.growth) : '-', '최근 성장률'],
+               [k.peak_year || '-', '최다 출원 연도']].forEach(function (x) {
+                grid.appendChild(Ui.el('<div class="kpi"><div class="kpi-value">' +
+                  Ui.esc(x[0]) + '</div><div class="kpi-label">' + Ui.esc(x[1]) +
+                  '</div></div>'));
+              });
+              c.body.appendChild(grid);
+            }
+            var first = true;
+            keys.forEach(function (key) {
+              var fig = r[key];
+              if (!fig) return;
+              var holder = Ui.el('<div class="chart-holder"' +
+                (key.indexOf('_year') >= 0 ? ' style="min-height:420px"' : '') + '></div>');
+              c.body.appendChild(holder);
+              Render.plotly(holder, fig, plotlyDrill);
+              if (first) { setTarget({ kind: 'plotly', el: holder }); first = false; }
+            });
+          }
+        });
+      };
+    }
+    makeTabs(content, [
+      { label: '출원 동향', render: statsTab('연도별 출원 동향 (WIPS형 기본 통계)',
+          '연도별 전체 출원·등록·유효 건수 추이입니다. 연도는 출원일(없으면 우선일/공개일) 기준이며, 점을 클릭하면 해당 연도의 근거 특허 목록이 열립니다.',
+          ['annual']) },
+      { label: '국가·출원인', render: statsTab('국가별 분포 · 출원인 순위 · 활동 매트릭스',
+          '국가별 출원 분포, 출원인 순위 Top, 출원인×연도 활동 매트릭스(진할수록 활발)입니다. 막대를 클릭하면 해당 국가/출원인의 특허 목록이 열립니다.',
+          ['country', 'applicants', 'applicant_year']) },
+      { label: '기술분류 동향', render: statsTab('기술분류별 건수 · 연도 동향',
+          '기술분류별 누적 건수 순위와 분류×연도 동향 매트릭스입니다. 다중분류는 Settings 의 처리방식을 따르지 않고 각 분류에 1건씩 계산합니다.',
+          ['tech', 'tech_year']) },
+      { label: 'Portfolio Index', render: function (h) {
+        analysisCard({
+          analysis: 'portfolio-index', holder: h,
+          title: '포트폴리오 가치 지표 (PatentSight 유사 지표)',
+          help: 'TR(기술 영향력)=출원연도 코호트로 보정한 피인용, MC(시장 커버리지)=패밀리 국가 수 표준화, CI=TR×MC, Portfolio Index=유효특허 CI 합계입니다. PatentSight 의 PAI/CI/TR/MC 에서 착안한 유사 지표로 공식 산식과 동일하지 않습니다. 버블: X=규모, Y=평균 CI(질), 크기=Portfolio Index, 색=최근 성장률.',
+          renderOk: function (r, c, setTarget) {
+            var rank = Ui.el('<div class="chart-holder"></div>');
+            c.body.appendChild(rank);
+            Render.plotly(rank, r.rank, plotlyDrill);
+            setTarget({ kind: 'plotly', el: rank });
+            var bub = Ui.el('<div class="chart-holder tall"></div>');
+            c.body.appendChild(bub);
+            Render.plotly(bub, r.bubble, plotlyDrill);
+            attachAxisPicker(c, bub, 'portfolio-index');
+            if (r.trend) {
+              var tr = Ui.el('<div class="chart-holder" style="min-height:320px"></div>');
+              c.body.appendChild(tr);
+              Render.plotly(tr, r.trend);
+            }
+            var rows = (r.top_patents || []).map(function (x) {
+              var trEl = document.createElement('tr');
+              var td0 = document.createElement('td');
+              td0.appendChild(drillCell(x.id, x.drill));
+              trEl.appendChild(td0);
+              trEl.insertAdjacentHTML('beforeend', '<td>' + Ui.esc(x.title) + '</td><td>' +
+                Ui.esc(x.applicant) + '</td><td class="num">' + x.ci + '</td>' +
+                '<td class="num">' + x.tr + '</td><td class="num">' + x.mc +
+                '</td><td class="num">' + x.cites + '</td>');
+              return trEl;
+            });
+            var tbl = Ui.el(simpleTable(['번호', '명칭', '출원인', 'CI', 'TR', 'MC', '피인용'], []));
+            rows.forEach(function (trEl) { tbl.querySelector('tbody').appendChild(trEl); });
+            c.body.appendChild(Ui.el('<div style="margin-top:6px"><b style="font-size:12px">' +
+              'Competitive Impact 상위 특허</b></div>'));
+            c.body.appendChild(tbl);
+          }
+        });
+      } }
+    ]);
+  };
 
   /* ---------- 2. Technology Evolution ---------- */
   Views.evolution = function (content) {

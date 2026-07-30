@@ -39,12 +39,18 @@ from src.viz_payload import ok_result, empty_result, disabled_result, bar_chart,
 
 def compute_citation_influence(df, settings, top_n=None):
     """핵심특허 영향력 전파 계산."""
-    if "cites_forward" not in df.columns or not df["cites_forward"].notna().any():
+    if "cites_forward" not in df.columns:
         return disabled_result(
             ["피인용 수"],
             message="피인용 수 컬럼이 없어 영향력 분석을 사용할 수 없습니다. 컬럼 매핑에서 "
                     "'피인용 수'(정수)를 매핑하세요. 인용쌍(citing-cited) 데이터가 있으면 "
                     "더 정밀한 전파 분석이 가능합니다.")
+    if not df["cites_forward"].notna().any():
+        return disabled_result(
+            ["피인용 수"],
+            message="피인용 수 컬럼은 매핑되어 있으나 숫자로 해석되는 값이 없습니다. "
+                    "컬럼 매핑 화면의 '예시 값'으로 매핑된 실제 컬럼의 값 형식을 확인하세요 "
+                    "(지원 형식: 3, 1,234, 3건 등).")
     work = df[df["cites_forward"].notna()].copy()
     if not len(work):
         return empty_result()

@@ -78,6 +78,8 @@ from src.analyses.claim_density import compute_claim_density
 from src.analyses.citation_influence import compute_citation_influence
 from src.analyses.inventor_mobility import compute_inventor_mobility
 from src.analyses.classification_quality import compute_classification_quality
+from src.analyses.basic_stats import compute_basic_stats
+from src.analyses.portfolio_index import compute_portfolio_index
 
 logger = logging.getLogger("ip_landscape")
 
@@ -173,14 +175,24 @@ def _validated_auto_mapping(dataset, actual_cols):
     return mapping
 
 
+def _effective_mapping(dataset, actual_cols):
+    """분석에 실제 사용하는 매핑 = 검증된 자동 추천 + 저장 매핑(우선).
+
+    컬럼 매핑 화면의 'effective' 와 동일한 규칙 — 화면에 매핑된 것으로 보이는
+    개념이 분석에서 빠지는 불일치를 방지한다. 저장 매핑은 항상 자동 추천을 덮어쓴다.
+    """
+    saved, _w = clean_mapping(storage.load_mapping_for(dataset), actual_cols)
+    auto = _validated_auto_mapping(dataset, actual_cols)
+    mapping = dict(auto)
+    mapping.update(saved)
+    return mapping
+
+
 def _prepared_for(body):
     """요청 → (필터 적용된 표준 프레임, settings, dataset, mapping). 공통 진입점."""
     dataset, settings = _resolve_dataset(body)
-    saved = storage.load_mapping_for(dataset)
     actual_cols = get_dataset_columns(dataset)
-    mapping, warnings = clean_mapping(saved, actual_cols)
-    if not mapping:
-        mapping = _validated_auto_mapping(dataset, actual_cols)
+    mapping = _effective_mapping(dataset, actual_cols)
     rules = storage.load_applicant_rules()
     df, _ = get_prepared(dataset, mapping, rules, settings.get("analysis_unit", "family"))
     filters = (body or {}).get("filters") or {}
@@ -262,9 +274,7 @@ def register_routes(app):
                         and DEMO_DATASET_NAME not in list_datasets():
                     inject_dataset(DEMO_DATASET_NAME, _make_demo_dataframe())
                 cols = get_dataset_columns(dataset)
-                mapping, _w = clean_mapping(storage.load_mapping_for(dataset), cols)
-                if not mapping and cols:
-                    mapping = _validated_auto_mapping(dataset, cols)
+                mapping = _effective_mapping(dataset, cols) if cols else {}
                 availability = analysis_availability(mapping)
             except Exception as e:
                 logger.warning("config availability failed: %s", e)
@@ -424,6 +434,10 @@ def register_routes(app):
             extra_key_fields=("include_uncertain",)),
         "classification-quality": _analysis_route(
             "classification-quality", lambda df, s, b: compute_classification_quality(df, s)),
+        "basic-stats": _analysis_route(
+            "basic-stats", lambda df, s, b: compute_basic_stats(df, s)),
+        "portfolio-index": _analysis_route(
+            "portfolio-index", lambda df, s, b: compute_portfolio_index(df, s)),
     }
 
     def make_analysis_view(path_name, handler):

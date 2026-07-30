@@ -257,6 +257,8 @@ ANALYSIS_REQUIREMENTS = {
     "citation-diffusion":    {"required": ["cites_forward", {"any": ANY_TECH}], "optional": ["cites_backward", "family_size", "family_country_count", "legal_status", "expiry_date"] + ANY_APPLICANT},
     "inventor-mobility":     {"required": ["inventors", {"any": ANY_APPLICANT}, {"any": ANY_DATE}], "optional": [{"any": ANY_TECH}, "country"]},
     "classification-quality": {"required": [{"any": ANY_TECH}], "optional": ["embedding", "class_confidence", "title", "abstract", {"any": ANY_DATE}]},
+    "basic-stats":           {"required": [{"any": ANY_DATE}], "optional": ANY_APPLICANT + ["country", "is_granted", "is_active", "legal_status", {"any": ANY_TECH}]},
+    "portfolio-index":       {"required": [{"any": ANY_APPLICANT}, "cites_forward"], "optional": ["family_country_count", "family_size", "is_active", "legal_status", {"any": ANY_DATE}]},
 }
 
 _NORM_RE = re.compile(r"[\s\(\)\[\]\{\}\-_/\\.,:;'\"·|]+")
@@ -424,8 +426,12 @@ def validate_mapping_values(sample_df, mapping):
             if date_frac < 0.3:
                 reason = "값이 날짜 형식이 아님 (해석 성공 %.0f%%)" % (date_frac * 100)
         elif kind == "number":
-            if num_frac < 0.5:
-                reason = "값이 숫자가 아님 (숫자 비율 %.0f%%)" % (num_frac * 100)
+            # 단위·쉼표 포함 표기("1,234", "3건")도 숫자로 인정
+            loose = s.str.replace(",", "", regex=False)
+            loose_frac = float(loose.str.fullmatch(
+                r"[^\d+-]{0,3}[+-]?\d+(\.\d+)?[^\d]{0,4}").mean())
+            if max(num_frac, loose_frac) < 0.5:
+                reason = "값이 숫자가 아님 (숫자 비율 %.0f%%)" % (max(num_frac, loose_frac) * 100)
         elif kind == "country":
             c_frac = _fraction(s, _COUNTRY_VALUE_RE)
             short_frac = float((s.str.len() <= 8).mean())

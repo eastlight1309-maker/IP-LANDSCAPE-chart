@@ -50,6 +50,18 @@ def parse_bool(value):
     return None
 
 
+def parse_numeric(series):
+    """숫자 파싱: 천 단위 쉼표·단위 문자 제거 후 첫 숫자 추출.
+
+    "1,234" / "3건" / "5 회" / "12회 인용" 형태를 모두 숫자로 해석한다. 실패값 NaN.
+    """
+    if series is None:
+        return None
+    s = series.astype(str).str.strip().str.replace(",", "", regex=False)
+    ext = s.str.extract(r"([+-]?\d+(?:\.\d+)?)")[0]
+    return pd.to_numeric(ext, errors="coerce")
+
+
 def parse_dates(series):
     """날짜 시리즈 파싱: pandas 추론 + YYYYMMDD 보정 + 문자열 내 날짜 추출.
 
@@ -514,7 +526,7 @@ def build_standard_frame(raw_df, mapping, applicant_rules=None):
     for num_col in ("cites_backward", "cites_forward", "family_size",
                     "family_country_count", "class_confidence"):
         if num_col in df.columns:
-            df[num_col] = pd.to_numeric(df[num_col], errors="coerce")
+            df[num_col] = parse_numeric(df[num_col])
 
     if "inventors" in df.columns:
         df["_inventor_list"] = df["inventors"].map(split_names)
