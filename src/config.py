@@ -22,8 +22,19 @@ ALLOWED_LLM_CANDIDATES = [
 DEFAULT_LLM_ID = "azureopenai:dw-aoai-chat-eastus2-cognitiv:gpt-5.4-nano"
 ALLOWED_LLM_IDS = frozenset(llm_id for _, llm_id in ALLOWED_LLM_CANDIDATES)
 
-# 기본 임베딩 모델 (Dataiku 인스턴스에 준비된 한국어 특허 특화 SBERT)
-DEFAULT_SBERT_MODEL = "snunlp/KR-SBERT-Medium-extended-patent2023"
+# 임베딩 모델 (Dataiku 사내 서버에 설치된 한국어 특허 특화 SBERT — 비용 없음)
+# 사내 서버 로컬 설치 경로: 네트워크 다운로드 없이 디스크에서 직접 로드한다.
+LOCAL_SBERT_MODEL_DIR = (
+    "/dataiku/cache/huggingface/hub/"
+    "models--snunlp--KR-SBERT-Medium-extended-patent2024-hn/"
+    "snapshots/2a89bb1bbd16d851c05fa67629a76187dfc7d552")
+DEFAULT_SBERT_MODEL = "snunlp/KR-SBERT-Medium-extended-patent2024-hn"
+# 로딩 시도 순서: 로컬 경로(존재 시) → HF 캐시의 2024-hn → 구버전 2023
+SBERT_MODEL_CANDIDATES = [
+    LOCAL_SBERT_MODEL_DIR,
+    DEFAULT_SBERT_MODEL,
+    "snunlp/KR-SBERT-Medium-extended-patent2023",
+]
 
 # =========================
 # 규모 상한 (Settings 에서 변경 가능 — settings["limits"] 로 overlay)
@@ -163,9 +174,10 @@ DEFAULT_SETTINGS = {
     "llm_id": DEFAULT_LLM_ID,
     "llm_insights_enabled": False,
     # none | dataset | rest | sbert(로컬 sentence-transformers) | llm_mesh
-    # 기본: KR-SBERT 특허 특화 모델 — 사전 계산 임베딩 컬럼이 있으면 그것이 우선,
-    # 모델 로드가 불가한 환경에서는 TF-IDF 폴백 (사용 방식은 화면에 표시)
-    "embedding_adapter": {"type": "sbert", "model_name": DEFAULT_SBERT_MODEL},
+    # 기본: KR-SBERT 특허 특화 모델. model_name 이 비어 있으면 자동
+    # (사내 로컬 경로 → HF 캐시 순서, SBERT_MODEL_CANDIDATES). 사전 계산 임베딩
+    # 컬럼이 있으면 그것이 우선, 모델 로드 불가 환경에서는 TF-IDF 폴백.
+    "embedding_adapter": {"type": "sbert", "model_name": ""},
     "limits": {}, "thresholds": {}, "weights": {},
     "transition_mode": "cooccurrence",  # 4.1 전이 정의 기본값
     "trajectory_weighting": "share",    # share | tfidf

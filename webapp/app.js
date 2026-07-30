@@ -1970,10 +1970,14 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
       embFields.innerHTML = '';
       if (embSel.value === 'sbert') {
         embFields.innerHTML =
-          '<div class="settings-row"><label>모델명</label><input type="text" id="emb-model" style="flex:1" value="' +
-          Ui.esc(emb.model_name || 'snunlp/KR-SBERT-Medium-extended-patent2023') + '"></div>' +
-          '<div class="disclaimer">인스턴스에 준비된 sentence-transformers 모델을 직접 로드해 ' +
-          '독립청구항을 임베딩합니다 (GPU 자동 사용, 결과는 캐시). 사전 계산 임베딩 컬럼이 ' +
+          '<div class="settings-row"><label>모델명 (선택)</label><input type="text" id="emb-model" style="flex:1" value="' +
+          Ui.esc(emb.model_name || '') +
+          '" placeholder="비워두면 자동: 사내 로컬 경로 → snunlp/KR-SBERT-Medium-extended-patent2024-hn"></div>' +
+          '<div class="disclaimer">비워두면 사내 서버에 설치된 로컬 모델 경로' +
+          '(/dataiku/cache/huggingface/.../KR-SBERT-Medium-extended-patent2024-hn)를 먼저 ' +
+          '시도합니다 — 네트워크 다운로드 없이 디스크에서 직접 로드되어 비용이 들지 않습니다. ' +
+          '로컬 경로가 없으면 HF 캐시의 snunlp 특허 특화 모델을 순서대로 시도합니다. ' +
+          '독립청구항을 임베딩하며 (GPU 자동 사용, 결과는 캐시) 사전 계산 임베딩 컬럼이 ' +
           '매핑되어 있으면 그 벡터가 우선 사용됩니다.</div>';
       } else if (embSel.value === 'llm_mesh') {
         embFields.innerHTML =

@@ -38,8 +38,19 @@ ALLOWED_LLM_CANDIDATES = [
 DEFAULT_LLM_ID = "azureopenai:dw-aoai-chat-eastus2-cognitiv:gpt-5.4-nano"
 ALLOWED_LLM_IDS = frozenset(llm_id for _, llm_id in ALLOWED_LLM_CANDIDATES)
 
-# 기본 임베딩 모델 (Dataiku 인스턴스에 준비된 한국어 특허 특화 SBERT)
-DEFAULT_SBERT_MODEL = "snunlp/KR-SBERT-Medium-extended-patent2023"
+# 임베딩 모델 (Dataiku 사내 서버에 설치된 한국어 특허 특화 SBERT — 비용 없음)
+# 사내 서버 로컬 설치 경로: 네트워크 다운로드 없이 디스크에서 직접 로드한다.
+LOCAL_SBERT_MODEL_DIR = (
+    "/dataiku/cache/huggingface/hub/"
+    "models--snunlp--KR-SBERT-Medium-extended-patent2024-hn/"
+    "snapshots/2a89bb1bbd16d851c05fa67629a76187dfc7d552")
+DEFAULT_SBERT_MODEL = "snunlp/KR-SBERT-Medium-extended-patent2024-hn"
+# 로딩 시도 순서: 로컬 경로(존재 시) → HF 캐시의 2024-hn → 구버전 2023
+SBERT_MODEL_CANDIDATES = [
+    LOCAL_SBERT_MODEL_DIR,
+    DEFAULT_SBERT_MODEL,
+    "snunlp/KR-SBERT-Medium-extended-patent2023",
+]
 
 # =========================
 # 규모 상한 (Settings 에서 변경 가능 — settings["limits"] 로 overlay)
@@ -179,9 +190,10 @@ DEFAULT_SETTINGS = {
     "llm_id": DEFAULT_LLM_ID,
     "llm_insights_enabled": False,
     # none | dataset | rest | sbert(로컬 sentence-transformers) | llm_mesh
-    # 기본: KR-SBERT 특허 특화 모델 — 사전 계산 임베딩 컬럼이 있으면 그것이 우선,
-    # 모델 로드가 불가한 환경에서는 TF-IDF 폴백 (사용 방식은 화면에 표시)
-    "embedding_adapter": {"type": "sbert", "model_name": DEFAULT_SBERT_MODEL},
+    # 기본: KR-SBERT 특허 특화 모델. model_name 이 비어 있으면 자동
+    # (사내 로컬 경로 → HF 캐시 순서, SBERT_MODEL_CANDIDATES). 사전 계산 임베딩
+    # 컬럼이 있으면 그것이 우선, 모델 로드 불가 환경에서는 TF-IDF 폴백.
+    "embedding_adapter": {"type": "sbert", "model_name": ""},
     "limits": {}, "thresholds": {}, "weights": {},
     "transition_mode": "cooccurrence",  # 4.1 전이 정의 기본값
     "trajectory_weighting": "share",    # share | tfidf
@@ -2631,7 +2643,8 @@ class RestEmbeddingAdapter(EmbeddingAdapter):
 class SbertEmbeddingAdapter(EmbeddingAdapter):
     """로컬 sentence-transformers 모델 구현체.
 
-    기본 모델: snunlp/KR-SBERT-Medium-extended-patent2023 (한국어 특허 특화 SBERT).
+    기본 동작(모델명 미지정): 사내 로컬 경로(LOCAL_SBERT_MODEL_DIR, 네트워크·비용
+    없음) → snunlp/KR-SBERT-Medium-extended-patent2024-hn → patent2023 순으로 시도.
     Dataiku 인스턴스(코드 환경)에 준비된 HuggingFace 모델을 직접 로드하며,
     GPU(cuda) 가용 시 자동 사용한다. 임베딩 결과는 (모델, 텍스트 SHA1) 키의
     프로세스 내 캐시에 저장되어 필터 변경·재조회 시 재계산하지 않는다.
@@ -2647,12 +2660,34 @@ class SbertEmbeddingAdapter(EmbeddingAdapter):
 
     def __init__(self, model_name=None, batch_size=64):
         import re as _re
-        name = str(model_name or DEFAULT_SBERT_MODEL).strip()
-        if not _re.fullmatch(r"[\w\-./]+", name):
-            raise ValueError("허용되지 않는 임베딩 모델명 형식: %r" % name)
-        self.model_name = name
+        candidates = []
+        user_name = str(model_name or "").strip()
+        if user_name:
+            if not _re.fullmatch(r"[\w\-./]+", user_name):
+                raise ValueError("허용되지 않는 임베딩 모델명 형식: %r" % user_name)
+            candidates.append(user_name)
+        candidates += [c for c in SBERT_MODEL_CANDIDATES if c not in candidates]
         self.batch_size = max(1, int(batch_size))
-        self._model = self._load_model(name)
+        self._model, self.model_name = self._load_first(candidates)
+
+    @classmethod
+    def _load_first(cls, candidates):
+        """후보를 순서대로 시도: 사내 로컬 경로(디렉터리 존재 시) → HF 캐시 모델명.
+
+        로컬 경로는 네트워크 없이 디스크에서 직접 로드된다 (비용 없음).
+        전부 실패하면 마지막 오류를 던져 get_adapter 폴백으로 넘어간다.
+        """
+        last_err = None
+        for cand in candidates:
+            # 경로 형태 후보는 디렉터리가 실제 존재할 때만 시도
+            if "/" in cand and cand.startswith(("/", ".")) and not os.path.isdir(cand):
+                continue
+            try:
+                return cls._load_model(cand), cand
+            except Exception as e:
+                logger.warning("SBERT 모델 로드 실패 (%s): %s", cand, e)
+                last_err = e
+        raise last_err if last_err else RuntimeError("사용 가능한 SBERT 모델 없음")
 
     @classmethod
     def _load_model(cls, name):

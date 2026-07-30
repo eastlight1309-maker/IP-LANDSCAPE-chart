@@ -16,8 +16,8 @@ from generate_sample_data import generate_sample, without_embeddings
 def test_default_settings_use_sbert():
     s = merged_settings({})
     assert s["embedding_adapter"]["type"] == "sbert"
-    assert s["embedding_adapter"]["model_name"] == \
-        "snunlp/KR-SBERT-Medium-extended-patent2023"
+    # 빈 값 = 자동 (사내 로컬 경로 → 2024-hn → 2023 순서로 시도)
+    assert s["embedding_adapter"]["model_name"] == ""
 
 
 def test_sbert_unavailable_falls_back_gracefully():

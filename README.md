@@ -22,17 +22,21 @@ scikit-learn>=1.3
 scipy>=1.9
 openpyxl>=3.0
 networkx>=3.0          # (권장) 조합 네트워크 Louvain 커뮤니티
-sentence-transformers  # (권장) KR-SBERT 임베딩 — snunlp/KR-SBERT-Medium-extended-patent2023
+sentence-transformers  # (권장) KR-SBERT 임베딩 — snunlp/KR-SBERT-Medium-extended-patent2024-hn
 umap-learn>=0.5        # (선택) UMAP 투영 — 없으면 PCA 자동 폴백
 hdbscan>=0.8           # (선택) sklearn<1.3 인 경우의 HDBSCAN — 없으면 DBSCAN 폴백
 ```
 
-임베딩: 기본 설정은 인스턴스에 준비된 `snunlp/KR-SBERT-Medium-extended-patent2023`
-(한국어 특허 특화 SBERT)을 sentence-transformers 로 직접 로드해 독립청구항을
-임베딩합니다 (GPU 자동 사용, 텍스트 해시 캐시). 우선순위: 사전 계산 임베딩 컬럼 →
-KR-SBERT → TF-IDF 폴백이며, 실제 사용된 방식은 화면(청구항 밀집도 "방법")에
-표시됩니다. LLM Mesh 에 임베딩 모델로 등록한 경우 Settings → 임베딩 Adapter →
-"LLM Mesh" 로 연결할 수도 있습니다.
+임베딩: 기본 설정(모델명 비움 = 자동)은 사내 서버에 설치된 로컬 모델 경로
+`/dataiku/cache/huggingface/hub/models--snunlp--KR-SBERT-Medium-extended-patent2024-hn/snapshots/2a89bb1bbd16d851c05fa67629a76187dfc7d552`
+를 먼저 시도합니다 — 네트워크 다운로드 없이 디스크에서 직접 로드되어 비용이 들지
+않습니다. 로컬 경로가 없으면 `snunlp/KR-SBERT-Medium-extended-patent2024-hn` →
+`snunlp/KR-SBERT-Medium-extended-patent2023` (한국어 특허 특화 SBERT) 순으로
+HF 캐시에서 로드합니다 (GPU 자동 사용, 텍스트 해시 캐시). 우선순위: 사전 계산
+임베딩 컬럼 → KR-SBERT → TF-IDF 폴백이며, 실제 사용된 방식은 화면(청구항 밀집도
+"방법")에 표시됩니다. LLM Mesh 에 임베딩 모델로 등록한 경우 Settings → 임베딩
+Adapter → "LLM Mesh" 로 연결할 수도 있습니다. 로컬 경로는 `src/config.py` 의
+`LOCAL_SBERT_MODEL_DIR` 에서 변경할 수 있습니다.
 
 GPU 환경(선택): RAPIDS `cuml`/`cupy` 가 설치되어 있으면 PCA/UMAP/HDBSCAN/유사도
 계산에 자동으로 GPU 를 사용하고, 없으면 CPU(scikit-learn/numpy)로 자동 폴백합니다.

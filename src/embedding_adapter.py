@@ -136,7 +136,8 @@ class RestEmbeddingAdapter(EmbeddingAdapter):
 class SbertEmbeddingAdapter(EmbeddingAdapter):
     """로컬 sentence-transformers 모델 구현체.
 
-    기본 모델: snunlp/KR-SBERT-Medium-extended-patent2023 (한국어 특허 특화 SBERT).
+    기본 동작(모델명 미지정): 사내 로컬 경로(LOCAL_SBERT_MODEL_DIR, 네트워크·비용
+    없음) → snunlp/KR-SBERT-Medium-extended-patent2024-hn → patent2023 순으로 시도.
     Dataiku 인스턴스(코드 환경)에 준비된 HuggingFace 모델을 직접 로드하며,
     GPU(cuda) 가용 시 자동 사용한다. 임베딩 결과는 (모델, 텍스트 SHA1) 키의
     프로세스 내 캐시에 저장되어 필터 변경·재조회 시 재계산하지 않는다.
@@ -152,13 +153,35 @@ class SbertEmbeddingAdapter(EmbeddingAdapter):
 
     def __init__(self, model_name=None, batch_size=64):
         import re as _re
-        from src.config import DEFAULT_SBERT_MODEL
-        name = str(model_name or DEFAULT_SBERT_MODEL).strip()
-        if not _re.fullmatch(r"[\w\-./]+", name):
-            raise ValueError("허용되지 않는 임베딩 모델명 형식: %r" % name)
-        self.model_name = name
+        from src.config import SBERT_MODEL_CANDIDATES
+        candidates = []
+        user_name = str(model_name or "").strip()
+        if user_name:
+            if not _re.fullmatch(r"[\w\-./]+", user_name):
+                raise ValueError("허용되지 않는 임베딩 모델명 형식: %r" % user_name)
+            candidates.append(user_name)
+        candidates += [c for c in SBERT_MODEL_CANDIDATES if c not in candidates]
         self.batch_size = max(1, int(batch_size))
-        self._model = self._load_model(name)
+        self._model, self.model_name = self._load_first(candidates)
+
+    @classmethod
+    def _load_first(cls, candidates):
+        """후보를 순서대로 시도: 사내 로컬 경로(디렉터리 존재 시) → HF 캐시 모델명.
+
+        로컬 경로는 네트워크 없이 디스크에서 직접 로드된다 (비용 없음).
+        전부 실패하면 마지막 오류를 던져 get_adapter 폴백으로 넘어간다.
+        """
+        last_err = None
+        for cand in candidates:
+            # 경로 형태 후보는 디렉터리가 실제 존재할 때만 시도
+            if "/" in cand and cand.startswith(("/", ".")) and not os.path.isdir(cand):
+                continue
+            try:
+                return cls._load_model(cand), cand
+            except Exception as e:
+                logger.warning("SBERT 모델 로드 실패 (%s): %s", cand, e)
+                last_err = e
+        raise last_err if last_err else RuntimeError("사용 가능한 SBERT 모델 없음")
 
     @classmethod
     def _load_model(cls, name):
