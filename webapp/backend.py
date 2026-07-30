@@ -3512,8 +3512,34 @@ def check_small_sample(n, settings):
     return n < get_threshold(settings, "insight_small_sample")
 
 
+def format_chart_context(chart_data, max_chars=2600):
+    """프론트가 보낸 화면 차트 데이터([{name,columns,rows}...]) → 프롬프트 블록.
+
+    LLM 이 '요약통계가 비어있다'며 해석을 거부하지 않도록, 화면에 실제로 그려진
+    수치(집계 결과)를 표 형태 텍스트로 전달한다. 원문 특허 데이터가 아니라
+    차트에 표시된 집계값만 포함되며 sanitize 후 길이 상한을 적용한다.
+    """
+    if not isinstance(chart_data, list) or not chart_data:
+        return None
+    lines = ["화면 차트 데이터 (차트에 표시된 집계값):"]
+    for sheet in chart_data[:4]:
+        if not isinstance(sheet, dict):
+            continue
+        cols = [str(c)[:40] for c in (sheet.get("columns") or [])][:8]
+        rows = [r for r in (sheet.get("rows") or []) if isinstance(r, (list, tuple))][:25]
+        if not cols or not rows:
+            continue
+        lines.append("[%s]" % str(sheet.get("name") or "차트")[:40])
+        lines.append(" | ".join(cols))
+        for r in rows:
+            lines.append(" | ".join("" if v is None else str(v)[:40] for v in r[:8]))
+    if len(lines) <= 1:
+        return None
+    return sanitize_for_llm("\n".join(lines), max_chars)
+
+
 def llm_chat(analysis_name, metrics, sentences, question, history, settings,
-             description=None, web_context=None):
+             description=None, web_context=None, chart_context=None):
     """그래프별 LLM 챗 인사이트 (요약 통계만 전달, 실패 시 규칙 기반 폴백).
 
     question: 사용자 추가 질문 (없으면 '이 그래프의 인사이트를 도출' 기본 요청).
@@ -3534,14 +3560,22 @@ def llm_chat(analysis_name, metrics, sentences, question, history, settings,
         parts.append("그래프 설명: %s" % sanitize_for_llm(description, 500))
     if rule_summary:
         parts.append("규칙 기반 요약: %s" % sanitize_for_llm(rule_summary, 1200))
-    parts.append("요약 지표(JSON): %s" % sanitize_for_llm(stats_json))
+    if metrics:
+        parts.append("요약 지표(JSON): %s" % sanitize_for_llm(stats_json))
+    if chart_context:
+        parts.append(str(chart_context))  # format_chart_context 에서 이미 sanitize 됨
     if web_context:
         parts.append(str(web_context))  # format_web_context 에서 이미 sanitize 됨
     for turn in (history or [])[-6:]:
         role = "질문" if str(turn.get("role")) == "user" else "이전 답변"
         parts.append("%s: %s" % (role, sanitize_for_llm(str(turn.get("content", "")), 500)))
     q = sanitize_for_llm(str(question or ""), 500).strip()
-    base = "위 요약 정보와 웹 검색 결과를 근거로" if web_context else "위 요약 정보만 근거로"
+    srcs = "규칙 기반 요약·요약 지표"
+    if chart_context:
+        srcs += "·화면 차트 데이터"
+    if web_context:
+        srcs += "·웹 검색 결과"
+    base = "위에 제공된 정보(%s)를 근거로" % srcs
     if q:
         parts.append("사용자 질문: %s" % q)
         parts.append("%s 사용자 질문에 한국어로 답하세요." % base)
@@ -3561,10 +3595,13 @@ def llm_chat(analysis_name, metrics, sentences, question, history, settings,
             % (MESSAGES["llm_fallback"], fallback), "source": "rule"}
 
 
-def llm_augment_insight(analysis_name, rule_insight, summary_stats, settings):
+def llm_augment_insight(analysis_name, rule_insight, summary_stats, settings,
+                        chart_context=None):
     """LLM 인사이트 생성 시도. 실패 시 규칙 기반 그대로 반환 (+폴백 안내).
 
     summary_stats: 요약 통계 dict (원문 데이터 금지 — 호출부 책임).
+    chart_context: 화면 차트 데이터 블록 (format_chart_context 결과) — 요약 통계가
+                   빈 분석에서도 LLM 이 실제 수치를 근거로 해석할 수 있게 한다.
     """
     if not (settings or {}).get("llm_insights_enabled"):
         return rule_insight
@@ -3576,13 +3613,21 @@ def llm_augment_insight(analysis_name, rule_insight, summary_stats, settings):
         stats_json = json.dumps(summary_stats, ensure_ascii=False, default=str)[:3500]
     except (TypeError, ValueError):
         stats_json = str(summary_stats)[:3500]
-    prompt = (
-        "다음은 특허 IP Landscape 분석 '%s' 의 요약 통계입니다.\n"
-        "요약 통계(JSON): %s\n\n"
-        "위 통계만 근거로 3문장 이내의 한국어 인사이트를 작성하세요. "
-        "각 문장에는 분석 기간·비교 기준·핵심 수치를 포함하고, 긍정 요인과 위험 요인을 "
-        "구분하세요. 통계에 없는 수치·법률적 판단·인과관계 주장은 금지합니다."
-        % (sanitize_for_llm(analysis_name, 100), sanitize_for_llm(stats_json)))
+    parts = ["다음은 특허 IP Landscape 분석 '%s' 의 정보입니다."
+             % sanitize_for_llm(analysis_name, 100)]
+    rule_summary = " / ".join(str(s) for s in rule_insight.get("sentences", [])[:6])
+    if rule_summary:
+        parts.append("규칙 기반 요약: %s" % sanitize_for_llm(rule_summary, 1200))
+    if summary_stats:
+        parts.append("요약 통계(JSON): %s" % sanitize_for_llm(stats_json))
+    if chart_context:
+        parts.append(str(chart_context))  # 이미 sanitize 됨
+    parts.append(
+        "위에 제공된 정보(규칙 요약·통계·차트 데이터)만 근거로 3~5문장의 한국어 "
+        "인사이트를 작성하세요. 문장에는 분석 기간·비교 기준·핵심 수치를 가능한 한 "
+        "포함하고, 긍정 요인과 위험 요인을 구분하세요. 제공된 데이터에 없는 수치·"
+        "법률적 판단·인과관계 주장은 금지합니다.")
+    prompt = "\n".join(parts)
     text = call_llm(prompt, llm_id=(settings or {}).get("llm_id"))
     out = dict(rule_insight)
     if text:
@@ -10713,6 +10758,8 @@ def register_routes(app):
         POST {"analysis", "metrics":{요약 통계}, "sentences":[규칙 문장...],
               "question"?: 사용자 추가 질문, "history"?: [{"role","content"}...],
               "description"?: 그래프 설명, "chat"?: true,
+              "chart_data"?: [{"name","columns","rows"}...] — 화면 차트의 집계값
+              (요약 통계가 빈 분석에서도 LLM 이 실제 수치를 근거로 해석),
               "web_search"?: true — 외부 웹 검색 결과를 참고 컨텍스트로 첨부}
         - chat/question 모드 → {"status":"ok","answer":…,"source":"llm|rule",
           "web_sources"?:[{"title","url"}...], "web_note"?:검색 실패 안내}
@@ -10726,6 +10773,7 @@ def register_routes(app):
         analysis = str(body.get("analysis", ""))[:60]
         metrics = body.get("metrics") or {}
         sentences = body.get("sentences") or []
+        chart_context = format_chart_context(body.get("chart_data"))
         if body.get("chat") or body.get("question"):
             history = body.get("history")
             if not isinstance(history, list):
@@ -10751,7 +10799,7 @@ def register_routes(app):
             out = llm_chat(analysis, metrics, sentences, body.get("question"),
                            history, settings,
                            description=body.get("description"),
-                           web_context=web_context)
+                           web_context=web_context, chart_context=chart_context)
             out["status"] = "ok"
             if web_sources:
                 out["web_sources"] = web_sources
@@ -10759,7 +10807,8 @@ def register_routes(app):
                 out["web_note"] = web_note
             return out
         rule = build_insight(sentences, metrics)
-        out = llm_augment_insight(analysis, rule, metrics, settings)
+        out = llm_augment_insight(analysis, rule, metrics, settings,
+                                  chart_context=chart_context)
         out["status"] = "ok"
         return out
 

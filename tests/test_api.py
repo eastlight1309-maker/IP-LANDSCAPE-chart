@@ -286,6 +286,17 @@ def test_insight_chat_fallback(client):
     assert data2["status"] == "ok"
 
 
+def test_insight_endpoint_accepts_chart_data(client):
+    """빈 metrics + 화면 차트 데이터 → 오류 없이 답변 (LLM 미가용 시 규칙 폴백)."""
+    data = _post(client, "/api/insight",
+                 {"analysis": "basic-stats", "chat": True, "question": "1위는?",
+                  "metrics": {}, "sentences": ["요약"],
+                  "chart_data": [{"name": "출원인 순위",
+                                  "columns": ["출원인", "건수"],
+                                  "rows": [["삼성전자", 120]]}]}).get_json()
+    assert data["status"] == "ok" and data["answer"]
+
+
 def test_insight_chat_with_web_search(client, monkeypatch):
     """web_search=true: 검색 결과가 web_sources 로 반환되고, 실패 시 web_note."""
     from src import api as api_mod

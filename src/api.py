@@ -69,7 +69,8 @@ from src.preprocessing import apply_filters, filter_options, auto_standardize_na
 from src.data_access import (list_datasets, validate_dataset_name, get_dataset_columns,
                              get_prepared, inject_dataset, load_sample_dataframe)
 from src import storage
-from src.insights import llm_augment_insight, llm_chat, build_insight
+from src.insights import llm_augment_insight, llm_chat, build_insight, \
+    format_chart_context
 from src.viz_payload import jsonable, empty_result
 from src.analyses.common import select_patents, patent_records, export_dataframe
 from src.analyses.overview import compute_overview
@@ -611,6 +612,8 @@ def register_routes(app):
         POST {"analysis", "metrics":{요약 통계}, "sentences":[규칙 문장...],
               "question"?: 사용자 추가 질문, "history"?: [{"role","content"}...],
               "description"?: 그래프 설명, "chat"?: true,
+              "chart_data"?: [{"name","columns","rows"}...] — 화면 차트의 집계값
+              (요약 통계가 빈 분석에서도 LLM 이 실제 수치를 근거로 해석),
               "web_search"?: true — 외부 웹 검색 결과를 참고 컨텍스트로 첨부}
         - chat/question 모드 → {"status":"ok","answer":…,"source":"llm|rule",
           "web_sources"?:[{"title","url"}...], "web_note"?:검색 실패 안내}
@@ -624,6 +627,7 @@ def register_routes(app):
         analysis = str(body.get("analysis", ""))[:60]
         metrics = body.get("metrics") or {}
         sentences = body.get("sentences") or []
+        chart_context = format_chart_context(body.get("chart_data"))
         if body.get("chat") or body.get("question"):
             history = body.get("history")
             if not isinstance(history, list):
@@ -649,7 +653,7 @@ def register_routes(app):
             out = llm_chat(analysis, metrics, sentences, body.get("question"),
                            history, settings,
                            description=body.get("description"),
-                           web_context=web_context)
+                           web_context=web_context, chart_context=chart_context)
             out["status"] = "ok"
             if web_sources:
                 out["web_sources"] = web_sources
@@ -657,7 +661,8 @@ def register_routes(app):
                 out["web_note"] = web_note
             return out
         rule = build_insight(sentences, metrics)
-        out = llm_augment_insight(analysis, rule, metrics, settings)
+        out = llm_augment_insight(analysis, rule, metrics, settings,
+                                  chart_context=chart_context)
         out["status"] = "ok"
         return out
 
