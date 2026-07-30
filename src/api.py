@@ -38,6 +38,7 @@ api.py — API 응답 모듈. register_routes(app) 로 모든 엔드포인트를
   POST /api/semantic-influence  의미 기반 인용/영향력 대체 지표
   POST /api/similarity-network  특허 유사도 네트워크 (권리 중첩 그래프)
   POST /api/wips-deep           심층 시그널 (연차료 생존·진입 시차·대리인·심사·심판)
+  POST /api/executive-summary   경영진 전략 대시보드 (BCG·경쟁 포지션·alert)
   POST /api/patents             근거 특허 drill-down (페이지네이션)
   POST /api/insight             LLM 인사이트 (요약 통계만 전달, 실패 시 규칙 기반)
   POST /api/export              Excel 다운로드
@@ -94,6 +95,7 @@ from src.analyses.semantic_insights import (compute_emerging_clusters,
                                             compute_semantic_influence,
                                             compute_similarity_network)
 from src.analyses.wips_deep import compute_wips_deep
+from src.analyses.executive import compute_executive_summary
 from src.web_search import search_web, format_web_context
 from src.llm_client import sanitize_for_llm
 
@@ -492,6 +494,11 @@ def register_routes(app):
             extra_key_fields=("threshold",)),
         "wips-deep": _analysis_route(
             "wips-deep", lambda df, s, b: compute_wips_deep(df, s)),
+        "executive-summary": _analysis_route(
+            "executive-summary",
+            lambda df, s, b: compute_executive_summary(df, s,
+                                                       company=b.get("company")),
+            extra_key_fields=("company",)),
     }
 
     def make_analysis_view(path_name, handler):

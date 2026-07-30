@@ -28,7 +28,8 @@ import pandas as pd
 from src.config import get_threshold, get_limit
 from src.metrics import robust_growth, year_counts
 from src.insights import build_insight, fmt_num, fmt_pct, period_label, check_small_sample
-from src.viz_payload import ok_result, empty_result, line_chart, bar_chart, heatmap
+from src.viz_payload import ok_result, empty_result, line_chart, bar_chart, heatmap, \
+    base_layout
 from src.analyses.common import diagnose_year_tech
 
 
@@ -101,6 +102,48 @@ def compute_basic_stats(df, settings):
                                title="출원인 × 연도 활동 매트릭스", colorscale="Blues",
                                hovertext=hover, colorbar_title="건수")
 
+    # ③-b 출원인 × 출원연도 버블 (크기=출원건수)
+    fig_app_bubble = None
+    if len(app_counts):
+        bub_apps = app_counts.head(max_rows).index.tolist()
+        year_lo, year_hi = int(years_all.min()), int(years_all.max())
+        pts = {"x": [], "y": [], "size": [], "color": [], "hover": [], "custom": []}
+        vmax = 1.0
+        for a in bub_apps:
+            s = _year_series(df, df["applicant_display"] == a)
+            vmax = max(vmax, float(s.max()) if len(s) else 1.0)
+        for a in bub_apps:
+            s = _year_series(df, df["applicant_display"] == a)
+            for y, v in s.items():
+                if v <= 0:
+                    continue
+                pts["x"].append(int(y))
+                pts["y"].append(str(a))
+                pts["size"].append(float(7 + 33 * np.sqrt(float(v) / vmax)))
+                pts["color"].append(float(v))
+                pts["hover"].append("%s — %d년 출원 %s건" % (a, int(y), fmt_num(v)))
+                pts["custom"].append({"drill": {"type": "applicant",
+                                                "applicant": str(a), "year": int(y)},
+                                      "m": {"출원인": str(a), "연도": int(y),
+                                            "출원건수": int(v)}})
+        fig_app_bubble = {"data": [{
+            "type": "scatter", "mode": "markers",
+            "x": pts["x"], "y": pts["y"],
+            "hovertext": pts["hover"], "hoverinfo": "text",
+            "customdata": pts["custom"],
+            "marker": {"size": pts["size"], "color": pts["color"],
+                       "colorscale": "Blues", "cmin": 0,
+                       "colorbar": {"title": "출원건수", "thickness": 12},
+                       "line": {"width": 0.6, "color": "#5b7a8a"}}}],
+            "layout": base_layout(
+                "출원인 × 출원연도 버블 (크기·색=출원건수)",
+                xaxis={"title": "출원연도", "dtick": 1, "tickformat": "d",
+                       "range": [year_lo - 0.7, year_hi + 0.7]},
+                yaxis={"title": "", "type": "category", "automargin": True,
+                       "categoryorder": "array",
+                       "categoryarray": [str(a) for a in bub_apps[::-1]]},
+                height=max(420, 130 + 36 * len(bub_apps)))}
+
     # ⑤ 기술분류 순위 + ⑥ 분류×연도
     fig_tech, fig_tech_year = None, None
     tech_flat = pd.Series([t for lst in df["_tech_list"] for t in (lst or [])])
@@ -162,5 +205,6 @@ def compute_basic_stats(df, settings):
     return ok_result({
         "kpi": kpi, "annual": fig_annual, "country": fig_country,
         "applicants": fig_applicants, "applicant_year": fig_app_year,
+        "applicant_year_bubble": fig_app_bubble,
         "tech": fig_tech, "tech_year": fig_tech_year,
     }, insight=insight)

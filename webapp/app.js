@@ -202,8 +202,26 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
       return '<div class="status-error">' + Ui.esc(result.message || '오류가 발생했습니다.') + '</div>';
     }
 
+    function forceYearTicks(fig) {
+      /* 연도 축은 항상 1년 = 1칸: 제목에 '연도/year'가 든 수치축에 dtick=1 강제 */
+      var lay = fig && fig.layout;
+      if (!lay) return;
+      Object.keys(lay).forEach(function (k) {
+        if (!/^[xy]axis\d*$/.test(k)) return;
+        var ax = lay[k];
+        if (!ax || ax.type === 'category' || ax.type === 'date') return;
+        var t = ax.title ? (ax.title.text || ax.title) : '';
+        if (/연도|year/i.test(String(t))) {
+          ax.dtick = 1;
+          ax.tickformat = 'd';
+          if (!ax.tickangle) ax.tickangle = -45;
+        }
+      });
+    }
+
     function plotly(holder, fig, onDrill) {
       holder.classList.add('ipls-chart');
+      forceYearTicks(fig);
       Plotly.newPlot(holder, fig.data, fig.layout, {
         responsive: true, displaylogo: false,
         modeBarButtonsToRemove: ['lasso2d', 'select2d']
@@ -814,7 +832,82 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
         'Executive Overview — 포트폴리오 전반의 성장/쇠퇴 기술, 신규 조합, 경쟁사 전략변화, 권리장벽·공백영역 요약'));
       c.controls.appendChild(Render.excelButton('overview_patents', function () { return c.body; }, null));
     }).catch(function (e) { c.body.innerHTML = Render.statusBlock({ status: 'error', message: e.message }); });
+    renderExecutiveDashboard(content);
   };
+
+  function renderExecutiveDashboard(holder) {
+    analysisCard({
+      analysis: 'executive-summary', holder: holder,
+      title: '경영진 전략 대시보드 — "우리는 어디에 있고, 어디에 투자해야 하는가"',
+      help: '경영진의 3가지 질문에 한 화면으로 답합니다: ① 시장 내 위치(순위·점유율·성장률 격차 KPI) ' +
+        '② 투자 방향(BCG 스타일 성장-점유 매트릭스) ③ 위협·기회(핵심특허 만료, 급성장 경쟁사, ' +
+        '자사 부재 고성장 영역 alert). 자사는 Settings 자사명/자사 특허 여부 컬럼 기준이며 아래에서 ' +
+        '직접 선택할 수도 있습니다. 특허 지표는 R&D 활동의 프록시로 매출·수익 판단을 대체하지 않습니다.',
+      guide: 'BCG 매트릭스: X축=상대 시장점유율(자사 건수÷최대 경쟁사, 로그축, 1보다 오른쪽=1위), ' +
+        'Y축=시장 성장률, 버블 크기=시장 규모(전체 건수). ⭐Star(우상)=지켜야 할 주력, ' +
+        '❓Question(좌상)=고성장인데 아직 열위 — 투자 확대/철수를 지금 결정해야 하는 영역, ' +
+        '🐄Cash Cow(우하)=성숙했지만 우위 — 효율 유지, 🐕Dog(좌하)=정리 검토 후보. ' +
+        '경쟁 포지션 맵: X축=최근 성장률(오른쪽=확장 중), Y축=포트폴리오 품질, 크기=출원량, ' +
+        '◇빨간 테두리=자사 — 우상단으로 갈수록 공격적 리더이고, 자사보다 오른쪽·위에 있는 ' +
+        '기업이 실질 위협입니다. 버블 클릭 시 근거 특허가 열립니다.',
+      controls: function (c, reload) {
+        var sel = Ui.el('<select><option value="">자사 자동 선택</option></select>');
+        ((State.filterOptions || {}).applicants || []).slice(0, 60).forEach(function (a) {
+          var o = document.createElement('option'); o.value = a; o.textContent = a;
+          sel.appendChild(o);
+        });
+        sel.addEventListener('change', function () { reload({ company: sel.value || null }); });
+        var lbl = Ui.el('<span style="font-size:11.5px;color:#647b8d">자사 기준</span>');
+        c.controls.prepend(sel); c.controls.prepend(lbl);
+      },
+      renderOk: function (r, c, setTarget) {
+        var k = r.kpi || {};
+        var grid = Ui.el('<div class="kpi-grid" style="margin-bottom:10px"></div>');
+        var gapTxt = (k.growth_focal !== null && k.growth_market !== null) ?
+          ((k.growth_focal - k.growth_market >= 0 ? '+' : '') +
+           Ui.pct(k.growth_focal - k.growth_market)) : '-';
+        [[k.rank_all ? k.rank_all + '위' : '-', '시장 순위 (누적)'],
+         [k.rank_recent ? k.rank_recent + '위' : '-', '최근 3년 순위'],
+         [k.share !== null && k.share !== undefined ? Ui.pct(k.share) : '-', '출원 점유율'],
+         [gapTxt, '성장률: 자사-시장 격차'],
+         [k.active_rate !== null && k.active_rate !== undefined ? Ui.pct(k.active_rate) : '-', '자사 유효특허 비율'],
+         [k.expiring_5y_share !== null && k.expiring_5y_share !== undefined ?
+           Ui.pct(k.expiring_5y_share) : '-', '5년 내 만료 비중']].forEach(function (x) {
+          grid.appendChild(Ui.el('<div class="kpi"><div class="kpi-value">' + Ui.esc(x[0]) +
+            '</div><div class="kpi-label">' + Ui.esc(x[1]) + '</div></div>'));
+        });
+        c.body.appendChild(Ui.el('<div style="font-size:12.5px;color:#46607a;margin-bottom:6px">' +
+          '자사 기준: <b>' + Ui.esc(k.focal || '-') + '</b> (' + Ui.esc(k.focal_basis || '') + ')</div>'));
+        c.body.appendChild(grid);
+        if (r.bcg) {
+          var bh = Ui.el('<div class="chart-holder tall"></div>');
+          c.body.appendChild(bh);
+          Render.plotly(bh, r.bcg, plotlyDrill);
+          setTarget({ kind: 'plotly', el: bh });
+        }
+        if (r.position) {
+          var ph = Ui.el('<div class="chart-holder tall"></div>');
+          c.body.appendChild(ph);
+          Render.plotly(ph, r.position, plotlyDrill);
+          if (!r.bcg) setTarget({ kind: 'plotly', el: ph });
+        }
+        if ((r.alerts || []).length) {
+          c.body.appendChild(Ui.el('<div style="font-weight:700;font-size:12.5px;margin:10px 0 4px">' +
+            '🔔 경영 Alert</div>'));
+          r.alerts.forEach(function (a) {
+            var row = Ui.el('<div style="padding:6px 8px;border-bottom:1px solid #eef2f6;' +
+              'display:flex;gap:8px;align-items:center"></div>');
+            row.appendChild(Ui.el('<span>' + Ui.esc(a.icon || '•') + '</span>'));
+            var span = Ui.el('<span class="clickable" style="flex:1"></span>');
+            span.textContent = a.text;
+            span.addEventListener('click', function () { Drill.open(a.drill, a.text.slice(0, 40)); });
+            row.appendChild(span);
+            c.body.appendChild(row);
+          });
+        }
+      }
+    });
+  }
 
   /* ---------- 차트 해석 가이드 (X/Y축 의미 + 읽는 법) ---------- */
   var CHART_GUIDE = {
@@ -968,10 +1061,10 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
           '연도별 전체 출원·등록·유효 건수 추이입니다. 연도는 출원일(없으면 우선일/공개일) 기준이며, 점을 클릭하면 해당 연도의 근거 특허 목록이 열립니다.',
           ['annual'],
           'X축=연도(출원일 기준), Y축=특허 건수. 세 선의 간격이 정보입니다: 전체와 등록의 차이=미등록(심사중·거절·포기), 등록과 유효의 차이=소멸된 권리. 읽는 법: 우상향이면 투자 확대 국면이고, 최근 1~2년은 아직 공개되지 않은 출원 때문에 실제보다 낮게 보일 수 있으므로 하락으로 단정하지 마세요.') },
-      { label: '국가·출원인', render: statsTab('국가별 분포 · 출원인 순위 · 활동 매트릭스',
-          '국가별 출원 분포, 출원인 순위 Top, 출원인×연도 활동 매트릭스(진할수록 활발)입니다. 막대를 클릭하면 해당 국가/출원인의 특허 목록이 열립니다.',
-          ['country', 'applicants', 'applicant_year'],
-          '국가별 분포: X축=국가, Y축=건수 — 어느 시장에 권리를 확보했는지 보여줍니다. 출원인 순위: X축=건수, Y축=출원인 — 이 분야의 주요 플레이어 순위입니다. 활동 매트릭스: X축=연도, Y축=출원인, 색 진하기=그 해 출원량. 읽는 법: 가로로 계속 진한 띠=꾸준한 투자 기업, 최근 연도에만 갑자기 진해진 기업=신규 집중 투자(경쟁 신호)입니다.') },
+      { label: '국가·출원인', render: statsTab('국가별 분포 · 출원인 순위 · 연도별 버블 · 활동 매트릭스',
+          '국가별 출원 분포, 출원인 순위 Top, 출원인×출원연도 버블(크기=출원건수), 출원인×연도 활동 매트릭스(진할수록 활발)입니다. 막대·버블을 클릭하면 해당 국가/출원인(해당 연도)의 특허 목록이 열립니다.',
+          ['country', 'applicants', 'applicant_year_bubble', 'applicant_year'],
+          '국가별 분포: X축=국가, Y축=건수 — 어느 시장에 권리를 확보했는지 보여줍니다. 출원인 순위: X축=건수, Y축=출원인 — 이 분야의 주요 플레이어 순위입니다. 출원인×출원연도 버블: X축=출원연도(1년=1칸), Y축=출원인(위가 누적 1위), 버블 크기·색=그 해 출원건수 — 큰 버블이 이어지는 줄=꾸준한 투자 기업, 최근에만 큰 버블이 생긴 기업=신규 집중 투자, 버블이 사라진 기업=투자 축소 신호이며 버블 클릭 시 그 기업·연도 특허가 열립니다. 활동 매트릭스: 같은 데이터의 히트맵 보기입니다.') },
       { label: '기술분류 동향', render: statsTab('기술분류별 건수 · 연도 동향',
           '기술분류별 누적 건수 순위와 분류×연도 동향 매트릭스입니다. 다중분류는 Settings 의 처리방식을 따르지 않고 각 분류에 1건씩 계산합니다.',
           ['tech', 'tech_year'],

@@ -350,6 +350,7 @@ ANALYSIS_REQUIREMENTS = {
     "semantic-influence":    {"required": [{"any": ["abstract", "indep_claim", "title"]}, {"any": ANY_DATE}], "optional": ANY_APPLICANT + ["embedding", "cites_forward"]},
     "similarity-network":    {"required": [{"any": ["abstract", "indep_claim", "title"]}], "optional": ANY_APPLICANT + ["embedding", "is_active", "legal_status"]},
     "wips-deep":             {"required": [{"any": ANY_DATE}], "optional": ANY_APPLICANT + ["reg_date", "lapse_date", "agent", "expedited_exam", "exam_request_date", "oa_count", "examiner_citations", "applicant_citations", "parent_app_number", "drawings_count", "spec_length", "trial_info", "trial_claimant", "family_id", "country", "claims_count"]},
+    "executive-summary":     {"required": [{"any": ANY_TECH}, {"any": ANY_DATE}, {"any": ANY_APPLICANT}], "optional": ["cites_forward", "is_active", "legal_status", "expiry_date", "is_own"]},
 }
 
 _NORM_RE = re.compile(r"[\s\(\)\[\]\{\}\-_/\\.,:;'\"·|]+")

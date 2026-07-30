@@ -257,6 +257,42 @@ def test_wips_deep_graceful_without_deep_fields(settings):
         assert x["reason"]  # 사유 명시
 
 
+# ---------------------------------------------------------------------------
+# 경영진 대시보드 · 출원인×연도 버블 · 연도축
+# ---------------------------------------------------------------------------
+def test_executive_summary(prepared, settings):
+    from src.analyses.executive import compute_executive_summary
+    r = compute_executive_summary(prepared, settings)
+    assert r["status"] == "ok"
+    k = r["kpi"]
+    assert k["focal"] and k["rank_all"] >= 1 and 0 < k["share"] <= 1
+    assert r["bcg"] and r["position"]
+    quads = {row["quadrant"].split(" ")[0] for row in r["bcg_rows"]}
+    assert quads <= {"Star", "Question", "Cash", "Dog"}
+    # 상대점유율 X축은 로그축, 분면 기준선 포함
+    assert r["bcg"]["layout"]["xaxis"]["type"] == "log"
+    assert len(r["bcg"]["layout"]["shapes"]) == 2
+    # 프록시 주의문 명시
+    assert any("프록시" in s for s in r["insight"]["sentences"])
+    # 자사 직접 지정
+    r2 = compute_executive_summary(prepared, settings, company=k["focal"])
+    assert r2["kpi"]["focal_basis"] == "화면에서 선택"
+
+
+def test_applicant_year_bubble(prepared, settings):
+    from src.analyses.basic_stats import compute_basic_stats
+    r = compute_basic_stats(prepared, settings)
+    fig = r["applicant_year_bubble"]
+    assert fig is not None
+    tr = fig["data"][0]
+    assert tr["x"] and len(tr["x"]) == len(tr["y"]) == len(tr["marker"]["size"])
+    # X=연도(1년=1칸), Y=출원인 범주
+    assert fig["layout"]["xaxis"]["dtick"] == 1
+    assert fig["layout"]["yaxis"]["type"] == "category"
+    assert tr["customdata"][0]["drill"]["type"] == "applicant"
+    assert "year" in tr["customdata"][0]["drill"]
+
+
 def test_km_curve_basic():
     from src.analyses.wips_deep import _km_curve, _km_at, _km_median
     # 10건 중 5건이 4년차에 소멸, 5건은 10년까지 관측(censored)
