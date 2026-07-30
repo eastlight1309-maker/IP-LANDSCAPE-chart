@@ -356,3 +356,25 @@ def test_portfolio_index_pai_charts(client):
 def test_basic_stats_year_axis_integer(client):
     data = _post(client, "/api/basic-stats", {"filters": {}}).get_json()
     assert data["annual"]["layout"]["xaxis"]["tickformat"] == "d"
+
+
+def test_export_chart_endpoint(client):
+    """차트 집계 데이터 Excel 내보내기: 시트별 데이터, 상한, 형식 오류 처리."""
+    resp = _post(client, "/api/export-chart", {
+        "filename": "차트데이터",
+        "sheets": [
+            {"name": "연도별 출원 동향", "columns": ["시리즈", "연도", "건수"],
+             "rows": [["전체", 2020, 12], ["전체", 2021, 15]]},
+            {"name": "출원인 순위 [Top]", "columns": ["항목", "값"],
+             "rows": [["삼성전자", 30], ["TSMC", 20]]},
+            {"name": "연도별 출원 동향", "columns": ["A"], "rows": [[1]]},  # 중복 시트명
+        ]})
+    assert resp.status_code == 200
+    assert resp.data[:2] == b"PK"
+    import openpyxl
+    wb = openpyxl.load_workbook(io.BytesIO(resp.data))
+    assert len(wb.sheetnames) == 3
+    ws = wb[wb.sheetnames[0]]
+    assert ws.cell(1, 1).value == "시리즈" and ws.cell(2, 3).value == 12
+    bad = _post(client, "/api/export-chart", {"sheets": []})
+    assert bad.status_code == 400

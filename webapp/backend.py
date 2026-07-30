@@ -6912,6 +6912,7 @@ api.py — API 응답 모듈. register_routes(app) 로 모든 엔드포인트를
 import io
 import json
 import logging
+import re
 import time
 import traceback
 
@@ -7342,6 +7343,56 @@ def register_routes(app):
         buf.seek(0)
         fname = str(body.get("filename") or "ip_landscape_export.xlsx")
         fname = "".join(ch for ch in fname if ch.isalnum() or ch in "._-가-힣") or "export.xlsx"
+        if not fname.endswith(".xlsx"):
+            fname += ".xlsx"
+        return send_file(buf, as_attachment=True, download_name=fname,
+                         mimetype="application/vnd.openxmlformats-officedocument"
+                                  ".spreadsheetml.sheet")
+
+    @app.route("/api/export-chart", methods=["POST"])
+    @wrap
+    def api_export_chart():
+        """POST {"filename"?, "sheets":[{"name","columns":[...],"rows":[[...]]}]} →
+        차트에 표시된 집계 데이터의 Excel 스트림 (시트당 1개 차트).
+
+        상한: 시트 20개, 시트당 20,000행 × 100열. 초과분은 절단.
+        오류 400: sheets 형식 오류/빈 데이터.
+        """
+        body = json_body()
+        sheets = body.get("sheets")
+        if not isinstance(sheets, list) or not sheets:
+            return _error(400, "내보낼 차트 데이터가 없습니다.")
+        buf = io.BytesIO()
+        used_names = set()
+        with pd.ExcelWriter(buf, engine="openpyxl") as writer:
+            wrote = False
+            for i, sheet in enumerate(sheets[:20]):
+                if not isinstance(sheet, dict):
+                    continue
+                cols = [str(c)[:80] for c in (sheet.get("columns") or [])][:100]
+                rows = [list(r)[:100] for r in (sheet.get("rows") or [])
+                        if isinstance(r, (list, tuple))][:20000]
+                if not cols or not rows:
+                    continue
+                # 컬럼 수 정합화
+                rows = [r + [None] * (len(cols) - len(r)) if len(r) < len(cols)
+                        else r[:len(cols)] for r in rows]
+                name = re.sub(r"[\[\]:*?/\\]", " ", str(sheet.get("name") or "chart%d" % (i + 1)))
+                name = (name.strip() or "chart%d" % (i + 1))[:28]
+                base = name
+                k = 2
+                while name in used_names:
+                    name = "%s_%d" % (base[:24], k)
+                    k += 1
+                used_names.add(name)
+                pd.DataFrame(rows, columns=cols).to_excel(writer, index=False,
+                                                          sheet_name=name)
+                wrote = True
+            if not wrote:
+                return _error(400, "내보낼 차트 데이터가 없습니다.")
+        buf.seek(0)
+        fname = str(body.get("filename") or "chart_data.xlsx")
+        fname = "".join(ch for ch in fname if ch.isalnum() or ch in "._-가-힣") or "chart.xlsx"
         if not fname.endswith(".xlsx"):
             fname += ".xlsx"
         return send_file(buf, as_attachment=True, download_name=fname,

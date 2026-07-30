@@ -203,6 +203,7 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
     }
 
     function plotly(holder, fig, onDrill) {
+      holder.classList.add('ipls-chart');
       Plotly.newPlot(holder, fig.data, fig.layout, {
         responsive: true, displaylogo: false,
         modeBarButtonsToRemove: ['lasso2d', 'select2d']
@@ -221,6 +222,8 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
 
     function cytoscape_(holder, network, opts) {
       opts = opts || {};
+      holder.classList.add('ipls-cy');
+      holder.__iplsNetwork = network;
       var cy = cytoscape({
         container: holder,
         elements: network,
@@ -262,9 +265,115 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
     }
 
     function echarts_(holder, option) {
+      holder.classList.add('ipls-echart');
+      holder.__iplsOption = option;
       var chart = echarts.init(holder);
       chart.setOption(option);
       return chart;
+    }
+
+    /* 카드 내 렌더링된 차트들의 표시 데이터를 Excel 시트 목록으로 추출 */
+    function extractChartSheets(bodyEl) {
+      var sheets = [];
+      function axTitle(lt, ax, fb) {
+        var a = lt && lt[ax];
+        if (!a || !a.title) return fb;
+        return (typeof a.title === 'string' ? a.title : a.title.text) || fb;
+      }
+      function stripHtml(s) { return String(s || '').replace(/<[^>]+>/g, ' ').split('  ')[0].trim(); }
+      bodyEl.querySelectorAll('.ipls-chart').forEach(function (gd) {
+        if (!gd.data || !gd.layout) return;
+        var lt = gd.layout;
+        var title = (lt.title && (lt.title.text || lt.title)) || ('chart' + (sheets.length + 1));
+        var columns = null, rows = [];
+        (gd.data || []).forEach(function (tr) {
+          if (tr.type === 'bar') {
+            var cats = tr.orientation === 'h' ? tr.y : tr.x;
+            var vals = tr.orientation === 'h' ? tr.x : tr.y;
+            columns = ['항목', axTitle(lt, tr.orientation === 'h' ? 'xaxis' : 'yaxis', '값')];
+            (cats || []).forEach(function (cat, i) { rows.push([cat, vals[i]]); });
+          } else if (tr.type === 'heatmap' || tr.type === 'contour') {
+            if (tr.type === 'contour') return;  // 밀도 그리드는 제외
+            columns = ['행\\열'].concat((tr.x || []).map(String));
+            (tr.y || []).forEach(function (yl, ri) {
+              rows.push([yl].concat((tr.z && tr.z[ri]) || []));
+            });
+          } else if (tr.type === 'sankey') {
+            columns = ['Source', 'Target', 'Value'];
+            var labels = (tr.node && tr.node.label) || [];
+            ((tr.link && tr.link.source) || []).forEach(function (s, i) {
+              rows.push([labels[s], labels[tr.link.target[i]], tr.link.value[i]]);
+            });
+          } else if (tr.type === 'scatterpolar') {
+            if (!columns) columns = ['시리즈'].concat((tr.theta || []).map(String));
+            rows.push([tr.name || ''].concat(tr.r || []));
+          } else if (tr.type === 'parcoords') {
+            columns = (tr.dimensions || []).map(function (d) { return d.label; });
+            var nRows = (tr.dimensions && tr.dimensions.length)
+              ? tr.dimensions[0].values.length : 0;
+            for (var r = 0; r < nRows; r++) {
+              rows.push(tr.dimensions.map(function (d) { return d.values[r]; }));
+            }
+          } else if (tr.type === 'scatter' || !tr.type) {
+            var hasM = tr.customdata && tr.customdata.length && tr.customdata[0]
+              && tr.customdata[0].m;
+            if (hasM) {
+              var keys = Object.keys(tr.customdata[0].m);
+              columns = ['라벨'].concat(keys);
+              tr.customdata.forEach(function (cd, i) {
+                var label = (tr.text && tr.text[i])
+                  || stripHtml(tr.hovertext && tr.hovertext[i]) || '';
+                rows.push([label].concat(keys.map(function (k) {
+                  return cd && cd.m ? cd.m[k] : null;
+                })));
+              });
+            } else {
+              columns = ['시리즈', axTitle(lt, 'xaxis', 'X'), axTitle(lt, 'yaxis', 'Y')];
+              (tr.x || []).forEach(function (xv, i) {
+                rows.push([tr.name || '', xv, (tr.y || [])[i]]);
+              });
+            }
+          }
+        });
+        if (columns && rows.length) {
+          sheets.push({ name: String(title).slice(0, 28), columns: columns, rows: rows });
+        }
+      });
+      bodyEl.querySelectorAll('.ipls-cy').forEach(function (el) {
+        var net = el.__iplsNetwork;
+        if (!net) return;
+        var nodeRows = (net.nodes || []).map(function (n) {
+          var d = n.data || {};
+          return [d.label || d.id, d.count, d.group || '', d.growth];
+        });
+        if (nodeRows.length) {
+          sheets.push({ name: '네트워크 노드', columns: ['노드', '건수', '그룹', '성장률'],
+                        rows: nodeRows });
+        }
+        var edgeRows = (net.edges || []).map(function (e) {
+          var d = e.data || {};
+          return [d.source, d.target, d.weight, d.jaccard, d.lift, d.avg_lag, d.label || ''];
+        });
+        if (edgeRows.length) {
+          sheets.push({ name: '네트워크 엣지',
+                        columns: ['Source', 'Target', '가중치', 'Jaccard', 'Lift', '평균시차', '라벨'],
+                        rows: edgeRows });
+        }
+      });
+      bodyEl.querySelectorAll('.ipls-echart').forEach(function (el) {
+        var opt = el.__iplsOption;
+        if (!opt || !opt.series || !opt.series[0]) return;
+        var xs = (opt.xAxis && opt.xAxis.data) || [];
+        var ys = (opt.yAxis && opt.yAxis.data) || [];
+        var rows = (opt.series[0].data || []).map(function (d) {
+          return [ys[d[1]], xs[d[0]], d[2]];
+        });
+        if (rows.length) {
+          sheets.push({ name: (opt.title && opt.title.text || '히트맵').slice(0, 28),
+                        columns: ['행', '열', '값'], rows: rows });
+        }
+      });
+      return sheets;
     }
 
     function chartButtons(getTarget, baseName) {
@@ -297,12 +406,23 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
       return wrap;
     }
 
-    function excelButton(drill, filename) {
-      var b = Ui.el('<button class="btn small">Excel</button>');
+    function excelButton(filename, getBody, fallbackDrill) {
+      /* 카드에 표시된 차트의 집계 데이터를 Excel(시트당 1개 차트)로 내보낸다.
+         카드에 차트가 없으면(목록형 카드) 필터된 특허 목록으로 폴백. */
+      var b = Ui.el('<button class="btn small" title="이 카드의 차트 데이터를 Excel 로 다운로드">Excel</button>');
       b.addEventListener('click', function () {
-        Api.download('/api/export',
-          { filters: State.filters, drill: drill || null, filename: filename },
-          (filename || 'export') + '.xlsx').catch(errToast);
+        var body = getBody ? getBody() : null;
+        var sheets = body ? extractChartSheets(body) : [];
+        if (sheets.length) {
+          Api.download('/api/export-chart',
+            { filename: (filename || 'chart') + '_data', sheets: sheets },
+            (filename || 'chart') + '_data.xlsx').catch(errToast);
+        } else {
+          Ui.toast('이 카드에는 차트 데이터가 없어 특허 목록을 내보냅니다.');
+          Api.download('/api/export',
+            { filters: State.filters, drill: fallbackDrill || null, filename: filename },
+            (filename || 'export') + '.xlsx').catch(errToast);
+        }
       });
       return b;
     }
@@ -641,20 +761,96 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
       c.body.appendChild(Insight.box(r, 'overview'));
       c.body.appendChild(Insight.aiPanel('overview', r,
         'Executive Overview — 포트폴리오 전반의 성장/쇠퇴 기술, 신규 조합, 경쟁사 전략변화, 권리장벽·공백영역 요약'));
-      c.controls.appendChild(Render.excelButton(null, 'overview_patents'));
+      c.controls.appendChild(Render.excelButton('overview_patents', function () { return c.body; }, null));
     }).catch(function (e) { c.body.innerHTML = Render.statusBlock({ status: 'error', message: e.message }); });
+  };
+
+  /* ---------- 차트 해석 가이드 (X/Y축 의미 + 읽는 법) ---------- */
+  var CHART_GUIDE = {
+    'technology-network':
+      '노드=기술분류(크기=특허 건수, 테두리 초록=최근 성장·빨강=감소·회색=판단 불가), ' +
+      '선=두 분류가 한 특허에 함께 부여된 동시분류 관계(두께=결합 강도 Jaccard). ' +
+      '읽는 법: 가운데에 여러 노드와 굵게 연결된 노드가 기술 융합의 허브입니다. ' +
+      '노드는 드래그로 재배치할 수 있고, 선을 클릭하면 해당 조합의 근거 특허가 열립니다.',
+    'emerging-combinations':
+      'X축=조합 누적 특허 수(로그 스케일, 오른쪽일수록 이미 성숙한 조합), ' +
+      'Y축=최근 3년 성장률(위일수록 급성장), 버블 크기=신규 진입 출원인 수, ' +
+      '색=Lift(우연 대비 결합 강도, 클수록 의미 있는 융합). ' +
+      '읽는 법: 좌상단(적은 누적×고성장)의 크고 진한 버블이 새로 뜨는 기술융합 후보이고, ' +
+      '우상단은 이미 검증된 핵심 융합, 우하단은 성숙·정체 조합입니다.',
+    'lifecycle':
+      'X축=기술 성숙도(경과연수·누적건수를 0~1로 정규화, 오른쪽=오래되고 큰 기술), ' +
+      'Y축=성장 모멘텀(최근 성장률·신규 출원인을 0~1로 정규화, 위=탄력 강함), ' +
+      '버블 크기=유효 특허 수, 색=경쟁 강도(출원인 수), 화살표=전년 대비 이동 방향. ' +
+      '읽는 법: 좌상=Emerging(초기 성장), 우상=Growing 핵심, 우하=Mature/Declining. ' +
+      '우하에서 위로 되돌아오는 기술은 Re-emerging(재부상) 신호입니다.',
+    'technology-transition':
+      '왼쪽 노드=이전 기간의 기술분류, 오른쪽 노드=다음 기간의 기술분류, ' +
+      '띠 두께=전이량, 색=대분류. ' +
+      '읽는 법: 굵은 띠가 모여드는 오른쪽 분류가 포트폴리오의 중심이 이동해 가는 ' +
+      '목적지입니다. 띠를 클릭하면 관련 특허가 열립니다.',
+    'trajectory':
+      '각 점=한 기업의 특정 연도 기술 포트폴리오 위치(주성분 2차원 좌표, 절대 단위 없음), ' +
+      '화살표=연도 순서의 이동, 점 크기=그 해 유효 특허 수. ' +
+      '읽는 법: 점 사이 거리=포트폴리오 구성의 차이이므로, 궤적이 길게 움직인 기업은 ' +
+      '전략을 재편 중이고 제자리에 머무는 기업은 일관된 전략입니다. ' +
+      '두 기업의 점이 가까우면 유사한 기술 구성을 갖고 있다는 뜻입니다.',
+    'company-dna':
+      '레이더의 각 축=12개 전략 지표를 비교 기업 사이에서 0~1로 표준화한 점수(1=최고), ' +
+      '히트맵일 때는 색이 진할수록 높음. Hover 에 원값이 함께 표시됩니다. ' +
+      '읽는 법: 도형이 전체적으로 넓은 기업=전방위 강자, 특정 축만 뾰족하면 그 영역 특화. ' +
+      '평행좌표는 세로축=지표, 꺾은선 1개=기업 1개입니다.',
+    'lead-lag':
+      '노드=기업(크기=특허 수), 화살표=시계열상 선행→추종 방향, 두께=관계 강도, ' +
+      '라벨=평균 시차(년). ' +
+      '읽는 법: A→B 화살표는 "A의 출원 증가 후 일정 시차를 두고 B가 증가하는 패턴이 ' +
+      '여러 기술분류에서 반복 관측됨"을 뜻합니다. 통계적 선행 신호이며 인과관계·모방의 ' +
+      '증거가 아닙니다.',
+    'opportunity':
+      'X축=매력도(성장률·신규 진입·조합 증가·키워드·과제 반복·인접성의 가중 기하평균, 0~1), ' +
+      'Y축=진입 가능성(1-권리장벽, 0~1), 버블 크기=관련 특허 수, 색=권리장벽(빨강=높음), ' +
+      '◇ 마커=자사 역량 보유 영역. ' +
+      '읽는 법: 우상단=우선 공략 후보, 우하단=매력적이지만 장벽이 높아 제휴·라이선스 검토 ' +
+      '대상, 좌측=현재 매력도가 낮은 영역입니다.',
+    'problem-solution':
+      '행(Y축)=해결과제, 열(X축)=해결수단, 셀 색=최근 성장률(초록=성장, 빨강=감소), ' +
+      'Hover=건수·유효비율·상위 출원인. ' +
+      '읽는 법: 값이 없는 빈 셀=아직 시도되지 않은 과제×수단 조합(공백 후보)이며, ' +
+      '성장 중인 셀 주변의 빈 셀이 특히 유망합니다. 셀을 클릭하면 특허 목록·추이·대표 ' +
+      '청구항 패널이 열립니다.',
+    'citation-diffusion':
+      '막대: X축=Influence Score(직·간접 피인용, 타 분류/기업 확산, 패밀리 확장, 권리 ' +
+      '유지의 표준화 가중합), Y축=특허. Sankey: 핵심특허→기술분류→주요 출원인으로 흐르는 ' +
+      '띠(두께=피인용 가중)가 영향력 전파 경로입니다. ' +
+      '읽는 법: Influence 상위 특허 중 만료 임박 특허는 만료 후 설계 자유도가 커지는 ' +
+      '기회 신호입니다.',
+    'claim-density':
+      '좌표=독립청구항의 의미 유사도 배치(가까울수록 유사한 권리범위, 축 자체는 단위 없음), ' +
+      '등고선 붉은 영역=청구항이 밀집된 곳(권리 경쟁 치열), 점 크기=피인용, 색=출원인, ' +
+      '불투명한 점=유효 권리, 테두리 굵은 점=등록특허. ' +
+      '읽는 법: 밀집 영역에 타사 유효 특허가 몰려 있으면 우선 검토 대상이고, 밀도가 낮은 ' +
+      '영역이 상대적으로 여유 있는 공간입니다. FTO 판단을 대체하지 않습니다.',
+    'inventor-mobility':
+      '노드=기업, 화살표=발명자 이동 방향(두께=이동 인원 수), 색=대표 기술분류. ' +
+      '읽는 법: A→B로 굵은 화살표가 이어지면 A에서 B로 인력·기술이 이동했다는 신호입니다. ' +
+      '동명이인 가능성 때문에 신뢰도 점수 기반 추정이며, 낮은 신뢰도의 "추정 이동"은 ' +
+      '기본적으로 제외됩니다.',
+    'classification-quality':
+      'Confusion Map: 행·열=기술분류, 셀 값=두 분류 중심의 의미 유사도(임베딩) 또는 중복 ' +
+      '특허 비율. 붉은 셀=경계가 모호한 분류쌍(통합 검토 후보), 파란 셀=분리 명확. ' +
+      '응집도 막대: 값이 낮은 분류는 서로 다른 기술이 섞여 있어 분리 검토 대상입니다.'
   };
 
   /* ---------- 헬퍼: 표준 분석 카드 ---------- */
   function analysisCard(opts) {
-    // opts: {analysis, title, help, holder, body, renderOk(result, card, chartTargetSetter), controls(card, reload)}
+    // opts: {analysis, title, help, guide?, holder, body, renderOk(...), controls(...)}
     var c = card(opts.title, opts.help);
     opts.holder.appendChild(c.root);
     if (!availabilityGuard(opts.analysis, c.body)) return null;
     var chartTarget = null;
     c.controls.appendChild(Render.chartButtons(function () { return chartTarget; },
       opts.analysis.replace(/-/g, '_')));
-    c.controls.appendChild(Render.excelButton(opts.drill || null, opts.analysis));
+    c.controls.appendChild(Render.excelButton(opts.analysis, function () { return c.body; }, opts.drill || null));
     function reload(extraBody) {
       var body = Object.assign({ filters: State.filters }, opts.body || {}, extraBody || {});
       c.body.innerHTML = '<div class="status-empty">불러오는 중…</div>';
@@ -663,6 +859,11 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
         c.body.innerHTML = '';
         if (r.status !== 'ok') { c.body.innerHTML = Render.statusBlock(r); return; }
         opts.renderOk(r, c, function (t) { chartTarget = t; });
+        var guideText = opts.guide || CHART_GUIDE[opts.analysis];
+        if (guideText) {
+          c.body.appendChild(Ui.el('<div class="chart-guide"><b>📖 차트 해석</b>' +
+            Ui.esc(guideText) + '</div>'));
+        }
         c.body.appendChild(Insight.box(r, opts.analysis));
         c.body.appendChild(Insight.aiPanel(opts.analysis, r, opts.title + ' — ' + (c.desc || '')));
       }).catch(function (e) {
@@ -676,105 +877,12 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
 
   function plotlyDrill(drill) { Drill.open(drill, '근거 특허'); }
 
-  /* ---------- 버블차트 X/Y축 직접 선택 ----------
-     각 포인트의 customdata.m(지표 dict)을 이용해 서버 재계산 없이 축을 재배치한다. */
-  var AXIS_FIELDS = {
-    'emerging-combinations': {
-      fields: { n_ab: '조합 누적 특허 수', growth: '최근 성장률', lift: 'Lift',
-                new_applicants: '신규 출원인 수', active_ratio: '유효특허 비율',
-                score: 'Emerging Score' } },
-    'lifecycle': {
-      fields: { maturity: '성숙도(정규화)', momentum: '모멘텀(정규화)', total: '누적 건수',
-                growth: '최근 성장률', age: '경과연수', concentration: '출원인 집중도(HHI)',
-                new_entrants: '신규 출원인 수', n_applicants: '출원인 수',
-                active_ratio: '유효특허 비율', combo_growth: '조합 증가율',
-                avg_citations: '평균 피인용' } },
-    'opportunity': {
-      fields: { attractiveness: '매력도', entry_possibility: '진입 가능성',
-                opportunity_score: 'Opportunity Score', barrier: '권리장벽',
-                total: '특허 수', growth: '최근 성장률', new_entrants: '신규 출원인 수',
-                active_granted: '유효등록 수', cr3: '상위3사 점유율(CR3)' } },
-    'portfolio-index': {
-      fields: { families: '특허 패밀리 건수', n: '문헌 수',
-                avg_ci: '평균 Competitive Impact',
-                portfolio_index: 'Patent Asset Index',
-                avg_tr: '평균 TR(기술 영향력)',
-                avg_mc: '평균 MC(시장 커버리지)', growth: '최근 성장률' } }
-  };
-
-  function attachAxisPicker(c, holder, analysis) {
-    var def = AXIS_FIELDS[analysis];
-    if (!def || !holder.data) return;
-    function axTitle(ax) {
-      if (!ax || !ax.title) return '';
-      return typeof ax.title === 'string' ? ax.title : (ax.title.text || '');
-    }
-    var orig = {
-      traces: (holder.data || []).map(function (tr) {
-        return { x: (tr.x || []).slice(), y: (tr.y || []).slice() };
-      }),
-      xTitle: axTitle(holder.layout.xaxis), yTitle: axTitle(holder.layout.yaxis),
-      xType: holder.layout.xaxis ? holder.layout.xaxis.type : null,
-      xRange: (holder.layout.xaxis && holder.layout.xaxis.range)
-        ? holder.layout.xaxis.range.slice() : null,
-      yRange: (holder.layout.yaxis && holder.layout.yaxis.range)
-        ? holder.layout.yaxis.range.slice() : null,
-      shapes: (holder.layout.shapes || []).slice(),
-      annotations: (holder.layout.annotations || []).slice()
-    };
-    var wrap = Ui.el('<span class="axis-picker"><span>축 선택</span></span>');
-    function mkSel(axisLabel) {
-      var sel = document.createElement('select');
-      sel.appendChild(Ui.el('<option value="">' + axisLabel + ': 기본</option>'));
-      Object.keys(def.fields).forEach(function (k) {
-        var o = document.createElement('option');
-        o.value = k; o.textContent = axisLabel + ': ' + def.fields[k];
-        sel.appendChild(o);
-      });
-      return sel;
-    }
-    var xSel = mkSel('X'), ySel = mkSel('Y');
-    function metricArray(tr, key) {
-      return (tr.customdata || []).map(function (cd) {
-        var v = cd && cd.m ? cd.m[key] : null;
-        return (v === undefined || v === null) ? null : v;
-      });
-    }
-    function apply() {
-      var xk = xSel.value, yk = ySel.value;
-      var custom = !!(xk || yk);
-      (holder.data || []).forEach(function (tr, i) {
-        if (tr.mode !== 'markers' || !tr.customdata) return;
-        var xs = xk ? metricArray(tr, xk) : orig.traces[i].x;
-        var ys = yk ? metricArray(tr, yk) : orig.traces[i].y;
-        Plotly.restyle(holder, { x: [xs], y: [ys] }, [i]);
-      });
-      var re = {
-        'xaxis.title.text': xk ? def.fields[xk] : orig.xTitle,
-        'yaxis.title.text': yk ? def.fields[yk] : orig.yTitle,
-        'xaxis.type': xk ? 'linear' : (orig.xType || 'linear'),
-        shapes: custom ? [] : orig.shapes,
-        annotations: custom ? [] : orig.annotations
-      };
-      if (custom || !orig.xRange) { re['xaxis.autorange'] = true; }
-      else { re['xaxis.range'] = orig.xRange; }
-      if (custom || !orig.yRange) { re['yaxis.autorange'] = true; }
-      else { re['yaxis.range'] = orig.yRange; }
-      Plotly.relayout(holder, re);
-    }
-    xSel.addEventListener('change', apply);
-    ySel.addEventListener('change', apply);
-    wrap.appendChild(xSel);
-    wrap.appendChild(ySel);
-    c.controls.prepend(wrap);
-  }
-
   /* ---------- 1.5 Basic Statistics (WIPS·PatentSight 스타일) ---------- */
   Views.basic = function (content) {
-    function statsTab(title, help, keys) {
+    function statsTab(title, help, keys, guide) {
       return function (h) {
         analysisCard({
-          analysis: 'basic-stats', holder: h, title: title, help: help,
+          analysis: 'basic-stats', holder: h, title: title, help: help, guide: guide,
           renderOk: function (r, c, setTarget) {
             if (r.kpi && keys.indexOf('annual') >= 0) {
               var k = r.kpi;
@@ -807,27 +915,27 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
     makeTabs(content, [
       { label: '출원 동향', render: statsTab('연도별 출원 동향 (WIPS형 기본 통계)',
           '연도별 전체 출원·등록·유효 건수 추이입니다. 연도는 출원일(없으면 우선일/공개일) 기준이며, 점을 클릭하면 해당 연도의 근거 특허 목록이 열립니다.',
-          ['annual']) },
+          ['annual'],
+          'X축=연도(출원일 기준), Y축=특허 건수. 세 선의 간격이 정보입니다: 전체와 등록의 차이=미등록(심사중·거절·포기), 등록과 유효의 차이=소멸된 권리. 읽는 법: 우상향이면 투자 확대 국면이고, 최근 1~2년은 아직 공개되지 않은 출원 때문에 실제보다 낮게 보일 수 있으므로 하락으로 단정하지 마세요.') },
       { label: '국가·출원인', render: statsTab('국가별 분포 · 출원인 순위 · 활동 매트릭스',
           '국가별 출원 분포, 출원인 순위 Top, 출원인×연도 활동 매트릭스(진할수록 활발)입니다. 막대를 클릭하면 해당 국가/출원인의 특허 목록이 열립니다.',
-          ['country', 'applicants', 'applicant_year']) },
+          ['country', 'applicants', 'applicant_year'],
+          '국가별 분포: X축=국가, Y축=건수 — 어느 시장에 권리를 확보했는지 보여줍니다. 출원인 순위: X축=건수, Y축=출원인 — 이 분야의 주요 플레이어 순위입니다. 활동 매트릭스: X축=연도, Y축=출원인, 색 진하기=그 해 출원량. 읽는 법: 가로로 계속 진한 띠=꾸준한 투자 기업, 최근 연도에만 갑자기 진해진 기업=신규 집중 투자(경쟁 신호)입니다.') },
       { label: '기술분류 동향', render: statsTab('기술분류별 건수 · 연도 동향',
           '기술분류별 누적 건수 순위와 분류×연도 동향 매트릭스입니다. 다중분류는 Settings 의 처리방식을 따르지 않고 각 분류에 1건씩 계산합니다.',
-          ['tech', 'tech_year']) },
+          ['tech', 'tech_year'],
+          '순위: X축=건수, Y축=기술분류 — 포트폴리오가 집중된 기술. 동향 매트릭스: X축=연도, Y축=기술분류, 색=그 해 건수. 읽는 법: 오른쪽(최근)으로 갈수록 진해지는 분류=성장 기술, 왼쪽만 진하고 최근이 옅은 분류=쇠퇴 기술입니다.') },
       { label: 'Patent Asset Index', render: function (h) {
         analysisCard({
           analysis: 'portfolio-index', holder: h,
           title: 'Patent Asset Index · Competitive Impact · Market Coverage (PatentSight 유사 지표)',
-          help: 'TR(기술 영향력)=출원연도 코호트로 보정한 피인용, MC(시장 커버리지)=패밀리 국가 수 표준화(1.0=전체 평균), CI(Competitive Impact)=TR×MC, Patent Asset Index(PAI)=유효특허 CI 합계입니다. 버블차트: X=특허 패밀리 건수, Y=평균 Competitive Impact, 버블 크기=패밀리 건수, 라벨=출원인. 상단 축 선택으로 X·Y 지표를 자유롭게 바꿀 수 있습니다. PatentSight 공식 산식과 동일하지 않은 유사 지표입니다.',
+          guide: '버블차트: X축=특허 패밀리 건수(양적 규모), Y축=평균 Competitive Impact(질적 수준, 1.0=시장 평균), 버블 크기=패밀리 건수, 색=평균 Market Coverage, 라벨=출원인. 읽는 법: 우상단=양·질 모두 우수한 선도기업, 좌상단=규모는 작지만 질이 높은 강소기업(협력·인수 검토 후보), 우하단=양 위주 포트폴리오. Market Coverage 막대: X축=평균 MC(1.0=전체 평균) — 해외 패밀리 확보 범위. Patent Asset Index 막대: X축=유효특허 Competitive Impact 합계 — 포트폴리오의 질×양 총 가치입니다.',
+          help: 'TR(기술 영향력)=출원연도 코호트로 보정한 피인용, MC(시장 커버리지)=패밀리 국가 수 표준화(1.0=전체 평균), CI(Competitive Impact)=TR×MC, Patent Asset Index(PAI)=유효특허 CI 합계입니다. 버블차트: X=특허 패밀리 건수, Y=평균 Competitive Impact, 버블 크기=패밀리 건수, 라벨=출원인. PatentSight 공식 산식과 동일하지 않은 유사 지표입니다.',
           renderOk: function (r, c, setTarget) {
             var fb = Ui.el('<div class="chart-holder tall"></div>');
             c.body.appendChild(fb);
             Render.plotly(fb, r.family_bubble, plotlyDrill);
             setTarget({ kind: 'plotly', el: fb });
-            attachAxisPicker(c, fb, 'portfolio-index');
-            c.body.appendChild(Ui.el('<div class="disclaimer">버블 크기는 특허 패밀리 건수를 ' +
-              '화면에 맞게 면적 비례로 스케일한 것입니다. 버블을 클릭하면 해당 출원인의 근거 ' +
-              '특허 목록이 열립니다.</div>'));
             if (r.mc_bar) {
               var mc = Ui.el('<div class="chart-holder"></div>');
               c.body.appendChild(mc);
@@ -843,6 +951,7 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
         analysisCard({
           analysis: 'portfolio-index', holder: h,
           title: '포트폴리오 가치 지표 종합 (PatentSight 유사 지표)',
+          guide: 'PAI 순위 막대: X축=Patent Asset Index(유효특허 CI 합계). 규모vs질 버블: X축=유효특허 수(양), Y축=평균 Competitive Impact(질, 1.0=평균), 크기=PAI, 색=최근 성장률(초록=성장). 연도 추이: X축=출원연도, Y축=그 해 출원분의 CI 합 — 최근으로 갈수록 높아지면 포트폴리오의 질이 개선되고 있다는 뜻입니다. 읽는 법: PAI가 비슷해도 우상단 기업(질 중심)과 우하단 기업(양 중심)은 전략이 다릅니다.',
           help: 'TR(기술 영향력)=출원연도 코호트로 보정한 피인용, MC(시장 커버리지)=패밀리 국가 수 표준화, CI=TR×MC, Portfolio Index=유효특허 CI 합계입니다. PatentSight 의 PAI/CI/TR/MC 에서 착안한 유사 지표로 공식 산식과 동일하지 않습니다. 버블: X=규모, Y=평균 CI(질), 크기=Portfolio Index, 색=최근 성장률.',
           renderOk: function (r, c, setTarget) {
             var rank = Ui.el('<div class="chart-holder"></div>');
@@ -852,7 +961,6 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
             var bub = Ui.el('<div class="chart-holder tall"></div>');
             c.body.appendChild(bub);
             Render.plotly(bub, r.bubble, plotlyDrill);
-            attachAxisPicker(c, bub, 'portfolio-index');
             if (r.trend) {
               var tr = Ui.el('<div class="chart-holder" style="min-height:320px"></div>');
               c.body.appendChild(tr);
@@ -892,7 +1000,6 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
             c.body.appendChild(holder);
             Render.plotly(holder, r.figure, plotlyDrill);
             setTarget({ kind: 'plotly', el: holder });
-            attachAxisPicker(c, holder, 'lifecycle');
             var counts = r.phase_counts;
             var badges = Object.keys(counts).filter(function (p) { return counts[p]; })
               .map(function (p) { return '<span class="badge">' + Ui.esc(p) + ' ' + counts[p] + '</span>'; }).join('');
@@ -935,7 +1042,6 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
             c.body.appendChild(holder);
             Render.plotly(holder, r.figure, plotlyDrill);
             setTarget({ kind: 'plotly', el: holder });
-            attachAxisPicker(c, holder, 'emerging-combinations');
             var rows = (r.combos || []).slice(0, 15).map(function (x) {
               var tr = document.createElement('tr');
               var td0 = document.createElement('td');
@@ -1011,17 +1117,9 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
             c.body.appendChild(holder);
             Render.plotly(holder, r.figure);
             setTarget({ kind: 'plotly', el: holder });
-            c.body.appendChild(Ui.el('<div class="disclaimer">' +
-              (r.chart_kind === 'radar'
-                ? '레이더 축 값은 비교 대상 기업들 사이에서 상대 평가한 0~1 표준화 점수입니다 ' +
-                  '(1 = 비교 기업 중 최고). 지표의 실제 원값은 마우스를 올리면 함께 표시됩니다.'
-                : '히트맵 색상은 비교 대상 기업들 사이의 0~1 표준화 점수입니다 (진할수록 높음). ' +
-                  '원값은 마우스를 올리면 표시됩니다.') + '</div>'));
             var ph = Ui.el('<div class="chart-holder" style="min-height:300px"></div>');
             c.body.appendChild(ph);
             Render.plotly(ph, r.parcoords);
-            c.body.appendChild(Ui.el('<div class="disclaimer">평행좌표: 각 세로축은 지표별 ' +
-              '0~1 표준화 점수이며, 하나의 꺾은선이 한 기업입니다.</div>'));
             var rows = (r.companies || []).map(function (x) {
               var tr = document.createElement('tr');
               var td0 = document.createElement('td');
@@ -1058,9 +1156,6 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
             c.body.appendChild(holder);
             Render.plotly(holder, r.figure, plotlyDrill);
             setTarget({ kind: 'plotly', el: holder });
-            c.body.appendChild(Ui.el('<div class="disclaimer">좌표축(주성분 1·2)은 기술 구성비를 ' +
-              '2차원으로 압축한 것으로 절대 단위가 없습니다. 점 사이의 거리 = 포트폴리오 구성 차이, ' +
-              '화살표 = 연도에 따른 전략 이동 방향으로 해석하세요.</div>'));
             var rows = (r.companies || []).map(function (x) {
               var tr = document.createElement('tr');
               var td0 = document.createElement('td');
@@ -1105,22 +1200,18 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
         analysisCard({
           analysis: 'company-dna', holder: h, title: '전략 유사도 · 포트폴리오 중첩도',
           help: '전략 유사도=기술 구성비 코사인, 중첩도=활동 분류 집합 Jaccard.',
+          guide: '두 히트맵 모두 가로·세로축=기업이며 대각선은 자기 자신(=1)입니다. 전략 유사도: 셀 값=두 기업의 기술분류 구성비가 얼마나 비슷한지(코사인, 0~1) — 1에 가까울수록 같은 곳에 투자하는 직접 경쟁 관계. 포트폴리오 중첩도: 셀 값=두 기업이 활동하는 기술분류 집합의 겹침(Jaccard, 0~1). 읽는 법: 유사도는 높은데 중첩도가 낮으면 비중은 비슷하지만 세부 영역이 다른 잠재 경쟁자입니다.',
           renderOk: function (r, c, setTarget) {
             if (r.similarity) {
               var s = Ui.el('<div class="chart-holder"></div>');
               c.body.appendChild(s);
               Render.plotly(s, r.similarity);
               setTarget({ kind: 'plotly', el: s });
-              c.body.appendChild(Ui.el('<div class="disclaimer">가로·세로축은 모두 기업이며, ' +
-                '셀 값은 두 기업의 기술분류 구성비가 얼마나 비슷한지(코사인 유사도, 0~1)입니다. ' +
-                '1에 가까울수록 두 기업의 기술 포트폴리오 구성이 동일합니다.</div>'));
             }
             if (r.overlap) {
               var o = Ui.el('<div class="chart-holder"></div>');
               c.body.appendChild(o);
               Render.plotly(o, r.overlap);
-              c.body.appendChild(Ui.el('<div class="disclaimer">중첩도는 두 기업이 활동하는 ' +
-                '기술분류 집합이 얼마나 겹치는지(Jaccard, 0~1)입니다. 1 = 완전히 같은 분류에서 활동.</div>'));
             }
           }
         });
@@ -1178,10 +1269,9 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
         c.body.appendChild(holder);
         Render.plotly(holder, r.figure, plotlyDrill);
         setTarget({ kind: 'plotly', el: holder });
-        attachAxisPicker(c, holder, 'opportunity');
         // 가중치 슬라이더 (클라이언트 즉시 재계산 — 기본 축 보기에서 동작)
         sliderBox = Ui.el('<div style="margin-top:8px;border-top:1px dashed #e0e8ef;padding-top:8px">' +
-          '<b style="font-size:12px">가중치 (즉시 반영 · 축 선택이 기본일 때 적용)</b></div>');
+          '<b style="font-size:12px">가중치 (즉시 반영)</b></div>');
         var labels = { growth: '성장률', new_entrants: '신규 출원인', combo_growth: '조합 증가',
           keyword_growth: '키워드 증가', problem_recurrence: '과제 반복', adjacency: '인접 연결성',
           barrier: '권리장벽(분모)' };
