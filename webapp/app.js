@@ -1060,6 +1060,207 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
           }
         });
       } },
+      { label: '심층 시그널', render: function (h) {
+        analysisCard({
+          analysis: 'wips-deep', holder: h,
+          title: '심층 시그널 — 잘 활용되지 않는 WIPS 필드 9종',
+          help: '출원건수·출원인·기술분류 축을 벗어나, WIPS 가 제공하지만 대부분 무시되는 필드' +
+            '(연차료 소멸일·지정국 진입 시차·대리인·심사관 인용·우선심사·분할출원·심사기간·' +
+            '도면 수·심판 이력)를 주 축으로 씁니다. 해당 컬럼이 매핑된 섹션만 계산되고 나머지는 ' +
+            '하단에 사유와 함께 생략됩니다. 모든 신호는 상관 관찰이며 인과·법률 판단이 아닙니다.',
+          renderOk: function (r, c, setTarget) {
+            var s = r.sections || {};
+            var first = true;
+            function head(txt) {
+              c.body.appendChild(Ui.el('<div style="font-weight:700;font-size:13px;' +
+                'margin:14px 0 4px;border-top:1px solid #e8eff5;padding-top:10px">' +
+                Ui.esc(txt) + '</div>'));
+            }
+            function addFig(fig, capText, tall) {
+              if (!fig) return;
+              var holder = Ui.el('<div class="chart-holder"' +
+                (tall ? ' style="min-height:460px"' : '') + '></div>');
+              c.body.appendChild(holder);
+              Render.plotly(holder, fig, plotlyDrill);
+              if (first) { setTarget({ kind: 'plotly', el: holder }); first = false; }
+              if (capText) c.body.appendChild(chartCap(capText));
+            }
+            function addTable(headers, rows) {
+              if (!rows.length) return;
+              var tbl = Ui.el(simpleTable(headers, []));
+              rows.forEach(function (tr) { tbl.querySelector('tbody').appendChild(tr); });
+              var wrap = Ui.el('<div style="overflow-x:auto;max-height:280px;overflow-y:auto"></div>');
+              wrap.appendChild(tbl);
+              c.body.appendChild(wrap);
+            }
+            if (s.survival) {
+              head('① 연차료 생존곡선 — 기업 스스로 매긴 특허 가치');
+              addFig(s.survival.fig,
+                'X축=등록 후 경과 연수, Y축=권리 유지 비율(Kaplan-Meier, 유효특허는 관측 중단 처리). ' +
+                '읽는 법: 곡선이 빨리 떨어지는 분류는 출원은 해도 연차료를 일찍 포기하는 "출원 실적용" ' +
+                '의심 영역, 끝까지 높게 유지되는 분류가 진짜 사업 핵심입니다. 이 순위는 출원건수 순위와 ' +
+                '크게 다를 수 있습니다.');
+              addFig(s.survival.fig_company, null);
+              addTable(['기술분류', '표본', '5년 생존율', '10년', '18년(완주)', '중위 생존연수'],
+                (s.survival.techs || []).map(function (x) {
+                  var tr = document.createElement('tr');
+                  var td0 = document.createElement('td');
+                  td0.appendChild(drillCell(x.tech, x.drill));
+                  tr.appendChild(td0);
+                  tr.insertAdjacentHTML('beforeend',
+                    '<td class="num">' + Ui.num(x.n, 0) + '</td>' +
+                    '<td class="num">' + Ui.pct(x.surv_5y) + '</td>' +
+                    '<td class="num">' + Ui.pct(x.surv_10y) + '</td>' +
+                    '<td class="num">' + Ui.pct(x.surv_18y) + '</td>' +
+                    '<td class="num">' + (x.median !== null ? x.median + '년' : '미도달(장수)') + '</td>');
+                  return tr;
+                }));
+            }
+            if (s.market_entry) {
+              head('② 지정국 진입 순서 — 시장 베팅 지도');
+              addFig(s.market_entry.fig,
+                '행=기업, 열=국가, 색=우선일 이후 평균 진입 시차(개월, 낮을수록 먼저 베팅한 시장). ' +
+                '읽는 법: 1순위 진입국이 그 기업이 가장 중요하게 본 시장입니다. 최근 1순위가 바뀐 ' +
+                '기업(아래 표 "전환")은 생산·판매 전략 전환 신호일 수 있습니다.');
+              addTable(['기업', '복수국 패밀리', '1순위 진입국(전체)', '비중', '최근 1순위', '전환'],
+                (s.market_entry.first_entries || []).map(function (x) {
+                  var tr = document.createElement('tr');
+                  tr.insertAdjacentHTML('beforeend',
+                    '<td>' + Ui.esc(x.company) + '</td>' +
+                    '<td class="num">' + Ui.num(x.n_families, 0) + '</td>' +
+                    '<td>' + Ui.esc(x.first_country) + '</td>' +
+                    '<td class="num">' + Ui.pct(x.first_share) + '</td>' +
+                    '<td>' + Ui.esc(x.recent_first || '-') + '</td>' +
+                    '<td>' + (x.shifted ? '<span class="badge warn">전환</span>' : '-') + '</td>');
+                  return tr;
+                }));
+            }
+            if (s.agent) {
+              head('③ 대리인 전환 시그널 — 관찰된 변화 (인과 아님)');
+              addFig(s.agent.fig,
+                '행=기업, 열=연도, 색=그 해 처음 쓰는 대리인의 출원 비중. 읽는 법: 특정 연도에 ' +
+                '갑자기 진해지면 대리인 교체·추가가 일어난 해입니다. 신규 사업 진입이나 소송 대비의 ' +
+                '선행 신호일 수 있으나 상관 관찰일 뿐이므로 "관찰된 변화"로만 해석하세요.');
+              addTable(['기업', '연도', '신규 대리인', '비중', '이전 주 대리인', '주요 기술분류', '건수'],
+                (s.agent.signals || []).map(function (x) {
+                  var tr = document.createElement('tr');
+                  tr.insertAdjacentHTML('beforeend',
+                    '<td>' + Ui.esc(x.company) + '</td><td class="num">' + x.year + '</td>' +
+                    '<td>' + Ui.esc(x.new_agent) + '</td>' +
+                    '<td class="num">' + Ui.pct(x.share) + '</td>' +
+                    '<td>' + Ui.esc(x.prior_main) + '</td><td>' + Ui.esc(x.tech) + '</td>' +
+                    '<td class="num">' + x.n + '</td>');
+                  return tr;
+                }));
+            }
+            if (s.examiner_eye) {
+              head('④ 심사관의 눈 — OA 인용 vs 자발 인용');
+              addFig(s.examiner_eye.fig,
+                'X축=출원인 자발 인용 평균, Y축=심사관(OA) 인용 평균, 점=기술분류. 읽는 법: ' +
+                '점선(대각선) 위쪽으로 크게 벗어난 빨간 분류는 심사관이 본 선행기술은 많은데 ' +
+                '출원인들은 적게 인용하는 영역 = 선행기술 과소평가 → 등록되어도 무효 리스크가 ' +
+                '높을 수 있는 영역입니다.');
+            }
+            if (s.expedited) {
+              head('⑤ 우선심사·조기공개 — 사업화 긴급도 자기 신고');
+              addFig(s.expedited.fig,
+                'X축=출원연도, Y축=기술분류, 크기=출원 수, 색=우선심사 비율. 읽는 법: 우선심사에는 ' +
+                '비용과 명분이 들므로 비율 급등은 사업화 임박의 자기 신고입니다. 최근 진한 버블이 ' +
+                '커지는 분류는 1~2년 내 제품 출시 가능성이 높은 영역입니다.');
+              addTable(['기술분류', '최근 우선심사 비율', '이전 비율', '변화', '최근 표본'],
+                (s.expedited.surge || []).map(function (x) {
+                  var tr = document.createElement('tr');
+                  var td0 = document.createElement('td');
+                  td0.appendChild(drillCell(x.tech, x.drill));
+                  tr.appendChild(td0);
+                  tr.insertAdjacentHTML('beforeend',
+                    '<td class="num">' + Ui.pct(x.recent_ratio) + '</td>' +
+                    '<td class="num">' + Ui.pct(x.prior_ratio) + '</td>' +
+                    '<td class="num">' + (x.delta > 0 ? '+' : '') + Ui.pct(x.delta) + '</td>' +
+                    '<td class="num">' + x.n_recent + '</td>');
+                  return tr;
+                }));
+            }
+            if (s.divisional) {
+              head('⑥ 분할·계속출원 타이밍');
+              addFig(s.divisional.fig,
+                'X축=분할출원일, 레인=기업, ◇=분할출원 1건. 읽는 법: 분할출원이 단기간에 몰린 ' +
+                '구간(아래 버스트 표)은 방어적 청구항 조정이 있었을 가능성이 있는 시기입니다. ' +
+                Ui.esc(s.divisional.note || ''));
+              addTable(['기업', '집중 구간', '건수', ''],
+                (s.divisional.bursts || []).map(function (x) {
+                  var tr = document.createElement('tr');
+                  tr.insertAdjacentHTML('beforeend',
+                    '<td>' + Ui.esc(x.company) + '</td>' +
+                    '<td>' + Ui.esc(x.start) + ' ~ ' + Ui.esc(x.end) + '</td>' +
+                    '<td class="num">' + x.n + '</td>');
+                  var td = document.createElement('td');
+                  td.appendChild(drillCell('특허 보기', x.drill));
+                  tr.appendChild(td);
+                  return tr;
+                }));
+            }
+            if (s.anomaly) {
+              head('⑦ 심사 소요기간 이상탐지 (' + Ui.esc(s.anomaly.start_basis) + ' 기준)');
+              addFig(s.anomaly.fig,
+                '바이올린=기술분류별 심사 소요기간 분포. 읽는 법: 분포에서 크게 벗어난 특허(아래 ' +
+                '목록)가 이상치입니다. 비정상적으로 길게 심사받고도 등록된 특허는 심사 저항을 견딘 ' +
+                '강한 권리 후보, 비정상적으로 짧으면 명확한 신기술이거나 우선심사입니다.');
+              addTable(['특허', '기술분류', '소요(개월)', 'z', '유형', 'OA 횟수', '출원인'],
+                (s.anomaly.outliers || []).map(function (x) {
+                  var tr = document.createElement('tr');
+                  var td0 = document.createElement('td');
+                  td0.appendChild(drillCell(x.id, x.drill));
+                  tr.appendChild(td0);
+                  tr.insertAdjacentHTML('beforeend',
+                    '<td>' + Ui.esc(x.tech) + '</td>' +
+                    '<td class="num">' + x.months + '</td>' +
+                    '<td class="num">' + x.z + '</td>' +
+                    '<td>' + Ui.esc(x.kind) + '</td>' +
+                    '<td class="num">' + (x.oa !== null && x.oa !== undefined ? x.oa : '-') + '</td>' +
+                    '<td>' + Ui.esc(x.applicant) + '</td>');
+                  return tr;
+                }));
+            }
+            if (s.disclosure) {
+              head('⑧ 개시 충실도 — 도면 수·명세서 분량 (상대비교 전용)');
+              addFig(s.disclosure.fig,
+                '행=기업, 열=기술분류, 색=분류 내 평균 도면 수 z-score(초록=분류 평균보다 충실, ' +
+                '빨강=부실). 읽는 법: 출원량은 많은데 개시 충실도가 낮은 기업은 방어적 양적 출원 ' +
+                '성향, 높은 기업은 실제 개발이 진행됐을 가능성이 큽니다. ' +
+                Ui.esc(s.disclosure.note || ''));
+              addFig(s.disclosure.fig_scatter, null);
+            }
+            if (s.trial) {
+              head('⑨ 무효심판·이의 충돌 지도 — 직접 증거');
+              addFig(s.trial.fig,
+                'X축=심판 건수, Y축=기술분류. 읽는 법: 심판이 집중된 분류가 곧 상업적으로 가장 ' +
+                '뜨거운 영역입니다 (hover 에 분류 내 심판 비율).');
+              if (s.trial.network) {
+                var cyH = Ui.el('<div class="cy-holder"></div>');
+                c.body.appendChild(cyH);
+                Render.cytoscape(cyH, s.trial.network, {});
+                c.body.appendChild(chartCap('화살표=심판 청구 방향(청구인→권리자), 두께=건수, ' +
+                  '엣지 색=주요 기술분류, 빨간 노드=심판을 가장 많이 받은 기업. 읽는 법: 화살표가 ' +
+                  '한 기업으로 수렴하면 그 기업이 병목(핵심) 특허 보유자입니다. 노드 클릭 시 해당 ' +
+                  '기업 특허가 열립니다.'));
+              }
+              if ((s.trial.trial_types || []).length) {
+                c.body.appendChild(Ui.el('<div style="margin-top:6px">' +
+                  s.trial.trial_types.map(function (t) {
+                    return '<span class="badge">' + Ui.esc(t.type) + ' ' + t.n + '건</span>';
+                  }).join('') + '</div>'));
+              }
+            }
+            if ((r.skipped || []).length) {
+              c.body.appendChild(Ui.el('<div class="disclaimer" style="margin-top:12px">생략된 섹션: ' +
+                r.skipped.map(function (x) {
+                  return Ui.esc(x.section) + ' (' + Ui.esc(x.reason) + ')';
+                }).join(' · ') + ' — Settings → 컬럼 매핑에서 해당 WIPS 필드를 매핑하면 활성화됩니다.</div>'));
+            }
+          }
+        });
+      } },
       { label: 'Patent Asset Index', render: function (h) {
         analysisCard({
           analysis: 'portfolio-index', holder: h,

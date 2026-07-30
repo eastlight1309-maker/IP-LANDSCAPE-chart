@@ -252,6 +252,67 @@ CONCEPTS = {
         "variants": ["자사 특허 여부", "자사특허여부", "자사 여부", "자사여부", "own patent",
                      "is own", "our patent", "당사 특허", "자사구분", "in-house"],
     },
+    # ---- 심층 WIPS 필드 (잘 안 쓰이는 서지·심사·심판 필드) ----
+    "lapse_date": {
+        "label": "소멸일", "dtype": "날짜 (연차료 미납·포기 등 권리 소멸일)",
+        "variants": ["소멸일", "소멸일자", "권리 소멸일", "권리소멸일", "포기일", "말소일",
+                     "권리말소일", "lapse date", "abandonment date", "소멸 일자"],
+    },
+    "agent": {
+        "label": "대리인", "dtype": "문자열 (특허법인/대리인명)",
+        "variants": ["대리인", "대리인명", "특허법인", "대리인/대리인코드", "agent",
+                     "representative", "attorney", "법률대리인", "대리사무소"],
+    },
+    "expedited_exam": {
+        "label": "우선심사 여부", "dtype": "불리언/문자열 (Y/N, 우선심사·조기공개)",
+        "variants": ["우선심사 여부", "우선심사여부", "우선심사", "조기공개 신청", "조기공개",
+                     "expedited examination", "accelerated exam", "우선 심사"],
+    },
+    "exam_request_date": {
+        "label": "심사청구일", "dtype": "날짜",
+        "variants": ["심사청구일", "심사 청구일", "심사청구일자", "request for examination",
+                     "examination request date", "심사청구 일자"],
+    },
+    "oa_count": {
+        "label": "거절이유통지(OA) 횟수", "dtype": "숫자",
+        "variants": ["거절이유통지 횟수", "oa 횟수", "oa횟수", "의견제출통지 횟수",
+                     "중간사건 수", "office action count", "거절이유 횟수", "oa 건수"],
+    },
+    "examiner_citations": {
+        "label": "심사관 인용문헌 수", "dtype": "숫자 (또는 문헌 목록)",
+        "variants": ["심사관 인용문헌 수", "심사관 인용 수", "심사관 인용문헌", "심사관 인용",
+                     "examiner citation", "심사관인용", "심사관 제시 문헌"],
+    },
+    "applicant_citations": {
+        "label": "출원인(자발) 인용문헌 수", "dtype": "숫자 (또는 문헌 목록)",
+        "variants": ["출원인 인용문헌 수", "출원인 인용 수", "자발 인용", "출원인 인용문헌",
+                     "applicant citation", "출원인인용", "ids 인용"],
+    },
+    "parent_app_number": {
+        "label": "원출원번호 (분할·계속)", "dtype": "문자열",
+        "variants": ["원출원번호", "원 출원번호", "분할 원출원번호", "모출원번호",
+                     "parent application", "원출원 번호", "분할출원 원번호"],
+    },
+    "drawings_count": {
+        "label": "도면 수", "dtype": "숫자",
+        "variants": ["도면 수", "도면수", "도면의 수", "figures", "number of drawings",
+                     "도면 개수"],
+    },
+    "spec_length": {
+        "label": "명세서 분량", "dtype": "숫자 (페이지/문자 수)",
+        "variants": ["명세서 페이지 수", "명세서 페이지", "명세서 문자수", "명세서 분량",
+                     "description length", "명세서페이지수", "전체 페이지 수"],
+    },
+    "trial_info": {
+        "label": "심판 이력", "dtype": "문자열 (무효심판/거절결정불복 등)",
+        "variants": ["심판 이력", "심판이력", "심판사항", "심판 정보", "심판정보", "무효심판",
+                     "trial history", "심판 유형", "심판구분"],
+    },
+    "trial_claimant": {
+        "label": "심판 청구인", "dtype": "문자열",
+        "variants": ["심판 청구인", "심판청구인", "무효심판 청구인", "청구인",
+                     "trial claimant", "심판 신청인"],
+    },
 }
 
 CONCEPT_KEYS = list(CONCEPTS.keys())
@@ -288,6 +349,7 @@ ANALYSIS_REQUIREMENTS = {
     "emerging-clusters":     {"required": [{"any": ["abstract", "indep_claim", "title"]}, {"any": ANY_DATE}], "optional": ANY_APPLICANT + ["embedding"]},
     "semantic-influence":    {"required": [{"any": ["abstract", "indep_claim", "title"]}, {"any": ANY_DATE}], "optional": ANY_APPLICANT + ["embedding", "cites_forward"]},
     "similarity-network":    {"required": [{"any": ["abstract", "indep_claim", "title"]}], "optional": ANY_APPLICANT + ["embedding", "is_active", "legal_status"]},
+    "wips-deep":             {"required": [{"any": ANY_DATE}], "optional": ANY_APPLICANT + ["reg_date", "lapse_date", "agent", "expedited_exam", "exam_request_date", "oa_count", "examiner_citations", "applicant_citations", "parent_app_number", "drawings_count", "spec_length", "trial_info", "trial_claimant", "family_id", "country", "claims_count"]},
 }
 
 _NORM_RE = re.compile(r"[\s\(\)\[\]\{\}\-_/\\.,:;'\"·|]+")
@@ -304,6 +366,10 @@ CONCEPT_KINDS = {
     "claims_count": "number", "indep_claims_count": "number",
     "is_granted": "bool", "is_active": "bool", "is_own": "bool",
     "country": "country",
+    "lapse_date": "date", "exam_request_date": "date",
+    "oa_count": "number", "drawings_count": "number", "spec_length": "number",
+    "examiner_citations": "number", "applicant_citations": "number",
+    "expedited_exam": "bool",
 }
 
 

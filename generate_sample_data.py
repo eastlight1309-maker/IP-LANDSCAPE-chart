@@ -45,6 +45,8 @@ L2 = {
 }
 COMPANIES = ["삼성전자", "SK하이닉스", "TSMC", "Intel", "ASE", "Amkor",
              "네패스", "LB세미콘", "JCET", "무라타제작소"]
+AGENTS = ["특허법인 가온", "특허법인 나래", "특허법인 다올", "리앤목 특허법인",
+          "특허법인 태평양", "법률사무소 한별(소송특화)"]
 PROBLEMS = ["휨(warpage) 저감", "미세피치 접합 신뢰성", "방열 특성 개선",
             "수율 향상", "패키지 두께 감소", "신호 무결성 확보"]
 SOLUTIONS = ["몰드 소재 조성 변경", "범프 구조 개선", "공정 온도 프로파일 제어",
@@ -113,6 +115,7 @@ def generate_sample(n=600, seed=42, sep="; ", multiclass_format="sep",
         invs = ["발명자%02d" % (inv_pool_base + int(rng.integers(0, 18)))
                 for _ in range(int(rng.integers(1, 4)))]
         month = int(rng.integers(1, 13))
+        has_trial = bool(rng.random() < 0.05)
         rows.append({
             "공개번호": "KR10-%d-%07dA" % (year, i),
             "출원번호": "KR10-%d-%07d" % (year, i),
@@ -158,6 +161,25 @@ def generate_sample(n=600, seed=42, sep="; ", multiclass_format="sep",
             "공정": PROCESSES[i % len(PROCESSES)],
             "임베딩 벡터": json.dumps(_embed(l1_idx, l2_idx, rng).tolist()),
             "자사 특허 여부": "Y" if comp == "네패스" else "N",
+            # ---- 심층 WIPS 필드 (연차료·대리인·심사·심판) ----
+            "소멸일": ("%d-%02d-10" % (year + 2 + int(rng.integers(2, 14)), month))
+                    if (granted and not active and rng.random() < 0.8) else "",
+            "대리인": (AGENTS[4 + (i % 2)]
+                    if (year >= year_max - 3 and rng.random() < 0.35)
+                    else AGENTS[COMPANIES.index(comp) % 4]),
+            "우선심사 여부": "Y" if ((l1 == L1[0] and year >= year_max - 3
+                                and rng.random() < 0.45) or rng.random() < 0.07) else "N",
+            "심사청구일": "%d-%02d-01" % (year + int(rng.integers(0, 2)), month),
+            "거절이유통지 횟수": int(rng.poisson(1.2)) + (3 if i % 41 == 0 else 0),
+            "심사관 인용문헌 수": int(rng.poisson(4 if l1 == L1[1] else 2)),
+            "출원인 인용문헌 수": int(rng.poisson(2)),
+            "원출원번호": ("KR10-%d-%07d" % (max(year_min, year - 1), max(0, i - 5)))
+                     if rng.random() < 0.08 else "",
+            "도면 수": int(rng.integers(2, 12)) + (COMPANIES.index(comp) % 3) * 6,
+            "명세서 페이지 수": int(rng.integers(8, 60)),
+            "심판 이력": (["무효심판", "거절결정불복심판"][i % 2] if has_trial else ""),
+            "심판 청구인": (COMPANIES[(COMPANIES.index(comp) + 1) % len(COMPANIES)]
+                      if (has_trial and i % 2 == 0) else ""),
         })
     return pd.DataFrame(rows)
 

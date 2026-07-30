@@ -486,7 +486,8 @@ def build_standard_frame(raw_df, mapping, applicant_rules=None):
     df = df.loc[:, ~df.columns.duplicated()]
 
     raw_date_strs = {}
-    for date_col in ("app_date", "pub_date", "reg_date", "priority_date", "expiry_date"):
+    for date_col in ("app_date", "pub_date", "reg_date", "priority_date", "expiry_date",
+                     "lapse_date", "exam_request_date"):
         if date_col in df.columns:
             raw_date_strs[date_col] = df[date_col].astype(str)
             df[date_col] = parse_dates(df[date_col])

@@ -218,6 +218,55 @@ def test_problem_solution_axis_titles(prepared, settings):
     assert r["figure"]["counts_z"]
 
 
+# ---------------------------------------------------------------------------
+# 심층 시그널 (잘 안 쓰는 WIPS 필드 9종)
+# ---------------------------------------------------------------------------
+def test_wips_deep_all_sections(settings):
+    from src.analyses.wips_deep import compute_wips_deep
+    df = make_prepared(generate_sample(n=600, seed=17))
+    r = compute_wips_deep(df, settings)
+    assert r["status"] == "ok"
+    s = r["sections"]
+    # 합성 데이터에는 9개 섹션 필드가 전부 있음
+    for key in ("survival", "market_entry", "agent", "examiner_eye", "expedited",
+                "divisional", "anomaly", "disclosure", "trial"):
+        assert key in s, "%s 섹션 누락 (skipped: %r)" % (key, r.get("skipped"))
+    # 생존곡선: 확률 0~1 단조 비증가
+    for tr in s["survival"]["fig"]["data"]:
+        ys = tr["y"]
+        assert all(0 <= v <= 1 for v in ys)
+        assert all(ys[i] >= ys[i + 1] for i in range(len(ys) - 1))
+    assert s["market_entry"]["first_entries"]
+    assert s["trial"]["network"] is not None  # 청구인 컬럼 존재 → 방향성 네트워크
+    assert "인과" in r["meta"]["note"]  # 상관≠인과 명시
+
+
+def test_wips_deep_graceful_without_deep_fields(settings):
+    """심층 필드가 없는 데이터: 있는 섹션만 계산, 나머지는 사유와 함께 생략."""
+    from src.analyses.wips_deep import compute_wips_deep
+    df_raw = generate_sample(n=200, seed=18)
+    deep_cols = ["소멸일", "대리인", "우선심사 여부", "심사청구일", "거절이유통지 횟수",
+                 "심사관 인용문헌 수", "출원인 인용문헌 수", "원출원번호", "도면 수",
+                 "명세서 페이지 수", "심판 이력", "심판 청구인"]
+    df = make_prepared(df_raw.drop(columns=deep_cols))
+    r = compute_wips_deep(df, settings)
+    assert r["status"] == "ok"  # 진입 시차·이상탐지 등 기존 필드 섹션은 계산됨
+    skipped_keys = {x["section"] for x in r["skipped"]}
+    assert "survival" in skipped_keys and "agent" in skipped_keys
+    for x in r["skipped"]:
+        assert x["reason"]  # 사유 명시
+
+
+def test_km_curve_basic():
+    from src.analyses.wips_deep import _km_curve, _km_at, _km_median
+    # 10건 중 5건이 4년차에 소멸, 5건은 10년까지 관측(censored)
+    durations = [4.0] * 5 + [10.0] * 5
+    events = [1] * 5 + [0] * 5
+    times, probs = _km_curve(durations, events)
+    assert abs(_km_at(times, probs, 5.0) - 0.5) < 1e-9
+    assert _km_median(times, probs) == 4.0
+
+
 def test_format_web_context_sanitizes():
     from src.llm_client import sanitize_for_llm
     ctx = web_search.format_web_context(
