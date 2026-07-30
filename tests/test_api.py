@@ -333,7 +333,7 @@ def test_portfolio_index_payload(client):
     for key in ("portfolio_index", "avg_ci", "avg_tr", "avg_mc", "n"):
         assert key in comp
     assert data["bubble"]["data"][0]["customdata"][0]["m"]["avg_ci"] is not None
-    assert "유사 지표" in data["meta"]["note"]
+    assert "공개 방법론" in data["meta"]["note"]
     assert data["top_patents"]
 
 
@@ -378,3 +378,16 @@ def test_export_chart_endpoint(client):
     assert ws.cell(1, 1).value == "시리즈" and ws.cell(2, 3).value == 12
     bad = _post(client, "/api/export-chart", {"sheets": []})
     assert bad.status_code == 400
+
+
+def test_portfolio_index_official_methodology(client):
+    """PAI 공개 방법론: GNI 가중 MC, 연도×분야 TR, 지표 정의표."""
+    data = _post(client, "/api/portfolio-index", {"filters": {}}).get_json()
+    assert data["status"] == "ok"
+    assert "GNI" in data["mc_source"]                       # 국가 목록 → GNI 가중 사용
+    assert "기술분야" in data["tr_source"] or "연도" in data["tr_source"]
+    codes = [d["code"] for d in data["definitions"]]
+    assert codes == ["TR", "MC", "CI", "PAI"]
+    for d in data["definitions"]:
+        assert d["formula"] and d["reading"] and d["definition"]
+    assert "Ernst" in data["meta"]["note"] or "공개 방법론" in data["meta"]["note"]

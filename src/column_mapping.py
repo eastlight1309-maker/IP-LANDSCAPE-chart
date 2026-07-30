@@ -160,7 +160,13 @@ CONCEPTS = {
     "family_country_count": {
         "label": "패밀리 국가 수", "dtype": "정수",
         "variants": ["패밀리 국가 수", "패밀리 국가수", "패밀리국가수", "family country count",
-                     "family countries", "지정국 수", "출원국 수", "국가 수"],
+                     "지정국 수", "출원국 수", "국가 수"],
+    },
+    "family_countries": {
+        "label": "패밀리 국가 목록", "dtype": "문자열 (국가코드 목록: KR; US; JP)",
+        "variants": ["패밀리 국가 목록", "패밀리 국가", "패밀리국가", "family countries",
+                     "family country list", "지정국", "designated states", "패밀리 국가(전체)",
+                     "protection countries", "출원국가 목록"],
     },
     "tech_l1": {
         "label": "기술 대분류", "dtype": "문자열",
@@ -258,7 +264,7 @@ ANALYSIS_REQUIREMENTS = {
     "inventor-mobility":     {"required": ["inventors", {"any": ANY_APPLICANT}, {"any": ANY_DATE}], "optional": [{"any": ANY_TECH}, "country"]},
     "classification-quality": {"required": [{"any": ANY_TECH}], "optional": ["embedding", "class_confidence", "title", "abstract", {"any": ANY_DATE}]},
     "basic-stats":           {"required": [{"any": ANY_DATE}], "optional": ANY_APPLICANT + ["country", "is_granted", "is_active", "legal_status", {"any": ANY_TECH}]},
-    "portfolio-index":       {"required": [{"any": ANY_APPLICANT}, "cites_forward"], "optional": ["family_country_count", "family_size", "is_active", "legal_status", {"any": ANY_DATE}]},
+    "portfolio-index":       {"required": [{"any": ANY_APPLICANT}, "cites_forward"], "optional": ["family_countries", "family_country_count", "family_size", "is_active", "legal_status", {"any": ANY_DATE}, {"any": ANY_TECH}]},
 }
 
 _NORM_RE = re.compile(r"[\s\(\)\[\]\{\}\-_/\\.,:;'\"·|]+")

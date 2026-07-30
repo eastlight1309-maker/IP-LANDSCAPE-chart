@@ -635,6 +635,31 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
     return span;
   }
 
+  function chartCap(text) {
+    /* 개별 차트 바로 아래에 붙는 축 의미·해석 캡션 */
+    return Ui.el('<div class="chart-guide"><b>📖 해석</b>' + Ui.esc(text) + '</div>');
+  }
+
+  function definitionsTable(definitions) {
+    /* 지표 정의표: 지표 | 정의 | 산식 | 해석 (서버가 내려주는 definitions 사용) */
+    var wrap = Ui.el('<div style="margin-bottom:12px"></div>');
+    if (!definitions || !definitions.length) return wrap;
+    wrap.appendChild(Ui.el('<div style="font-weight:700;font-size:12.5px;margin-bottom:4px">' +
+      '📐 지표 정의</div>'));
+    var rows = definitions.map(function (d) {
+      return '<td style="white-space:nowrap"><b>' + Ui.esc(d.code) + '</b><br>' +
+        '<span style="color:#647b8d;font-size:11px">' + Ui.esc(d.name) + '</span></td>' +
+        '<td>' + Ui.esc(d.definition) + '</td>' +
+        '<td><code style="font-size:11px">' + Ui.esc(d.formula) + '</code><br>' +
+        '<span style="color:#93a5b4;font-size:10.5px">' + Ui.esc(d.basis || '') + '</span></td>' +
+        '<td>' + Ui.esc(d.reading) + '</td>';
+    });
+    var tblWrap = Ui.el('<div style="overflow-x:auto"></div>');
+    tblWrap.appendChild(Ui.el(simpleTable(['지표', '정의', '산식 (이번 계산 기준)', '해석'], rows)));
+    wrap.appendChild(tblWrap);
+    return wrap;
+  }
+
   /* ---------------------------------------------------------------- Views */
   var Views = {};
 
@@ -928,43 +953,66 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
       { label: 'Patent Asset Index', render: function (h) {
         analysisCard({
           analysis: 'portfolio-index', holder: h,
-          title: 'Patent Asset Index · Competitive Impact · Market Coverage (PatentSight 유사 지표)',
-          guide: '버블차트: X축=특허 패밀리 건수(양적 규모), Y축=평균 Competitive Impact(질적 수준, 1.0=시장 평균), 버블 크기=패밀리 건수, 색=평균 Market Coverage, 라벨=출원인. 읽는 법: 우상단=양·질 모두 우수한 선도기업, 좌상단=규모는 작지만 질이 높은 강소기업(협력·인수 검토 후보), 우하단=양 위주 포트폴리오. Market Coverage 막대: X축=평균 MC(1.0=전체 평균) — 해외 패밀리 확보 범위. Patent Asset Index 막대: X축=유효특허 Competitive Impact 합계 — 포트폴리오의 질×양 총 가치입니다.',
-          help: 'TR(기술 영향력)=출원연도 코호트로 보정한 피인용, MC(시장 커버리지)=패밀리 국가 수 표준화(1.0=전체 평균), CI(Competitive Impact)=TR×MC, Patent Asset Index(PAI)=유효특허 CI 합계입니다. 버블차트: X=특허 패밀리 건수, Y=평균 Competitive Impact, 버블 크기=패밀리 건수, 라벨=출원인. PatentSight 공식 산식과 동일하지 않은 유사 지표입니다.',
+          title: 'Patent Asset Index · Competitive Impact · Market Coverage',
+          help: '공개 방법론(Ernst & Omland 2011, Patent Asset Index)에 따라 TR(연도×기술분야 코호트 보정 피인용), MC(보호국 GNI 가중, 미국=1), CI=TR×MC, PAI=유효특허 CI 합계를 계산합니다. 아래 지표 정의표와 각 차트의 해석 설명을 참고하세요.',
           renderOk: function (r, c, setTarget) {
+            c.body.appendChild(definitionsTable(r.definitions));
             var fb = Ui.el('<div class="chart-holder tall"></div>');
             c.body.appendChild(fb);
             Render.plotly(fb, r.family_bubble, plotlyDrill);
             setTarget({ kind: 'plotly', el: fb });
+            c.body.appendChild(chartCap('X축=특허 패밀리 건수(양적 규모), Y축=평균 Competitive ' +
+              'Impact(질적 수준, 1.0=평균), 버블 크기=패밀리 건수, 색=평균 Market Coverage, ' +
+              '라벨=출원인. 읽는 법: 우상단=양·질 모두 우수한 선도기업, 좌상단=규모는 작지만 ' +
+              '질이 높은 강소기업(협력·인수 검토 후보), 우하단=양 위주 포트폴리오. 버블 클릭 시 ' +
+              '해당 출원인의 근거 특허가 열립니다.'));
             if (r.mc_bar) {
               var mc = Ui.el('<div class="chart-holder"></div>');
               c.body.appendChild(mc);
               Render.plotly(mc, r.mc_bar, plotlyDrill);
+              c.body.appendChild(chartCap('X축=기업별 평균 Market Coverage. 산출 기준: ' +
+                (r.mc_source || '') + '. 읽는 법: 값이 클수록 특허를 더 큰 시장(여러 국가)에서 ' +
+                '보호하고 있다는 뜻으로, 글로벌 사업 의지와 권리 투자 규모를 보여줍니다.'));
             }
             var pai = Ui.el('<div class="chart-holder"></div>');
             c.body.appendChild(pai);
             Render.plotly(pai, r.rank, plotlyDrill);
+            c.body.appendChild(chartCap('X축=Patent Asset Index(대상 특허 Competitive Impact 의 ' +
+              '합계), Y축=기업. 읽는 법: 특허의 양과 질을 함께 반영한 포트폴리오 총 가치 순위입니다. ' +
+              '건수 순위(기본 통계 탭)와 비교해 순위가 크게 다른 기업은 질적 편차가 큰 것입니다.'));
           }
         });
       } },
       { label: 'Portfolio 종합', render: function (h) {
         analysisCard({
           analysis: 'portfolio-index', holder: h,
-          title: '포트폴리오 가치 지표 종합 (PatentSight 유사 지표)',
-          guide: 'PAI 순위 막대: X축=Patent Asset Index(유효특허 CI 합계). 규모vs질 버블: X축=유효특허 수(양), Y축=평균 Competitive Impact(질, 1.0=평균), 크기=PAI, 색=최근 성장률(초록=성장). 연도 추이: X축=출원연도, Y축=그 해 출원분의 CI 합 — 최근으로 갈수록 높아지면 포트폴리오의 질이 개선되고 있다는 뜻입니다. 읽는 법: PAI가 비슷해도 우상단 기업(질 중심)과 우하단 기업(양 중심)은 전략이 다릅니다.',
-          help: 'TR(기술 영향력)=출원연도 코호트로 보정한 피인용, MC(시장 커버리지)=패밀리 국가 수 표준화, CI=TR×MC, Portfolio Index=유효특허 CI 합계입니다. PatentSight 의 PAI/CI/TR/MC 에서 착안한 유사 지표로 공식 산식과 동일하지 않습니다. 버블: X=규모, Y=평균 CI(질), 크기=Portfolio Index, 색=최근 성장률.',
+          title: '포트폴리오 가치 지표 종합 (Patent Asset Index 방법론)',
+          help: '공개 방법론(Ernst & Omland 2011)에 따른 PAI/CI/TR/MC 로 포트폴리오의 양과 질을 종합 진단합니다. 각 지표의 정의·산식·해석은 아래 지표 정의표를, 각 차트의 읽는 법은 차트 아래 설명을 참고하세요.',
           renderOk: function (r, c, setTarget) {
+            c.body.appendChild(definitionsTable(r.definitions));
             var rank = Ui.el('<div class="chart-holder"></div>');
             c.body.appendChild(rank);
             Render.plotly(rank, r.rank, plotlyDrill);
             setTarget({ kind: 'plotly', el: rank });
+            c.body.appendChild(chartCap('X축=Patent Asset Index(유효특허 CI 합계), Y축=기업. ' +
+              '읽는 법: 포트폴리오 총 가치 순위 — 양(건수)과 질(CI)이 모두 반영되므로 건수가 ' +
+              '적어도 질 높은 특허가 많으면 상위에 올 수 있습니다. 막대 클릭 시 해당 기업의 ' +
+              '특허 목록이 열립니다.'));
             var bub = Ui.el('<div class="chart-holder tall"></div>');
             c.body.appendChild(bub);
             Render.plotly(bub, r.bubble, plotlyDrill);
+            c.body.appendChild(chartCap('X축=대상 특허 수(양), Y축=평균 Competitive Impact(질, ' +
+              '1.0=평균), 버블 크기=PAI, 색=최근 출원 성장률(초록=성장, 빨강=감소). 읽는 법: ' +
+              'PAI 가 비슷해도 우상단 기업(질 중심)과 우하단 기업(양 중심)은 전략이 다릅니다. ' +
+              '좌상단의 작지만 진한 초록 버블 = 질 높고 성장 중인 주목 기업입니다.'));
             if (r.trend) {
               var tr = Ui.el('<div class="chart-holder" style="min-height:320px"></div>');
               c.body.appendChild(tr);
               Render.plotly(tr, r.trend);
+              c.body.appendChild(chartCap('X축=출원연도, Y축=그 해 출원된 특허들의 CI 합계 ' +
+                '(상위 5개사). 읽는 법: 선이 최근으로 갈수록 높아지면 포트폴리오의 질이 개선되고 ' +
+                '있다는 뜻입니다. 단, 최근 연도는 인용이 아직 축적되지 않아 낮게 보이는 경향이 ' +
+                'TR 의 연도 보정으로 완화되지만 완전히 제거되지는 않습니다.'));
             }
             var rows = (r.top_patents || []).map(function (x) {
               var trEl = document.createElement('tr');
@@ -982,6 +1030,9 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
             c.body.appendChild(Ui.el('<div style="margin-top:6px"><b style="font-size:12px">' +
               'Competitive Impact 상위 특허</b></div>'));
             c.body.appendChild(tbl);
+            c.body.appendChild(chartCap('포트폴리오 가치를 견인하는 개별 핵심특허 목록입니다. ' +
+              'CI=TR×MC 이므로, TR 열이 큰 특허는 기술적 영향력이, MC 열이 큰 특허는 넓은 시장 ' +
+              '보호가 가치의 원천입니다. 번호 클릭 시 서지 정보가 열립니다.'));
           }
         });
       } }

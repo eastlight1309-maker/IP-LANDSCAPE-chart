@@ -142,6 +142,8 @@ def generate_sample(n=600, seed=42, sep="; ", multiclass_format="sep",
             "피인용 수": int(rng.poisson(3)) + (10 if i % 37 == 0 else 0),
             "패밀리 수": int(rng.integers(1, 9)),
             "패밀리 국가 수": int(rng.integers(1, 6)),
+            "패밀리 국가 목록": "; ".join(
+                ["KR", "US", "JP", "CN", "EP", "DE", "TW"][:int(rng.integers(1, 6))]),
             "기술 대분류": l1,
             "기술 중분류": l2,
             "다중 기술분류": multi_str,

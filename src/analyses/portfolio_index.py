@@ -1,36 +1,37 @@
 # -*- coding: utf-8 -*-
 """
-analyses/portfolio_index.py — 포트폴리오 가치 지표 (LexisNexis PatentSight 스타일).
+analyses/portfolio_index.py — 포트폴리오 가치 지표 (Patent Asset Index 방법론).
 
 분석 목적:
-  PatentSight 의 Patent Asset Index(PAI)/Competitive Impact(CI)/
-  Technology Relevance(TR)/Market Coverage(MC) 에서 착안한 「유사 지표」로
-  기업 포트폴리오의 질적 가치를 비교한다.
-  ⚠ 산식이 공개 지표와 동일하지 않은 근사 지표임을 화면에 명시한다.
+  공개 문헌 Ernst & Omland(2011), "The Patent Asset Index — A new approach to
+  benchmark patent portfolios" (World Patent Information 33) 의 방법론에 따라
+  Patent Asset Index(PAI)/Competitive Impact(CI)/Technology Relevance(TR)/
+  Market Coverage(MC) 를 계산해 기업 포트폴리오의 질적 가치를 비교한다.
+
+  공개 방법론과의 일치·차이 (화면에도 명시):
+  - 구조(PAI=Σ CI, CI=TR×MC), TR 의 연령·기술분야 코호트 정규화,
+    MC 의 국가별 시장규모(GNI, US=1) 가중은 공개 방법론과 동일하게 구현.
+  - 상용 PatentSight 제품의 비공개 보정(인용 출처별 가중, 자체 패밀리 정의,
+    데이터 정비)은 재현 불가 — 절대값은 다를 수 있으며 상대 비교 용도로 사용.
 
 필수 컬럼: 출원인(any), 피인용 수
-선택 컬럼: 패밀리 국가 수(없으면 패밀리 수 → 1.0 폴백), 존속 여부/법적상태,
-          날짜(연도 코호트 보정·추이)
+선택 컬럼: 패밀리 국가 목록(GNI 가중 MC — 권장), 패밀리 국가 수/패밀리 수(폴백),
+          기술분류(TR 분야 보정), 존속 여부/법적상태, 날짜(연령 보정·추이)
 
 계산식 (특허 i):
-  TR_i (기술 영향력) = 피인용_i / mean(피인용, 동일 출원연도 코호트)
-    — 연도 코호트 평균으로 인용 축적 기간 차이를 보정 (코호트 평균 0 이면 전체 평균,
-      그것도 0 이면 TR=0). 연도 없으면 전체 평균 보정.
-  MC_i (시장 커버리지) = 패밀리 국가 수_i / mean(패밀리 국가 수)
-    — 컬럼 없으면 패밀리 수로 대체, 둘 다 없으면 1.0 (meta 에 명시).
-  CI_i (경쟁 임팩트) = TR_i × MC_i
-  Portfolio Index(기업) = Σ CI_i  (유효특허만; 유효 판정 불가 시 등록만,
-    그것도 없으면 전체 — 사용한 기준을 meta 에 명시)
-  평균 CI(기업) = Portfolio Index / 대상 특허 수
+  TR_i (Technology Relevance) = 피인용_i / mean(피인용 | 동일 출원연도 × 동일 기술분야)
+    — 연령(인용 축적 기간)과 기술분야(인용 관행 차이)를 동시에 보정.
+      분야 코호트 표본<5 또는 분야 없음 → 연도 코호트 → 전체 평균 순 폴백.
+  MC_i (Market Coverage) = Σ GNI(보호국) / GNI(US)
+    — 패밀리 국가 목록이 매핑된 경우. 미국에서만 보호되면 1.0.
+      EP 는 대표 검증국(DE·FR·GB) 근사(0.45), WO(PCT 출원 단계)는 0.
+      목록이 없으면 국가 수/전체 평균 근사 → 패밀리 수 → 1.0 폴백 (근사임을 표시).
+  CI_i (Competitive Impact) = TR_i × MC_i
+  PAI(기업) = Σ CI_i  (유효특허만; 유효 판정 불가 시 등록만 → 전체 — meta 에 표시)
 
-그래프:
-  ① 기업별 Portfolio Index 순위 막대
-  ② 버블: X=대상 특허 수(규모), Y=평균 CI(질), 크기=Portfolio Index, 색=최근 성장률
-     (축 선택 지원: customdata.m)
-  ③ 기업별 연도 추이: 출원연도 기준 CI 합 라인 (상위 5개사)
-  ④ CI 상위 특허 목록
+그래프: PAI 순위 막대 / 규모vs질 버블 / 패밀리×CI 버블 / MC 막대 / 연도 CI 추이 /
+       CI 상위 특허. 각 차트에 개별 해석 캡션 + 지표 정의표(definitions) 제공.
 Drill-down: 기업 {"type":"applicant"}, 특허 {"type":"ids"}.
-자동 인사이트: PI 1위 기업(규모 vs 질 분해), 평균 CI 1위, 소규모·고품질 기업.
 예외처리: 피인용 없으면 disabled(안내), 표본 미달 기업 제외.
 """
 import numpy as np
@@ -38,13 +39,48 @@ import pandas as pd
 
 from src.config import get_threshold, get_limit
 from src.metrics import robust_growth, year_counts, safe_div
+from src.preprocessing import parse_multiclass_cell
 from src.insights import build_insight, fmt_num, fmt_pct, period_label, check_small_sample
 from src.viz_payload import ok_result, empty_result, disabled_result, bar_chart, \
     line_chart, base_layout
 
+# 국가별 GNI (조 USD, World Bank 2023 근사) — MC 가중치. 사용 시 US 로 정규화.
+# EP: 대표 검증국(DE+FR+GB) 근사, WO: PCT 출원 단계로 보호 아님(0).
+_GNI_TRILLION = {
+    "US": 27.5, "CN": 19.0, "DE": 4.6, "JP": 4.3, "IN": 3.6, "GB": 3.5, "FR": 3.2,
+    "IT": 2.3, "CA": 2.2, "BR": 2.2, "RU": 2.0, "KR": 1.8, "AU": 1.7, "MX": 1.6,
+    "ES": 1.6, "ID": 1.4, "NL": 1.1, "SA": 1.1, "TR": 1.1, "CH": 1.0, "PL": 0.85,
+    "TW": 0.8, "SE": 0.66, "BE": 0.63, "AR": 0.6, "IE": 0.55, "TH": 0.53, "IL": 0.52,
+    "AT": 0.52, "NO": 0.5, "SG": 0.5, "PH": 0.47, "BD": 0.46, "VN": 0.44, "MY": 0.43,
+    "DK": 0.43, "AE": 0.5, "ZA": 0.4, "EG": 0.4, "HK": 0.4, "PK": 0.37, "RO": 0.35,
+    "CZ": 0.33, "CL": 0.3, "FI": 0.3, "PT": 0.29, "NZ": 0.26, "GR": 0.24, "HU": 0.2,
+    "SK": 0.13, "LU": 0.06,
+    "EP": 11.3,  # DE+FR+GB 근사
+    "WO": 0.0,
+}
+_GNI_DEFAULT = 0.1  # 목록에 없는 국가의 기본 GNI (조 USD)
+
+
+def _mc_from_country_list(series):
+    """패밀리 국가 목록 → GNI 가중 Market Coverage (US=1). 목록 없으면 NaN."""
+    us = _GNI_TRILLION["US"]
+
+    def one(value):
+        countries = parse_multiclass_cell(value)
+        codes = set()
+        for c in countries:
+            code = str(c).strip().upper()[:2]
+            if code.isalpha():
+                codes.add(code)
+        if not codes:
+            return np.nan
+        return sum(_GNI_TRILLION.get(code, _GNI_DEFAULT) for code in codes) / us
+
+    return series.map(one)
+
 
 def compute_portfolio_index(df, settings):
-    """PatentSight 스타일 포트폴리오 지표 계산."""
+    """Patent Asset Index 방법론(Ernst & Omland 2011) 기반 포트폴리오 지표 계산."""
     if not len(df):
         return empty_result()
     if "cites_forward" not in df.columns:
@@ -58,29 +94,49 @@ def compute_portfolio_index(df, settings):
     work = df.copy()
     cites = work["cites_forward"].fillna(0).astype(float)
 
-    # TR: 출원연도 코호트 보정
+    # --- TR: 출원연도 × 기술분야 코호트 정규화 (공개 방법론과 동일 구조) ---
     years = work["_base_year"]
+    field = work["_tech_list"].map(lambda lst: lst[0] if lst else None) \
+        if "_tech_list" in work.columns else pd.Series([None] * len(work), index=work.index)
     global_mean = float(cites.mean()) or 0.0
     cohort_mean = pd.Series(global_mean, index=work.index)
+    tr_source = "전체 평균 정규화"
     if years.notna().any():
         by_year = cites.groupby(years).transform("mean")
-        cohort_mean = by_year.where(by_year > 0, other=global_mean).fillna(global_mean)
-    tr = cites / cohort_mean.replace(0, np.nan)
-    tr = tr.fillna(0.0)
+        cohort_mean = by_year.where(by_year > 0).fillna(cohort_mean)
+        tr_source = "출원연도 코호트 정규화"
+        if field.notna().any():
+            grp = [years, field]
+            by_yf = cites.groupby(grp).transform("mean")
+            size_yf = cites.groupby(grp).transform("size")
+            fine = by_yf.where((by_yf > 0) & (size_yf >= 5))
+            cohort_mean = fine.fillna(cohort_mean)
+            tr_source = "출원연도 × 기술분야 코호트 정규화 (표본<5 셀은 연도 코호트)"
+    tr = (cites / cohort_mean.replace(0, np.nan)).fillna(0.0)
 
-    # MC: 패밀리 국가 수 → 패밀리 수 → 1.0
-    mc_source = None
-    if "family_country_count" in work.columns and work["family_country_count"].notna().any():
+    # --- MC: GNI 가중 (공개 방법론) → 국가 수 → 패밀리 수 → 1.0 폴백 ---
+    mc, mc_source, mc_exact = None, None, False
+    if "family_countries" in work.columns:
+        mc_gni = _mc_from_country_list(work["family_countries"])
+        if mc_gni.notna().any():
+            fill = float(mc_gni.median())
+            mc = mc_gni.fillna(fill)
+            mc_source = "패밀리 국가 목록 × GNI 가중 (US=1, 공개 방법론)"
+            mc_exact = True
+    if mc is None and "family_country_count" in work.columns \
+            and work["family_country_count"].notna().any():
         fam = work["family_country_count"].fillna(0).astype(float)
-        mc_source = "패밀리 국가 수"
-    elif "family_size" in work.columns and work["family_size"].notna().any():
+        fam_mean = float(fam.mean()) or 1.0
+        mc = fam / fam_mean
+        mc_source = "패밀리 국가 수 / 전체 평균 (GNI 가중 불가 — 국가 목록 미매핑 근사)"
+    if mc is None and "family_size" in work.columns and work["family_size"].notna().any():
         fam = work["family_size"].fillna(0).astype(float)
-        mc_source = "패밀리 수 (국가 수 부재 대체)"
-    else:
-        fam = pd.Series(1.0, index=work.index)
+        fam_mean = float(fam.mean()) or 1.0
+        mc = fam / fam_mean
+        mc_source = "패밀리 수 / 전체 평균 (국가 정보 부재 근사)"
+    if mc is None:
+        mc = pd.Series(1.0, index=work.index)
         mc_source = "미가용 (MC=1 고정)"
-    fam_mean = float(fam.mean()) or 1.0
-    mc = fam / fam_mean if fam_mean > 0 else pd.Series(1.0, index=work.index)
     ci = tr * mc
     work["_tr"], work["_mc"], work["_ci"] = tr, mc, ci
 
@@ -266,11 +322,43 @@ def compute_portfolio_index(df, settings):
     insight = build_insight(sentences, metrics,
                             drills=[{"label": "1위 기업 특허", "drill": top["drill"]}],
                             small_sample=check_small_sample(len(scoped), settings))
+
+    # 지표 정의표 (프론트가 차트 옆에 체계적으로 표시)
+    definitions = [
+        {"code": "TR", "name": "Technology Relevance (기술 영향력)",
+         "definition": "특허가 후속 기술 개발에 미친 영향력 — 전 세계 피인용 수 기반",
+         "formula": "TR = 피인용 수 ÷ 평균 피인용(동일 출원연도 × 동일 기술분야 코호트)",
+         "basis": "이번 계산: " + tr_source,
+         "reading": "1.0 = 같은 시기·같은 분야 특허의 평균 수준. 2.0 이면 평균의 2배로 "
+                    "인용되는 영향력 큰 특허. 연령·분야를 보정하므로 오래된 특허와 최신 "
+                    "특허를 공정하게 비교할 수 있습니다."},
+        {"code": "MC", "name": "Market Coverage (시장 커버리지)",
+         "definition": "특허 패밀리가 권리를 확보한 국가들의 시장 규모 합",
+         "formula": "MC = Σ GNI(보호국) ÷ GNI(미국)  — 미국에서만 보호 시 1.0",
+         "basis": "이번 계산: " + mc_source,
+         "reading": "1.0 = 미국 시장 규모와 같은 보호 범위. 미국+중국+유럽에서 보호되면 "
+                    "약 2~3 수준. 값이 클수록 넓은 시장에서 권리를 확보한 특허입니다."},
+        {"code": "CI", "name": "Competitive Impact (경쟁 임팩트)",
+         "definition": "특허 1건의 질적 가치 — 기술 영향력과 시장 커버리지의 결합",
+         "formula": "CI = TR × MC",
+         "basis": "특허 단위로 계산 후 기업별 평균/합계로 집계",
+         "reading": "1.0 = 평균적인 특허. 기술적으로 많이 인용되면서(TR↑) 넓은 시장에서 "
+                    "보호되는(MC↑) 특허일수록 큽니다."},
+        {"code": "PAI", "name": "Patent Asset Index (특허 자산 지수)",
+         "definition": "포트폴리오 전체의 총 가치 — 유효특허 CI 의 합계",
+         "formula": "PAI = Σ CI  (대상: %s)" % scope_label,
+         "basis": "Ernst & Omland (2011, World Patent Information) 공개 방법론 구조",
+         "reading": "양(특허 수)과 질(CI)을 동시에 반영한 총량 지표. 특허가 많아도 CI 가 "
+                    "낮으면 PAI 는 크지 않습니다. 기업 간 상대 비교 용도로 사용하세요."},
+    ]
     return ok_result({"rank": fig_rank, "bubble": bubble, "trend": fig_trend,
                       "family_bubble": family_bubble, "mc_bar": fig_mc,
                       "companies": shown, "top_patents": top_patents,
-                      "scope": scope_label, "mc_source": mc_source},
+                      "scope": scope_label, "mc_source": mc_source,
+                      "tr_source": tr_source, "definitions": definitions},
                      insight=insight,
-                     meta={"note": ("PatentSight 의 PAI/CI/TR/MC 에서 착안한 유사 지표이며 "
-                                    "공식 산식과 동일하지 않습니다. MC 산출: %s, 대상: %s."
-                                    % (mc_source, scope_label))})
+                     meta={"note": ("공개 방법론(Ernst & Omland 2011)의 구조·정규화를 따라 "
+                                    "계산했습니다 (TR: %s / MC: %s / 대상: %s). 상용 "
+                                    "PatentSight 제품의 비공개 데이터 보정은 재현할 수 없어 "
+                                    "절대값은 다를 수 있으며, 기업 간 상대 비교 용도로 "
+                                    "사용하세요." % (tr_source, mc_source, scope_label))})

@@ -241,3 +241,16 @@ def test_build_frame_survives_column_name_drift():
     s = merged_settings({"thresholds": {"min_class_patents": 1}})
     r = compute_portfolio_index(prep, s)
     assert r["status"] == "ok", r.get("message")
+
+
+def test_mc_gni_weighting():
+    """MC: 보호국 GNI 합 ÷ 미국 GNI. 미국 단독=1.0, 다국가>단일 소국."""
+    from src.analyses.portfolio_index import _mc_from_country_list
+    s = pd.Series(["US", "KR", "US; CN; EP", "WO", None, "KR; US; JP; DE"])
+    mc = _mc_from_country_list(s)
+    assert abs(mc.iloc[0] - 1.0) < 1e-9           # 미국 단독 = 1.0
+    assert mc.iloc[1] < 0.1                        # 한국 단독 < 미국
+    assert mc.iloc[2] > 2.0                        # US+CN+EP > 2
+    assert mc.iloc[3] == 0.0                       # WO(PCT)는 보호 아님
+    assert pd.isna(mc.iloc[4])                     # 목록 없음 → NaN (폴백 처리)
+    assert mc.iloc[5] > mc.iloc[1]
