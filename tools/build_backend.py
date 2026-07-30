@@ -29,6 +29,7 @@ MODULE_ORDER = [
     "src/data_access.py",
     "src/embedding_adapter.py",
     "src/llm_client.py",
+    "src/web_search.py",
     "src/viz_payload.py",
     "src/insights.py",
     "src/analyses/common.py",
@@ -49,6 +50,8 @@ MODULE_ORDER = [
     "src/analyses/basic_stats.py",
     "src/analyses/portfolio_index.py",
     "src/analyses/advanced_stats.py",
+    "src/analyses/scope_entropy.py",
+    "src/analyses/combo_upset.py",
     "src/api.py",
 ]
 

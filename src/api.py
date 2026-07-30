@@ -32,6 +32,8 @@ api.py — API 응답 모듈. register_routes(app) 로 모든 엔드포인트를
   POST /api/inventor-mobility   4.11 발명자 이동
   POST /api/classification-quality 4.12 분류 품질
   POST /api/problem-solution    문제-해결수단 매트릭스 (+cell 상세)
+  POST /api/scope-entropy       권리범위 엔트로피 레이더·시계열
+  POST /api/combo-upset         미점유 조합 UpSet
   POST /api/patents             근거 특허 drill-down (페이지네이션)
   POST /api/insight             LLM 인사이트 (요약 통계만 전달, 실패 시 규칙 기반)
   POST /api/export              Excel 다운로드
@@ -82,6 +84,10 @@ from src.analyses.classification_quality import compute_classification_quality
 from src.analyses.basic_stats import compute_basic_stats
 from src.analyses.portfolio_index import compute_portfolio_index
 from src.analyses.advanced_stats import compute_advanced_stats
+from src.analyses.scope_entropy import compute_scope_entropy
+from src.analyses.combo_upset import compute_combo_upset
+from src.web_search import search_web, format_web_context
+from src.llm_client import sanitize_for_llm
 
 logger = logging.getLogger("ip_landscape")
 
@@ -461,6 +467,12 @@ def register_routes(app):
             "portfolio-index", lambda df, s, b: compute_portfolio_index(df, s)),
         "advanced-stats": _analysis_route(
             "advanced-stats", lambda df, s, b: compute_advanced_stats(df, s)),
+        "scope-entropy": _analysis_route(
+            "scope-entropy",
+            lambda df, s, b: compute_scope_entropy(df, s, companies=b.get("companies")),
+            extra_key_fields=("companies",)),
+        "combo-upset": _analysis_route(
+            "combo-upset", lambda df, s, b: compute_combo_upset(df, s)),
     }
 
     def make_analysis_view(path_name, handler):
@@ -572,11 +584,14 @@ def register_routes(app):
 
         POST {"analysis", "metrics":{요약 통계}, "sentences":[규칙 문장...],
               "question"?: 사용자 추가 질문, "history"?: [{"role","content"}...],
-              "description"?: 그래프 설명, "chat"?: true}
-        - chat/question 모드 → {"status":"ok","answer":…,"source":"llm|rule"}
+              "description"?: 그래프 설명, "chat"?: true,
+              "web_search"?: true — 외부 웹 검색 결과를 참고 컨텍스트로 첨부}
+        - chat/question 모드 → {"status":"ok","answer":…,"source":"llm|rule",
+          "web_sources"?:[{"title","url"}...], "web_note"?:검색 실패 안내}
           (LLM 미가용·실패 시 규칙 기반 요약으로 자동 폴백)
         - 그 외(기존 방식) → 문장 목록 {"sentences":[...], "source":…}
-        원문 특허 데이터는 전달하지 않는다 (요약 통계만).
+        원문 특허 데이터는 전달하지 않는다 (요약 통계만). 웹 검색 결과는 신뢰
+        경계를 명시해 sanitize 후 전달하며, 실패 시 내부 데이터만으로 답변한다.
         """
         body = json_body()
         settings = _settings()
@@ -588,10 +603,32 @@ def register_routes(app):
             if not isinstance(history, list):
                 history = []
             history = [h for h in history if isinstance(h, dict)][-8:]
+            web_context, web_sources, web_note = None, [], None
+            if body.get("web_search") and settings.get("web_search_enabled"):
+                query = str(body.get("question") or "").strip() \
+                    or "%s 특허 기술 동향" % analysis.replace("-", " ")
+                try:
+                    results = search_web(
+                        query, max_results=get_limit(settings, "web_search_max_results"))
+                except Exception as e:
+                    logger.warning("웹 검색 오류: %s", e)
+                    results = []
+                if results:
+                    web_context = format_web_context(results, sanitize_for_llm)
+                    web_sources = [{"title": r["title"], "url": r["url"]}
+                                   for r in results]
+                else:
+                    web_note = ("웹 검색 결과를 가져오지 못했습니다 (네트워크 차단 또는 "
+                                "검색 실패) — 내부 데이터만으로 답변합니다.")
             out = llm_chat(analysis, metrics, sentences, body.get("question"),
                            history, settings,
-                           description=body.get("description"))
+                           description=body.get("description"),
+                           web_context=web_context)
             out["status"] = "ok"
+            if web_sources:
+                out["web_sources"] = web_sources
+            if web_note:
+                out["web_note"] = web_note
             return out
         rule = build_insight(sentences, metrics)
         out = llm_augment_insight(analysis, rule, metrics, settings)

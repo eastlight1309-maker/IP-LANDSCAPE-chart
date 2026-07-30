@@ -58,6 +58,10 @@ LIMITS = {
     "claim_density_max_points": 5000, # 지형도 산점 상한 (초과 시 샘플링)
     "inventor_network_max_edges": 200,
     "insight_llm_max_chars": 4000,    # LLM 에 전달하는 요약통계 문자열 상한
+    "entropy_top_companies": 6,       # 권리범위 엔트로피 레이더 기업 수
+    "upset_max_elements": 12,         # UpSet 추적 기술요소 상한
+    "upset_max_combos": 25,           # UpSet 표시 조합 상한
+    "web_search_max_results": 5,      # LLM 인사이트 웹 검색 결과 상한
 }
 
 # =========================
@@ -178,6 +182,8 @@ DEFAULT_SETTINGS = {
     # (사내 로컬 경로 → HF 캐시 순서, SBERT_MODEL_CANDIDATES). 사전 계산 임베딩
     # 컬럼이 있으면 그것이 우선, 모델 로드 불가 환경에서는 TF-IDF 폴백.
     "embedding_adapter": {"type": "sbert", "model_name": ""},
+    # LLM 인사이트에 외부 웹 검색 결과 컨텍스트 첨부 허용 (요청별 체크박스로 사용)
+    "web_search_enabled": True,
     "limits": {}, "thresholds": {}, "weights": {},
     "transition_mode": "cooccurrence",  # 4.1 전이 정의 기본값
     "trajectory_weighting": "share",    # share | tfidf

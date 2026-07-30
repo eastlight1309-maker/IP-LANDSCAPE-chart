@@ -492,9 +492,14 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
          요약 통계·규칙 문장만 서버로 전달하며, LLM 미가용 시 규칙 기반으로 폴백. */
       var ins = (result && result.insight) || { sentences: [], metrics: {} };
       var history = [];
+      var webSearchOn = !!(State.config && State.config.settings &&
+        State.config.settings.web_search_enabled);
       var panel = Ui.el(
         '<div class="ai-panel">' +
         '<div class="ai-head"><span class="ai-title">🤖 AI 인사이트</span>' +
+        (webSearchOn ? '<label class="ai-web" title="답변에 외부 웹 검색 결과를 참고 자료로 ' +
+          '첨부합니다 (실패 시 내부 데이터만 사용)">' +
+          '<input type="checkbox" checked> 웹 검색 포함</label>' : '') +
         '<button class="btn small primary ai-ask">인사이트 요청</button></div>' +
         '<div class="chat-log"></div>' +
         '<div class="chat-wait" style="display:none">AI 응답 생성 중…</div>' +
@@ -506,13 +511,24 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
       var input = panel.querySelector('.chat-input-row input');
       var sendBtn = panel.querySelector('.chat-input-row button');
       var askBtn = panel.querySelector('.ai-ask');
+      var webChk = panel.querySelector('.ai-web input');
 
-      function addMsg(role, text, source) {
+      function addMsg(role, text, source, webSources) {
         var m = Ui.el('<div class="chat-msg ' + role + '"></div>');
         m.textContent = text;
         if (role === 'assistant') {
           m.appendChild(Ui.el('<span class="chat-src">' +
             (source === 'llm' ? 'LLM 생성 (요약 통계 기반)' : '규칙 기반 폴백') + '</span>'));
+          if (webSources && webSources.length) {
+            var srcBox = Ui.el('<div class="chat-websrc"><b>🔗 웹 출처</b></div>');
+            webSources.forEach(function (s, i) {
+              var a = Ui.el('<a target="_blank" rel="noopener noreferrer"></a>');
+              a.href = String(s.url || '#');
+              a.textContent = '(' + (i + 1) + ') ' + (s.title || s.url || '');
+              srcBox.appendChild(a);
+            });
+            m.appendChild(srcBox);
+          }
         }
         log.appendChild(m);
         log.scrollTop = log.scrollHeight;
@@ -529,9 +545,14 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
           analysis: analysisName, chat: true, question: question || null,
           history: history.slice(-8),
           metrics: ins.metrics || {}, sentences: ins.sentences || [],
-          description: (description || '').slice(0, 500)
+          description: (description || '').slice(0, 500),
+          web_search: !!(webChk && webChk.checked)
         }, 'AI 인사이트 생성 중…').then(function (d) {
-          addMsg('assistant', d.answer || '(응답 없음)', d.source);
+          addMsg('assistant', d.answer || '(응답 없음)', d.source, d.web_sources);
+          if (d.web_note) {
+            log.appendChild(Ui.el('<div class="chat-src" style="padding:2px 6px">' +
+              Ui.esc(d.web_note) + '</div>'));
+          }
           history.push({ role: 'assistant', content: (d.answer || '').slice(0, 800) });
         }).catch(function (e) {
           addMsg('assistant', '요청 실패: ' + e.message, 'rule');
@@ -1331,6 +1352,61 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
           }
         });
       } },
+      { label: '권리범위 엔트로피', render: function (h) {
+        analysisCard({
+          analysis: 'scope-entropy', holder: h,
+          title: '권리범위 엔트로피 — 다양성 레이더 · 시계열',
+          help: '핵심 질문: "이 회사는 다양한 기술방향을 커버하는가, 같은 청구구조를 반복하는가?" ' +
+            '기업별 범주 분포의 정규화 Shannon 엔트로피(0~1)를 기술분류·IPC·청구구조(임베딩 클러스터)·' +
+            '청구 카테고리·시장(국가)·키워드 차원에서 계산합니다. 데이터에 없는 차원은 자동 제외됩니다.',
+          guide: '레이더: 각 축=다양성 차원, 값=정규화 엔트로피(0=한 범주 반복, 1=전 범주 균등). ' +
+            '넓은 다각형=가치사슬을 넓게 커버, 좁은 다각형=특정 구조 반복. ' +
+            '시계열: X축=연도, Y축=기술분류 엔트로피 — 상승은 탐색 확대, 하락은 수렴(집중) 신호. ' +
+            '막대: 전체 다양성(파랑) vs 핵심 청구구조 집중도 Top-1 비중(빨강) — 건수는 많은데 ' +
+            '집중도가 높은 기업은 사실상 동일 조성·구조의 변형 반복일 수 있습니다. ' +
+            '해석 규칙: 다양성↑+출원↑=탐색적 R&D 확대 / 다양성↓+출원↑=핵심 상용화 후보 집중 / ' +
+            '다양성↑+등록률↓=전략 분산·특허성 검증 부족 가능성 (표 "전략 국면" 열에 자동 판정).',
+          renderOk: function (r, c, setTarget) {
+            if (r.definitions) c.body.appendChild(definitionsTable(r.definitions));
+            var holder = Ui.el('<div class="chart-holder tall"></div>');
+            c.body.appendChild(holder);
+            Render.plotly(holder, r.radar);
+            setTarget({ kind: 'plotly', el: holder });
+            if (r.trend) {
+              var th = Ui.el('<div class="chart-holder"></div>');
+              c.body.appendChild(th);
+              Render.plotly(th, r.trend);
+              c.body.appendChild(chartCap('연도별 기술분류 엔트로피: 정점 이후 하락하는 기업은 ' +
+                '탐색→수렴 전환 시점을 지난 것으로 추정됩니다 (표본 3건 미만 연도는 생략).'));
+            }
+            if (r.concentration) {
+              var ch = Ui.el('<div class="chart-holder"></div>');
+              c.body.appendChild(ch);
+              Render.plotly(ch, r.concentration);
+            }
+            var rows = (r.companies || []).map(function (x) {
+              var tr = document.createElement('tr');
+              var td0 = document.createElement('td');
+              td0.appendChild(drillCell(x.company, x.drill));
+              tr.appendChild(td0);
+              tr.insertAdjacentHTML('beforeend',
+                '<td class="num">' + Ui.num(x.n, 0) + '</td>' +
+                '<td class="num">' + Ui.num(x.overall, 2) + '</td>' +
+                '<td class="num">' + (x.top1_share !== null && x.top1_share !== undefined ?
+                  Ui.pct(x.top1_share) : '-') + '</td>' +
+                '<td>' + Ui.esc(x.strategy || '-') + '</td>' +
+                '<td class="num">' + (x.transition_year || '-') + '</td>');
+              return tr;
+            });
+            var tbl = Ui.el(simpleTable(
+              ['기업', '건수', '전체 다양성', '핵심구조 집중도', '전략 국면 (자동 판정)', '전환 추정연도'], []));
+            rows.forEach(function (tr) { tbl.querySelector('tbody').appendChild(tr); });
+            var wrap = Ui.el('<div style="overflow-x:auto;margin-top:8px"></div>');
+            wrap.appendChild(tbl);
+            c.body.appendChild(wrap);
+          }
+        });
+      } },
       { label: '유사도·중첩도', render: function (h) {
         analysisCard({
           analysis: 'company-dna', holder: h, title: '전략 유사도 · 포트폴리오 중첩도',
@@ -1358,6 +1434,7 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
   Views.whitespace = function (content) {
     makeTabs(content, [
       { label: 'Opportunity Matrix', render: function (h) { renderOpportunity(h); } },
+      { label: '미점유 조합 (UpSet)', render: function (h) { renderComboUpset(h); } },
       { label: '문제–해결수단', render: function (h) { renderProblemSolution(h); } },
       { label: '추천 R&D 테마', render: function (h) {
         var c = card('추천 R&D 테마 (Opportunity Score 상위)',
@@ -1461,6 +1538,65 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
         });
         sliderBox.appendChild(saveBtn);
         c.body.appendChild(sliderBox);
+      }
+    });
+  }
+
+  function renderComboUpset(h) {
+    analysisCard({
+      analysis: 'combo-upset', holder: h,
+      title: '미점유 조합 UpSet — 3개 이상 기술요소 교집합',
+      help: '핵심 질문: "각 기술요소는 이미 알려져 있지만, 아직 함께 청구되지 않은 조합은 무엇인가?" ' +
+        '2차원 히트맵으로는 보이지 않는 3개 이상 요소의 교집합을 UpSet 형식으로 보여주고, ' +
+        '개별 요소는 혼잡하지만 결합 청구가 비어 있는 미점유 조합 후보를 기대-실제 격차 점수로 도출합니다.',
+      guide: '위 막대: 높이=해당 요소 조합(아래 점들이 표시)의 특허 수, 색=유효특허 비율' +
+        '(초록=대부분 유효, 빨강=대부분 소멸), 굵은 테두리=최근 3년 출원 있음. ' +
+        '아래 매트릭스: 각 세로줄이 하나의 조합이며 진한 점=조합에 포함된 요소, 점을 잇는 ' +
+        '세로선=다중 요소 교집합. 막대 클릭 시 해당 조합의 근거 특허가 열립니다. ' +
+        '읽는 법: 왼쪽의 큰 막대는 이미 혼잡한 조합(경쟁 심함), 미점유 후보 표의 조합은 ' +
+        '개별 요소 활동량 대비 결합 청구가 비어 있는 white space 입니다 — 기술적 실현 가능성과 ' +
+        '선행문헌 검토가 반드시 뒤따라야 합니다.',
+      renderOk: function (r, c, setTarget) {
+        var holder = Ui.el('<div class="chart-holder tall"></div>');
+        c.body.appendChild(holder);
+        Render.plotly(holder, r.figure, plotlyDrill);
+        setTarget({ kind: 'plotly', el: holder });
+        if (r.gaps && r.gaps.length) {
+          c.body.appendChild(Ui.el('<div style="font-weight:700;font-size:12.5px;margin:10px 0 4px">' +
+            '🕳️ 미점유 조합 후보 (기대 대비 결합 청구 공백 — 격차 점수 순)</div>'));
+          var rows = r.gaps.map(function (g) {
+            var tr = document.createElement('tr');
+            var td0 = document.createElement('td');
+            (g.elements || []).forEach(function (e, i) {
+              if (i) td0.appendChild(document.createTextNode(' + '));
+              td0.appendChild(Ui.el('<span class="badge">' + Ui.esc(e) + '</span>'));
+            });
+            tr.appendChild(td0);
+            var elemCounts = (g.elements || []).map(function (e) {
+              return Ui.esc(e) + ' ' + Ui.num((g.element_counts || {})[e], 0) + '건';
+            }).join(', ');
+            tr.insertAdjacentHTML('beforeend',
+              '<td class="num">' + Ui.num(g.actual, 0) + '</td>' +
+              '<td class="num">' + Ui.num(g.expected, 1) + '</td>' +
+              '<td class="num"><b>' + Ui.num(g.gap_score, 1) + '</b></td>' +
+              '<td>' + elemCounts + '</td>' +
+              '<td>' + (g.all_recent_active ?
+                '<span class="badge good">전 요소 최근 활동</span>' : '-') + '</td>');
+            return tr;
+          });
+          var tbl = Ui.el(simpleTable(
+            ['요소 조합', '실제 결합 청구', '기대 건수(독립 가정)', '격차 점수', '개별 요소 활동량', '최근성'], []));
+          rows.forEach(function (tr) { tbl.querySelector('tbody').appendChild(tr); });
+          var wrap = Ui.el('<div style="overflow-x:auto"></div>');
+          wrap.appendChild(tbl);
+          c.body.appendChild(wrap);
+          c.body.appendChild(chartCap('기대 건수=전체 문헌 수 × 각 요소 출현확률의 곱(요소 독립 가정). ' +
+            '실제 결합 청구가 기대의 15% 이하이면서 기대 1.5건 이상인 조합만 후보로 표시합니다. ' +
+            '제품 요구사항 적합도 점수는 요구사항 데이터가 없어 격차 점수와 최근성으로 대체합니다.'));
+        } else {
+          c.body.appendChild(Ui.el('<div class="status-empty">기대 대비 비어 있는 조합이 ' +
+            '발견되지 않았습니다 — 상위 요소 조합은 대부분 이미 청구되어 있습니다.</div>'));
+        }
       }
     });
   }

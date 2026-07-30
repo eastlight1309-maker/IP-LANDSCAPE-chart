@@ -91,7 +91,21 @@ html, body { height: 100%; margin: 0; }
   display: flex; align-items: center; justify-content: space-between;
   padding: 8px 12px; border-bottom: 1px solid #e8eff5; font-size: 12.5px;
 }
-.ai-head .ai-title { font-weight: 700; color: #14507e; }
+.ai-head .ai-title { font-weight: 700; color: #14507e; margin-right: auto; }
+.ai-head .ai-web {
+  display: flex; align-items: center; gap: 4px; margin-right: 10px;
+  font-size: 11.5px; color: #46607a; cursor: pointer; user-select: none;
+}
+.chat-msg .chat-websrc {
+  display: block; margin-top: 5px; padding-top: 4px; border-top: 1px dashed #d7e2ec;
+  font-size: 11px;
+}
+.chat-msg .chat-websrc b { display: block; color: #8aa0b2; font-size: 10.5px; }
+.chat-msg .chat-websrc a {
+  display: block; color: #1668a5; text-decoration: none; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; max-width: 100%;
+}
+.chat-msg .chat-websrc a:hover { text-decoration: underline; }
 .chat-log { max-height: 280px; overflow-y: auto; padding: 6px 12px; }
 .chat-log:empty { display: none; }
 .chat-msg {
