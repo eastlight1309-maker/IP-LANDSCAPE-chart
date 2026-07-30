@@ -215,8 +215,27 @@ def _analysis_route(analysis_name, compute_fn, extra_key_fields=()):
                       "mode": settings.get("multiclass_mode"),
                       "limits": settings.get("limits"), "thresholds": settings.get("thresholds"),
                       "weights": settings.get("weights")}]
-        return cached_analysis(analysis_name, key_parts,
-                               lambda: (compute_fn(df, settings, body or {}), len(df)))
+        result = cached_analysis(analysis_name, key_parts,
+                                 lambda: (compute_fn(df, settings, body or {}), len(df)))
+        # 진단: 매핑상 존재하는 개념이 분석 시점에 비활성이면 원인 정보를 덧붙인다
+        if isinstance(result, dict) and result.get("status") == "disabled" \
+                and req and req.get("available"):
+            label_to_key = {v["label"]: k for k, v in CONCEPTS.items()}
+            details = []
+            for label in result.get("missing_columns", []):
+                key = label_to_key.get(label)
+                col = mapping.get(key) if key else None
+                if col:
+                    in_df = key in df.columns
+                    details.append("%s → 원본 컬럼 '%s' (%s)"
+                                   % (label, col,
+                                      "로딩됨·값 없음" if in_df else "로딩된 데이터에서 미발견"))
+            if details:
+                result = dict(result)
+                result["message"] = (str(result.get("message", "")) +
+                                     " [매핑 진단: " + "; ".join(details) +
+                                     ". 컬럼 매핑 화면의 '예시 값'으로 실제 값을 확인하세요]")
+        return result
     return handler
 
 

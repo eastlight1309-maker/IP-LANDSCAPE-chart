@@ -201,3 +201,43 @@ def test_number_validation_accepts_units():
     sample = pd.DataFrame({"인용": ["1,234", "3건", "5 회", "0"]})
     ok, dropped = validate_mapping_values(sample, {"cites_forward": "인용"})
     assert ok.get("cites_forward") == "인용" and not dropped
+
+
+def test_resolve_mapped_columns_normalized():
+    """스키마 컬럼명과 로딩 컬럼명이 다를 때(특수문자·공백) 정규화 매칭으로 복원."""
+    from src.preprocessing import resolve_mapped_columns
+    mapping = {"cites_forward": "피인용 수", "legal_status": "상태정보[KR]",
+               "title": "발명의 명칭", "missing": "없는컬럼"}
+    loaded_cols = ["피인용수", "상태정보 KR", "발명의 명칭", "기타"]
+    out = resolve_mapped_columns(mapping, loaded_cols)
+    assert out["cites_forward"] == "피인용수"
+    assert out["legal_status"] == "상태정보 KR"
+    assert out["title"] == "발명의 명칭"
+    assert "missing" not in out
+    # 동일 정규화명이 2개면(모호) 임의 선택하지 않음
+    out2 = resolve_mapped_columns({"cites_forward": "피인용 수"},
+                                  ["피인용수", "피인용_수"])
+    assert "cites_forward" not in out2
+
+
+def test_build_frame_survives_column_name_drift():
+    """매핑은 '피인용 수'인데 로딩된 컬럼명이 '피인용수'여도 분석 컬럼이 생성됨."""
+    from src.preprocessing import build_standard_frame
+    df = pd.DataFrame({
+        "공개번호": ["A1", "A2", "A3"],
+        "출원인": ["갑", "을", "병"],
+        "피인용수": ["3", "1,234", "5건"],
+        "출원일": ["2020-01-01", "2021-01-01", "2022-01-01"],
+        "대분류": ["패키징", "본딩", "패키징"],
+    })
+    mapping = {"pub_number": "공개번호", "applicant": "출원인",
+               "cites_forward": "피인용 수",  # 로딩명과 다름 (공백)
+               "app_date": "출원일", "tech_l1": "대분류"}
+    prep = build_standard_frame(df, mapping)
+    assert "cites_forward" in prep.columns
+    assert list(prep["cites_forward"].astype(int)) == [3, 1234, 5]
+    from src.analyses.portfolio_index import compute_portfolio_index
+    from src.config import merged_settings
+    s = merged_settings({"thresholds": {"min_class_patents": 1}})
+    r = compute_portfolio_index(prep, s)
+    assert r["status"] == "ok", r.get("message")

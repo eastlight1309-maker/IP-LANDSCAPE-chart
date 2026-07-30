@@ -21,7 +21,8 @@ import pandas as pd
 
 from src.cache import DF_CACHE, make_cache_key
 from src.column_mapping import CONCEPTS
-from src.preprocessing import build_standard_frame, apply_analysis_unit
+from src.preprocessing import build_standard_frame, apply_analysis_unit, \
+    resolve_mapped_columns
 
 logger = logging.getLogger("ip_landscape")
 
@@ -122,7 +123,9 @@ def load_raw_dataframe(dataset_name, columns=None):
                 logger.warning("컬럼 지정 로딩 실패(%s) — 전체 로딩 폴백", e)
         df = ds.get_dataframe(infer_with_pandas=True)
         if wanted:
-            keep = [c for c in wanted if c in df.columns]
+            # 정규화 매칭 포함: 스키마 컬럼명과 로딩 컬럼명이 다른 경우(특수문자) 대응
+            resolved = resolve_mapped_columns(dict(enumerate(wanted)), list(df.columns))
+            keep = list(dict.fromkeys(resolved.values()))
             if keep:
                 df = df[keep]
         return df

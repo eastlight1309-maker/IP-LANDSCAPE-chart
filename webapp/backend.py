@@ -1051,6 +1051,7 @@ import re
 import numpy as np
 import pandas as pd
 
+_norm_header = _norm  # [merged import alias]
 
 # ---------------------------------------------------------------------------
 # 기본 파서
@@ -1427,6 +1428,32 @@ def standardize_applicants(df, applicant_rules=None):
     return df
 
 
+def resolve_mapped_columns(mapping, available_columns):
+    """매핑 컬럼명 ↔ 실제 로딩 컬럼명 해결.
+
+    Dataiku 는 특수문자([ ] 등)·공백이 포함된 헤더를 스키마와 다르게 로딩하는 경우가
+    있어, 정확히 일치하지 않으면 정규화(_norm) 기준으로 유일하게 대응되는 컬럼을
+    찾는다. 유일 대응이 없으면 해당 개념은 제외 (임의 추측 금지).
+    반환: {concept: 실제 컬럼명}
+    """
+    available = list(available_columns or [])
+    avail_set = set(available)
+    by_norm = {}
+    for c in available:
+        by_norm.setdefault(_norm_header(c), []).append(c)
+    out = {}
+    for concept, col in (mapping or {}).items():
+        if not col:
+            continue
+        if col in avail_set:
+            out[concept] = col
+            continue
+        candidates = by_norm.get(_norm_header(col), [])
+        if len(candidates) == 1:
+            out[concept] = candidates[0]
+    return out
+
+
 def _derive_country(df):
     """국가 컬럼 검증·파생.
 
@@ -1469,9 +1496,10 @@ def build_standard_frame(raw_df, mapping, applicant_rules=None):
     - 매핑된 컬럼만 유지·rename (필요 컬럼 최소화)
     - 날짜/불리언/다중분류/법적상태/출원인 표준화 파생 컬럼 생성
     - _base_year: 출원일 → 우선일 → 공개일 순의 대표 연도
+    - 매핑 컬럼명이 로딩된 컬럼명과 정확히 일치하지 않으면(특수문자·공백 변형)
+      정규화 매칭으로 복원한다 (resolve_mapped_columns)
     """
-    cols = {concept: col for concept, col in (mapping or {}).items()
-            if col and col in raw_df.columns}
+    cols = resolve_mapped_columns(mapping, list(raw_df.columns))
     df = raw_df[list(dict.fromkeys(cols.values()))].copy()
     df.columns = [c for c in df.columns]  # 유지
     rename = {}
@@ -2366,7 +2394,9 @@ def load_raw_dataframe(dataset_name, columns=None):
                 logger.warning("컬럼 지정 로딩 실패(%s) — 전체 로딩 폴백", e)
         df = ds.get_dataframe(infer_with_pandas=True)
         if wanted:
-            keep = [c for c in wanted if c in df.columns]
+            # 정규화 매칭 포함: 스키마 컬럼명과 로딩 컬럼명이 다른 경우(특수문자) 대응
+            resolved = resolve_mapped_columns(dict(enumerate(wanted)), list(df.columns))
+            keep = list(dict.fromkeys(resolved.values()))
             if keep:
                 df = df[keep]
         return df
@@ -6968,8 +6998,27 @@ def _analysis_route(analysis_name, compute_fn, extra_key_fields=()):
                       "mode": settings.get("multiclass_mode"),
                       "limits": settings.get("limits"), "thresholds": settings.get("thresholds"),
                       "weights": settings.get("weights")}]
-        return cached_analysis(analysis_name, key_parts,
-                               lambda: (compute_fn(df, settings, body or {}), len(df)))
+        result = cached_analysis(analysis_name, key_parts,
+                                 lambda: (compute_fn(df, settings, body or {}), len(df)))
+        # 진단: 매핑상 존재하는 개념이 분석 시점에 비활성이면 원인 정보를 덧붙인다
+        if isinstance(result, dict) and result.get("status") == "disabled" \
+                and req and req.get("available"):
+            label_to_key = {v["label"]: k for k, v in CONCEPTS.items()}
+            details = []
+            for label in result.get("missing_columns", []):
+                key = label_to_key.get(label)
+                col = mapping.get(key) if key else None
+                if col:
+                    in_df = key in df.columns
+                    details.append("%s → 원본 컬럼 '%s' (%s)"
+                                   % (label, col,
+                                      "로딩됨·값 없음" if in_df else "로딩된 데이터에서 미발견"))
+            if details:
+                result = dict(result)
+                result["message"] = (str(result.get("message", "")) +
+                                     " [매핑 진단: " + "; ".join(details) +
+                                     ". 컬럼 매핑 화면의 '예시 값'으로 실제 값을 확인하세요]")
+        return result
     return handler
 
 
