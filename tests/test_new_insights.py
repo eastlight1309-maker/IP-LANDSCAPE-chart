@@ -152,6 +152,72 @@ def test_web_search_failure_returns_empty(monkeypatch):
     assert web_search.search_web("아무 질의") == []
 
 
+# ---------------------------------------------------------------------------
+# 임베딩 기반 의미 분석 3종
+# ---------------------------------------------------------------------------
+def test_emerging_clusters_ok(prepared, settings):
+    from src.analyses.semantic_insights import compute_emerging_clusters
+    r = compute_emerging_clusters(prepared, settings)
+    assert r["status"] == "ok"
+    assert r["clusters"] and r["figure"]["data"]
+    for c in r["clusters"]:
+        assert c["label"] and c["drill"]["type"] == "ids"
+        assert 0.0 <= c["recent_share"] <= 1.0
+    assert r["methods"]["embedding"]  # 사용 방식이 표기됨
+
+
+def test_semantic_influence_ok(prepared, settings):
+    from src.analyses.semantic_insights import compute_semantic_influence
+    r = compute_semantic_influence(prepared, settings)
+    assert r["status"] in ("ok", "empty")
+    if r["status"] == "ok":
+        assert r["sankey"]["data"][0]["type"] == "sankey"
+        for p in r["top_patents"]:
+            assert p["cross_followers"] >= 2
+            assert p["drill"]["type"] == "ids"
+        # 인과관계 아님이 meta 에 명시
+        assert "인과관계" in r["meta"]["note"]
+
+
+def test_similarity_network_threshold(prepared, settings):
+    from src.analyses.semantic_insights import compute_similarity_network
+    r = compute_similarity_network(prepared, settings, threshold=0.7)
+    assert r["status"] in ("ok", "empty")
+    if r["status"] == "ok":
+        assert r["network"]["nodes"] and r["network"]["edges"]
+        node = r["network"]["nodes"][0]["data"]
+        assert "color" in node and "applicant" in node and "size" in node
+        for e in r["network"]["edges"]:
+            assert e["data"]["weight"] >= 0.7
+        assert r["components"]
+    # 매우 높은 임계값 → empty 로 안내 (오류 아님)
+    r2 = compute_similarity_network(prepared, settings, threshold=0.99)
+    assert r2["status"] in ("ok", "empty")
+
+
+def test_embed_corpus_reports_reason_without_text(settings):
+    from src.analyses.semantic_insights import embed_corpus
+    rows = [{"공개번호": "KR-%d" % i, "출원인": "X", "출원일": "2020-01-01",
+             "기술 대분류": "A"} for i in range(30)]
+    df = make_prepared(pd.DataFrame(rows))
+    for col in ("title", "abstract", "indep_claim"):
+        if col in df.columns:
+            df = df.drop(columns=[col])
+    work, ids, vec, reason = embed_corpus(df, settings, 100)
+    assert work is None and isinstance(reason, str) and "매핑" in reason
+
+
+def test_problem_solution_axis_titles(prepared, settings):
+    """매트릭스 figure 에 축 제목이 있어 Excel 다운로드 시 행/열 의미 식별 가능."""
+    from src.analyses.problem_solution import compute_problem_solution
+    r = compute_problem_solution(prepared, settings)
+    assert r["status"] == "ok"
+    lay = r["figure"]["layout"]
+    assert lay["xaxis"]["title"]["text"] == "해결수단"
+    assert lay["yaxis"]["title"]["text"] == "해결과제"
+    assert r["figure"]["counts_z"]
+
+
 def test_format_web_context_sanitizes():
     from src.llm_client import sanitize_for_llm
     ctx = web_search.format_web_context(

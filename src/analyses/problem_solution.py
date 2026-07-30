@@ -132,8 +132,11 @@ def compute_problem_solution(df, settings):
         fig["counts_z"] = z_counts
         # 플롯 영역 확보: 행 수 비례 높이 + 라벨 폰트·여백 제한
         fig["layout"]["height"] = max(460, 140 + 26 * len(top_problems))
-        fig["layout"]["xaxis"].update({"tickfont": {"size": 10}, "tickangle": -35})
-        fig["layout"]["yaxis"].update({"tickfont": {"size": 10}})
+        # 축 제목 명시 — 화면 판독 + Excel 다운로드 시 행/열 의미 식별용
+        fig["layout"]["xaxis"].update({"tickfont": {"size": 10}, "tickangle": -35,
+                                       "title": {"text": "해결수단", "standoff": 6}})
+        fig["layout"]["yaxis"].update({"tickfont": {"size": 10},
+                                       "title": {"text": "해결과제", "standoff": 6}})
         fig["layout"]["margin"] = {"l": 150, "r": 30, "t": 48, "b": 110}
 
     zeros = int(sum(1 for row in z_counts for v in row if v == 0))

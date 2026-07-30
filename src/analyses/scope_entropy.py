@@ -66,7 +66,10 @@ _CLAIM_CATEGORY_RULES = [
 _KW_TOKEN_RE = re.compile(r"[가-힣A-Za-z]{2,}")
 _KW_STOP = {"및", "또는", "위한", "이를", "포함", "하는", "있는", "이상", "관한", "장치",
             "방법", "제조", "이용", "the", "and", "for", "with", "using", "method",
-            "apparatus", "device", "thereof", "same", "based"}
+            "apparatus", "device", "thereof", "same", "based",
+            "해결", "해결하기", "해결하는", "제공", "제공하는", "특징", "특징으로",
+            "개선", "발명", "대한", "있어서", "구비", "구비한", "형성", "형성된",
+            "포함하는", "따른", "통해", "위해", "관련"}
 
 
 def _norm_entropy(counts, k_global):

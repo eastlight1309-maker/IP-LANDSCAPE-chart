@@ -294,7 +294,10 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
             (cats || []).forEach(function (cat, i) { rows.push([cat, vals[i]]); });
           } else if (tr.type === 'heatmap' || tr.type === 'contour') {
             if (tr.type === 'contour') return;  // 밀도 그리드는 제외
-            columns = ['행\\열'].concat((tr.x || []).map(String));
+            // 첫 셀에 행/열 축의 의미를 명시 (예: "해결과제(행) \ 해결수단(열)")
+            var yT = stripHtml(axTitle(lt, 'yaxis', '')) || '행';
+            var xT = stripHtml(axTitle(lt, 'xaxis', '')) || '열';
+            columns = [yT + '(행) \\ ' + xT + '(열)'].concat((tr.x || []).map(String));
             (tr.y || []).forEach(function (yl, ri) {
               rows.push([yl].concat((tr.z && tr.z[ri]) || []));
             });
@@ -338,6 +341,8 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
         if (columns && rows.length) {
           sheets.push({ name: String(title).slice(0, 28), columns: columns, rows: rows });
         }
+        // 렌더러가 부착한 보조 시트 (예: 매트릭스 건수 — 전체 라벨 버전)
+        (gd.__iplsExtraSheets || []).forEach(function (s) { sheets.push(s); });
       });
       bodyEl.querySelectorAll('.ipls-cy').forEach(function (el) {
         var net = el.__iplsNetwork;
@@ -1257,6 +1262,57 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
               (r.meta && r.meta.truncated ? ' · Top-N 절단됨' : '') + ')</div>'));
           }
         });
+      } },
+      { label: '신흥 기술 탐지 (임베딩)', render: function (h) {
+        analysisCard({
+          analysis: 'emerging-clusters', holder: h,
+          title: '신흥 기술 조기 탐지 — Emerging Cluster Detection',
+          help: '전체 문헌 텍스트(요약·독립청구항)를 KR-SBERT 임베딩으로 군집화한 뒤 각 군집의 ' +
+            '출원 시점 분포를 봅니다. 최근 3년에 몰려 있고, 신규 출원인이 늘고, 이전에 없던 ' +
+            '새 군집이면 신흥 기술 후보입니다. 군집 라벨은 중심에 가까운 특허들의 특징 키워드로 ' +
+            '자동 생성됩니다.',
+          guide: 'X축=군집 평균 출원연도(오른쪽=최근 기술), Y축=최근 3년 출원 비중(위=신흥), ' +
+            '버블 크기=군집 특허 수, 색=신규 출원인 비율(진할수록 새 플레이어 유입), ' +
+            '빨간 테두리=이전 기간에 없던 새 군집. 읽는 법: 우상단의 진한 버블이 가장 강한 ' +
+            '신흥 신호입니다. 버블 클릭 시 군집 소속 특허가 열립니다. 군집·라벨은 임베딩 기반 ' +
+            '자동 산출로, 기술 가치 판단이 아닌 조기 탐지 신호입니다.',
+          renderOk: function (r, c, setTarget) {
+            var holder = Ui.el('<div class="chart-holder tall"></div>');
+            c.body.appendChild(holder);
+            Render.plotly(holder, r.figure, plotlyDrill);
+            setTarget({ kind: 'plotly', el: holder });
+            var rows = (r.clusters || []).map(function (x) {
+              var tr = document.createElement('tr');
+              var td0 = document.createElement('td');
+              td0.appendChild(drillCell(x.label, x.drill));
+              tr.appendChild(td0);
+              tr.insertAdjacentHTML('beforeend',
+                '<td>' + (x.emerging ? '<span class="badge good">신흥 후보</span>' : '') +
+                (x.is_new_cluster ? ' <span class="badge warn">새 군집</span>' : '') + '</td>' +
+                '<td class="num">' + Ui.num(x.n, 0) + '</td>' +
+                '<td class="num">' + x.first_year + '</td>' +
+                '<td class="num">' + Ui.pct(x.recent_share) + '</td>' +
+                '<td class="num">' + (x.new_applicant_ratio !== null && x.new_applicant_ratio !== undefined ?
+                  Ui.pct(x.new_applicant_ratio) : '-') + '</td>' +
+                '<td class="num">' + Ui.num(x.score, 2) + '</td>' +
+                '<td>' + (x.top_applicants || []).map(function (a) {
+                  return '<span class="badge">' + Ui.esc(a.name) + ' ' + a.count + '</span>';
+                }).join('') + '</td>');
+              return tr;
+            });
+            var tbl = Ui.el(simpleTable(
+              ['군집 (특징 키워드)', '판정', '건수', '최초 출원', '최근 3년 비중', '신규 출원인', '점수', '주요 출원인'], []));
+            rows.forEach(function (tr) { tbl.querySelector('tbody').appendChild(tr); });
+            var wrap = Ui.el('<div style="overflow-x:auto;max-height:320px;overflow-y:auto;margin-top:8px"></div>');
+            wrap.appendChild(tbl);
+            c.body.appendChild(wrap);
+            if (r.methods) {
+              c.body.appendChild(Ui.el('<div style="margin-top:6px;color:#647b8d;font-size:11.5px">방법: 임베딩 ' +
+                Ui.esc(r.methods.embedding) + ' · 텍스트 ' + Ui.esc(r.methods.text_source) +
+                ' · 문헌 ' + Ui.num(r.methods.n_docs, 0) + '건</div>'));
+            }
+          }
+        });
       } }
     ]);
   };
@@ -1619,6 +1675,16 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
         } else {
           Render.plotly(holder, r.figure);
           setTarget({ kind: 'plotly', el: holder });
+          // Excel 보조 시트: 축약 없는 전체 문구 라벨 + 건수 매트릭스
+          if (r.figure.counts_z) {
+            holder.__iplsExtraSheets = [{
+              name: '건수 (전체 라벨)',
+              columns: ['해결과제(행) \\ 해결수단(열)'].concat(r.solutions || []),
+              rows: (r.problems || []).map(function (p, i) {
+                return [p].concat(r.figure.counts_z[i] || []);
+              })
+            }];
+          }
           // 축에는 축약 라벨이 표시되므로 클릭 시 전체 문구로 역변환
           var probByLabel = {}, solByLabel = {};
           (r.problem_labels || []).forEach(function (l, i) { probByLabel[l] = r.problems[i]; });
@@ -1786,6 +1852,121 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
                 });
               });
               c.body.appendChild(slider);
+            }
+          }
+        });
+      } },
+      { label: '의미 기반 영향력 (임베딩)', render: function (h) {
+        analysisCard({
+          analysis: 'semantic-influence', holder: h,
+          title: '의미 기반 인용/영향력 대체 지표',
+          help: '인용 데이터가 부실한 한국 특허의 약점을 임베딩으로 보완합니다. 어떤 특허 이후 ' +
+            '의미적으로 매우 유사한(코사인 ≥ 임계값) 후속 특허가 여러 타 기업에서 출원되었으면 ' +
+            '명시적 인용이 없어도 영향력 신호로 봅니다. 이는 인용의 대체 신호일 뿐 후속 출원이 ' +
+            '해당 특허를 참고했다는 인과관계·모방의 증거가 아닙니다.',
+          guide: 'Sankey: 왼쪽=원천 특허(영향력 상위), 오른쪽=유사 후속 특허를 낸 기업, ' +
+            '흐름 두께=유사 후속 출원 수 — 넓게 퍼질수록 여러 회사가 같은 의미 영역으로 ' +
+            '따라 들어온 것입니다. 산점도: X축=명시적 피인용 수, Y축=의미 유사 후속 수. ' +
+            '좌상단(피인용 적음×후속 많음)=인용 통계에 잡히지 않는 숨은 영향력 특허입니다. ' +
+            '표의 행을 클릭하면 원천+후속 특허 목록이 열립니다.',
+          renderOk: function (r, c, setTarget) {
+            var holder = Ui.el('<div class="chart-holder tall"></div>');
+            c.body.appendChild(holder);
+            Render.plotly(holder, r.sankey);
+            setTarget({ kind: 'plotly', el: holder });
+            if (r.scatter) {
+              var sh = Ui.el('<div class="chart-holder"></div>');
+              c.body.appendChild(sh);
+              Render.plotly(sh, r.scatter, plotlyDrill);
+            }
+            var rows = (r.top_patents || []).map(function (x) {
+              var tr = document.createElement('tr');
+              var td0 = document.createElement('td');
+              td0.appendChild(drillCell(x.id, x.drill));
+              tr.appendChild(td0);
+              tr.insertAdjacentHTML('beforeend',
+                '<td>' + Ui.esc(x.title || '') + '</td>' +
+                '<td>' + Ui.esc(x.applicant) + '</td>' +
+                '<td class="num">' + x.year + '</td>' +
+                '<td class="num">' + Ui.num(x.followers, 0) + '</td>' +
+                '<td class="num">' + Ui.num(x.cross_followers, 0) + ' (' + x.companies + '개사)</td>' +
+                '<td class="num">' + Ui.num(x.avg_sim, 2) + '</td>' +
+                '<td class="num">' + (x.cites !== null && x.cites !== undefined ? Ui.num(x.cites, 0) : '-') + '</td>');
+              return tr;
+            });
+            var tbl = Ui.el(simpleTable(
+              ['원천 특허', '명칭', '출원인', '연도', '의미 후속', '타기업 후속', '평균 유사도', '피인용'], []));
+            rows.forEach(function (tr) { tbl.querySelector('tbody').appendChild(tr); });
+            var wrap = Ui.el('<div style="overflow-x:auto;margin-top:8px"></div>');
+            wrap.appendChild(tbl);
+            c.body.appendChild(wrap);
+            if (r.methods) {
+              c.body.appendChild(Ui.el('<div style="margin-top:6px;color:#647b8d;font-size:11.5px">방법: 임베딩 ' +
+                Ui.esc(r.methods.embedding) + ' · 텍스트 ' + Ui.esc(r.methods.text_source) +
+                ' · 유사도 임계값 ' + r.methods.threshold + '</div>'));
+            }
+          }
+        });
+      } },
+      { label: '권리 중첩 네트워크 (임베딩)', render: function (h) {
+        analysisCard({
+          analysis: 'similarity-network', holder: h,
+          title: '특허 유사도 네트워크 — 권리 중첩 그래프',
+          help: '임베딩 코사인 유사도가 임계값(기본 0.85) 이상인 특허쌍을 엣지로 연결한 네트워크입니다. ' +
+            '촘촘하게 뭉친 덩어리=유사 특허가 밀집한 권리 중첩 후보 지대, 덩어리 내부를 잇는 ' +
+            '관절점=브리지 특허. 의미 유사도 신호이며 법적 권리범위 중첩 판단(FTO)이 아닙니다.',
+          guide: '노드=특허(색=출원인, 크기=연결 수, 빨간 테두리=브리지 특허), 엣지=유사도 ' +
+            '임계값 이상 쌍(두꺼울수록 더 유사). 읽는 법: 한 색으로 뭉친 덩어리=특정 기업이 장악한 ' +
+            '중첩 지대(그 기업의 요새), 여러 색이 섞인 덩어리=경쟁이 밀집한 격전지, ' +
+            '브리지 특허=군집 사이를 잇는 구조적 요충 문헌. 노드/엣지 클릭 시 해당 특허가 열립니다. ' +
+            '임계값을 낮추면 더 느슨한 유사까지 연결됩니다.',
+          controls: function (c, reload) {
+            var inp = Ui.el('<input type="number" step="0.05" min="0.5" max="0.99" ' +
+              'style="width:70px" title="코사인 유사도 임계값" placeholder="0.85">');
+            inp.addEventListener('change', function () {
+              reload({ threshold: Number(inp.value) || null });
+            });
+            var lbl = Ui.el('<span style="font-size:11.5px;color:#647b8d">임계값</span>');
+            c.controls.prepend(inp); c.controls.prepend(lbl);
+          },
+          renderOk: function (r, c, setTarget) {
+            var holder = Ui.el('<div class="cy-holder" style="height:520px"></div>');
+            c.body.appendChild(holder);
+            var cy = Render.cytoscape(holder, r.network, {
+              onNode: function (d) {
+                Drill.open(d.drill, (d.full_id || d.label) + ' — ' + (d.title || ''));
+              },
+              onEdge: function (d) { Drill.open(d.drill, '유사쌍 (코사인 ' + d.weight + ')'); }
+            });
+            setTarget({ kind: 'cy', cy: cy });
+            var rows = (r.components || []).map(function (x) {
+              var tr = document.createElement('tr');
+              var td0 = document.createElement('td');
+              td0.appendChild(drillCell('지대 #' + (x.component + 1), x.drill));
+              tr.appendChild(td0);
+              tr.insertAdjacentHTML('beforeend',
+                '<td class="num">' + Ui.num(x.n, 0) + '</td>' +
+                '<td>' + Ui.esc(x.dominant) + (x.dominant_share !== null && x.dominant_share !== undefined ?
+                  ' (' + Ui.pct(x.dominant_share) + ')' : '') + '</td>' +
+                '<td class="num">' + (x.active_ratio !== null && x.active_ratio !== undefined ?
+                  Ui.pct(x.active_ratio) : '-') + '</td>' +
+                '<td class="num">' + (x.avg_sim !== null && x.avg_sim !== undefined ?
+                  Ui.num(x.avg_sim, 2) : '-') + '</td>' +
+                '<td>' + (x.bridges || []).map(function (b) {
+                  return '<span class="badge warn">' + Ui.esc(String(b).slice(-14)) + '</span>';
+                }).join('') + '</td>');
+              return tr;
+            });
+            var tbl = Ui.el(simpleTable(
+              ['중첩 지대', '특허 수', '지배 출원인', '유효 비율', '평균 유사도', '브리지 특허'], []));
+            rows.forEach(function (tr) { tbl.querySelector('tbody').appendChild(tr); });
+            var wrap = Ui.el('<div style="overflow-x:auto;max-height:300px;overflow-y:auto;margin-top:8px"></div>');
+            wrap.appendChild(tbl);
+            c.body.appendChild(wrap);
+            if (r.methods) {
+              c.body.appendChild(Ui.el('<div style="margin-top:6px;color:#647b8d;font-size:11.5px">방법: 임베딩 ' +
+                Ui.esc(r.methods.embedding) + ' · 임계값 ' + r.methods.threshold +
+                (r.methods.edge_truncated ? ' · 엣지 상한 절단됨(유사도 상위만 표시)' : '') + '</div>'));
             }
           }
         });

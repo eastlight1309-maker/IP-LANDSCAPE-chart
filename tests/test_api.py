@@ -86,6 +86,7 @@ ANALYSIS_PATHS = [
     "/api/inventor-mobility", "/api/classification-quality",
     "/api/basic-stats", "/api/portfolio-index", "/api/advanced-stats",
     "/api/scope-entropy", "/api/combo-upset",
+    "/api/emerging-clusters", "/api/semantic-influence", "/api/similarity-network",
 ]
 
 

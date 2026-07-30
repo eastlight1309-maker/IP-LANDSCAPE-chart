@@ -52,6 +52,7 @@ MODULE_ORDER = [
     "src/analyses/advanced_stats.py",
     "src/analyses/scope_entropy.py",
     "src/analyses/combo_upset.py",
+    "src/analyses/semantic_insights.py",
     "src/api.py",
 ]
 

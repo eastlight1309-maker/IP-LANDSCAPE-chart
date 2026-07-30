@@ -285,6 +285,9 @@ ANALYSIS_REQUIREMENTS = {
     "portfolio-index":       {"required": [{"any": ANY_APPLICANT}, "cites_forward"], "optional": ["family_countries", "family_country_count", "family_size", "is_active", "legal_status", {"any": ANY_DATE}, {"any": ANY_TECH}]},
     "scope-entropy":         {"required": [{"any": ANY_TECH}, {"any": ANY_APPLICANT}], "optional": ["indep_claim", "ipc", "family_countries", "country", "title", "abstract", "embedding", "is_granted", {"any": ANY_DATE}]},
     "combo-upset":           {"required": [{"any": ANY_TECH}], "optional": [{"any": ANY_DATE}] + ANY_APPLICANT + ["is_active", "legal_status"]},
+    "emerging-clusters":     {"required": [{"any": ["abstract", "indep_claim", "title"]}, {"any": ANY_DATE}], "optional": ANY_APPLICANT + ["embedding"]},
+    "semantic-influence":    {"required": [{"any": ["abstract", "indep_claim", "title"]}, {"any": ANY_DATE}], "optional": ANY_APPLICANT + ["embedding", "cites_forward"]},
+    "similarity-network":    {"required": [{"any": ["abstract", "indep_claim", "title"]}], "optional": ANY_APPLICANT + ["embedding", "is_active", "legal_status"]},
 }
 
 _NORM_RE = re.compile(r"[\s\(\)\[\]\{\}\-_/\\.,:;'\"·|]+")

@@ -62,6 +62,9 @@ LIMITS = {
     "upset_max_elements": 12,         # UpSet 추적 기술요소 상한
     "upset_max_combos": 25,           # UpSet 표시 조합 상한
     "web_search_max_results": 5,      # LLM 인사이트 웹 검색 결과 상한
+    "semantic_max_docs": 3000,        # 의미 분석(신흥 탐지·의미 영향력) 임베딩 문헌 상한
+    "simnet_max_docs": 600,           # 유사도 네트워크 문헌 상한 (가독성·메모리)
+    "simnet_max_edges": 400,          # 유사도 네트워크 엣지 상한 (유사도 상위)
 }
 
 # =========================
@@ -83,6 +86,9 @@ THRESHOLDS = {
     "reemerging_decline_years": 3, # Re-emerging: 과거 감소·정체 기간
     "insight_small_sample": 10,    # 표본 부족 경고 기준 (건)
     "sim_topk_per_doc": 20,        # 청구항 유사도 상위 K 이웃만 유지
+    "semantic_sim_threshold": 0.8,   # 의미 기반 후속 특허 판정 코사인 임계값
+    "overlap_sim_threshold": 0.85,   # 권리 중첩 네트워크 엣지 코사인 임계값
+    "emerging_cluster_recent_share": 0.5,  # 신흥 군집: 최근 3년 출원 비중 기준
 }
 
 # =========================

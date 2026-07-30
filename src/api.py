@@ -34,6 +34,9 @@ api.py — API 응답 모듈. register_routes(app) 로 모든 엔드포인트를
   POST /api/problem-solution    문제-해결수단 매트릭스 (+cell 상세)
   POST /api/scope-entropy       권리범위 엔트로피 레이더·시계열
   POST /api/combo-upset         미점유 조합 UpSet
+  POST /api/emerging-clusters   신흥 기술 조기 탐지 (임베딩 군집)
+  POST /api/semantic-influence  의미 기반 인용/영향력 대체 지표
+  POST /api/similarity-network  특허 유사도 네트워크 (권리 중첩 그래프)
   POST /api/patents             근거 특허 drill-down (페이지네이션)
   POST /api/insight             LLM 인사이트 (요약 통계만 전달, 실패 시 규칙 기반)
   POST /api/export              Excel 다운로드
@@ -86,6 +89,9 @@ from src.analyses.portfolio_index import compute_portfolio_index
 from src.analyses.advanced_stats import compute_advanced_stats
 from src.analyses.scope_entropy import compute_scope_entropy
 from src.analyses.combo_upset import compute_combo_upset
+from src.analyses.semantic_insights import (compute_emerging_clusters,
+                                            compute_semantic_influence,
+                                            compute_similarity_network)
 from src.web_search import search_web, format_web_context
 from src.llm_client import sanitize_for_llm
 
@@ -473,6 +479,15 @@ def register_routes(app):
             extra_key_fields=("companies",)),
         "combo-upset": _analysis_route(
             "combo-upset", lambda df, s, b: compute_combo_upset(df, s)),
+        "emerging-clusters": _analysis_route(
+            "emerging-clusters", lambda df, s, b: compute_emerging_clusters(df, s)),
+        "semantic-influence": _analysis_route(
+            "semantic-influence", lambda df, s, b: compute_semantic_influence(df, s)),
+        "similarity-network": _analysis_route(
+            "similarity-network",
+            lambda df, s, b: compute_similarity_network(df, s,
+                                                        threshold=b.get("threshold")),
+            extra_key_fields=("threshold",)),
     }
 
     def make_analysis_view(path_name, handler):
