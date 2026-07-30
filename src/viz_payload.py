@@ -159,7 +159,11 @@ def bubble_chart(points, x_title, y_title, title=None, quadrants=None,
 
 def heatmap(z, x_labels, y_labels, title=None, colorscale="YlOrRd", hovertext=None,
             colorbar_title=None, zmid=None):
-    """Plotly 히트맵 payload. 셀 수가 LIMITS 초과인 경우 호출부에서 ECharts 로 전환."""
+    """Plotly 히트맵 payload. 셀 수가 LIMITS 초과인 경우 호출부에서 ECharts 로 전환.
+
+    가독성 규칙: 행(y) 수에 비례해 세로 길이를 늘리고(행당 최소 26px),
+    양 축 모두 dtick=1 로 라벨 생략 없이 전부 표시한다 (라벨 많으면 글자만 축소).
+    """
     trace = {"type": "heatmap", "z": z, "x": x_labels, "y": y_labels,
              "colorscale": colorscale, "colorbar": {"thickness": 12}}
     if colorbar_title:
@@ -169,12 +173,19 @@ def heatmap(z, x_labels, y_labels, title=None, colorscale="YlOrRd", hovertext=No
         trace["hoverinfo"] = "text"
     if zmid is not None:
         trace["zmid"] = zmid
+    n_rows = len(y_labels or [])
+    n_cols = len(x_labels or [])
+    y_font = 10 if n_rows <= 12 else (9 if n_rows <= 20 else 8)
+    x_font = 10 if n_cols <= 14 else (9 if n_cols <= 24 else 8)
     # 축을 범주형으로 고정: 라벨이 숫자처럼 보여도 수치축으로 오인 렌더링되지 않도록
     return {"data": [trace],
-            "layout": base_layout(title,
-                                  xaxis={"tickangle": -40, "automargin": True,
-                                         "type": "category"},
-                                  yaxis={"automargin": True, "type": "category"})}
+            "layout": base_layout(
+                title,
+                height=max(440, 150 + 26 * n_rows),
+                xaxis={"tickangle": -40, "automargin": True, "type": "category",
+                       "dtick": 1, "tickfont": {"size": x_font}},
+                yaxis={"automargin": True, "type": "category", "dtick": 1,
+                       "tickfont": {"size": y_font}})}
 
 
 def echarts_heatmap(z, x_labels, y_labels, title=None):
