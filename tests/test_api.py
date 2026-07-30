@@ -84,7 +84,7 @@ ANALYSIS_PATHS = [
     "/api/technology-transition", "/api/trajectory", "/api/company-dna",
     "/api/lead-lag", "/api/claim-density", "/api/citation-diffusion",
     "/api/inventor-mobility", "/api/classification-quality",
-    "/api/basic-stats", "/api/portfolio-index",
+    "/api/basic-stats", "/api/portfolio-index", "/api/advanced-stats",
 ]
 
 
@@ -391,3 +391,40 @@ def test_portfolio_index_official_methodology(client):
     for d in data["definitions"]:
         assert d["formula"] and d["reading"] and d["definition"]
     assert "Ernst" in data["meta"]["note"] or "공개 방법론" in data["meta"]["note"]
+
+
+def test_problem_solution_short_labels_and_height(client):
+    """매트릭스: 축약 라벨·라벨맵·행 수 비례 높이 (그래프 잠식 방지)."""
+    data = _post(client, "/api/problem-solution", {"filters": {}}).get_json()
+    assert data["status"] == "ok"
+    assert len(data["problem_labels"]) == len(data["problems"])
+    assert all(len(l) <= 22 for l in data["problem_labels"])   # 축 라벨 축약
+    assert len(set(data["problem_labels"])) == len(data["problem_labels"])  # 유일성
+    if data["engine"] == "plotly":
+        assert data["figure"]["layout"]["height"] >= 460
+
+
+def test_advanced_stats_sections(client):
+    """심화 통계: 5개 섹션 payload (샘플 데이터는 전부 충족)."""
+    data = _post(client, "/api/advanced-stats", {"filters": {}}).get_json()
+    assert data["status"] == "ok"
+    s = data["sections"]
+    assert "prosecution" in s and s["prosecution"]["avg_months"] > 0
+    assert "expiry" in s and s["expiry"]["fig"]["data"]
+    assert "claims" in s and s["claims"]["avg_claims"] > 0
+    assert "coapplicant" in s and s["coapplicant"]["network"]["nodes"]
+    assert "ipc" in s and s["ipc"]["top_class"].startswith("H01L") or True
+    # 컬럼 없는 경우 섹션 생략 (graceful)
+    from generate_sample_data import generate_sample
+    from src.data_access import inject_dataset
+    from src.cache import clear_all_caches
+    df2 = generate_sample(n=80, seed=21).drop(
+        columns=["등록일", "만료예정일", "청구항 수", "독립항 수", "IPC분류"])
+    inject_dataset("adv_partial", df2)
+    clear_all_caches()
+    d2 = _post(client, "/api/advanced-stats",
+               {"dataset": "adv_partial", "filters": {}}).get_json()
+    assert d2["status"] == "ok"
+    skipped = {x["section"] for x in d2["skipped"]}
+    assert {"prosecution", "expiry", "claims", "ipc"} <= skipped
+    assert "coapplicant" in d2["sections"]

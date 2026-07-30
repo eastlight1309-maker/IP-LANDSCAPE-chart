@@ -81,6 +81,7 @@ from src.analyses.inventor_mobility import compute_inventor_mobility
 from src.analyses.classification_quality import compute_classification_quality
 from src.analyses.basic_stats import compute_basic_stats
 from src.analyses.portfolio_index import compute_portfolio_index
+from src.analyses.advanced_stats import compute_advanced_stats
 
 logger = logging.getLogger("ip_landscape")
 
@@ -458,6 +459,8 @@ def register_routes(app):
             "basic-stats", lambda df, s, b: compute_basic_stats(df, s)),
         "portfolio-index": _analysis_route(
             "portfolio-index", lambda df, s, b: compute_portfolio_index(df, s)),
+        "advanced-stats": _analysis_route(
+            "advanced-stats", lambda df, s, b: compute_advanced_stats(df, s)),
     }
 
     def make_analysis_view(path_name, handler):

@@ -128,7 +128,8 @@ CONCEPTS = {
     "legal_status": {
         "label": "법적상태", "dtype": "문자열 (등록/공개/거절/소멸 등)",
         "variants": ["법적상태", "법적 상태", "행정상태", "행정처분", "legal status", "status",
-                     "current status", "법률상태", "법적상태정보"],
+                     "current status", "법률상태", "법적상태정보", "현재상태", "최종상태",
+                     "최종처분", "행정처분상태"],
     },
     "is_granted": {
         "label": "등록 여부", "dtype": "불리언/문자열 (Y/N, True/False)",
@@ -225,6 +226,22 @@ CONCEPTS = {
         "label": "효과", "dtype": "문자열",
         "variants": ["효과", "발명의 효과", "effect", "effects", "기대효과", "기술적 효과"],
     },
+    "claims_count": {
+        "label": "청구항 수", "dtype": "정수 (전체 청구항 개수)",
+        "variants": ["청구항 수", "청구항수", "전체 청구항 수", "청구항 개수", "청구항개수",
+                     "claims count", "number of claims", "claim count", "총 청구항수"],
+    },
+    "indep_claims_count": {
+        "label": "독립항 수", "dtype": "정수 (독립 청구항 개수)",
+        "variants": ["독립항 수", "독립항수", "독립 청구항 수", "독립청구항수", "독립 청구항수",
+                     "independent claims", "independent claim count", "독립항 개수"],
+    },
+    "ipc": {
+        "label": "IPC/CPC 분류", "dtype": "문자열 (분류코드 목록: H01L 23/28; H01L 25/065)",
+        "variants": ["ipc", "ipc 분류", "ipc분류", "ipc 코드", "국제특허분류", "메인 ipc",
+                     "대표 ipc", "ipc(메인)", "ipc 전체", "cpc", "cpc 분류", "cpc분류",
+                     "cpc 코드", "ipc/cpc", "공통특허분류"],
+    },
     "embedding": {
         "label": "임베딩 벡터", "dtype": "문자열(JSON 배열) 또는 숫자 배열",
         "variants": ["임베딩 벡터", "임베딩", "embedding", "embedding vector", "vector",
@@ -264,6 +281,7 @@ ANALYSIS_REQUIREMENTS = {
     "inventor-mobility":     {"required": ["inventors", {"any": ANY_APPLICANT}, {"any": ANY_DATE}], "optional": [{"any": ANY_TECH}, "country"]},
     "classification-quality": {"required": [{"any": ANY_TECH}], "optional": ["embedding", "class_confidence", "title", "abstract", {"any": ANY_DATE}]},
     "basic-stats":           {"required": [{"any": ANY_DATE}], "optional": ANY_APPLICANT + ["country", "is_granted", "is_active", "legal_status", {"any": ANY_TECH}]},
+    "advanced-stats":        {"required": [{"any": ANY_APPLICANT}], "optional": ["app_date", "reg_date", "expiry_date", "claims_count", "indep_claims_count", "ipc", "cites_forward", "is_active", "legal_status"]},
     "portfolio-index":       {"required": [{"any": ANY_APPLICANT}, "cites_forward"], "optional": ["family_countries", "family_country_count", "family_size", "is_active", "legal_status", {"any": ANY_DATE}, {"any": ANY_TECH}]},
 }
 
@@ -278,6 +296,7 @@ CONCEPT_KINDS = {
     "priority_date": "date", "expiry_date": "date",
     "cites_backward": "number", "cites_forward": "number", "family_size": "number",
     "family_country_count": "number", "class_confidence": "number",
+    "claims_count": "number", "indep_claims_count": "number",
     "is_granted": "bool", "is_active": "bool", "is_own": "bool",
     "country": "country",
 }

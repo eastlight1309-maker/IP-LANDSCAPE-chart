@@ -52,4 +52,4 @@ def test_availability_matrix(mapping):
 
 def test_concept_catalog_complete():
     cat = concept_catalog()
-    assert len(cat) == len(CONCEPTS) == 41
+    assert len(cat) == len(CONCEPTS) == 44

@@ -48,6 +48,7 @@ MODULE_ORDER = [
     "src/analyses/classification_quality.py",
     "src/analyses/basic_stats.py",
     "src/analyses/portfolio_index.py",
+    "src/analyses/advanced_stats.py",
     "src/api.py",
 ]
 

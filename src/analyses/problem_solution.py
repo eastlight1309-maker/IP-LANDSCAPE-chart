@@ -101,17 +101,40 @@ def compute_problem_solution(df, settings):
         growth_z.append(g_row)
         hover.append(h_row)
 
+    # 축 라벨 축약: 긴 과제·수단 문구가 플롯 영역을 잠식하지 않도록 축에는 짧은
+    # 라벨을 쓰고(중복 시 번호 부여), 전체 문구는 hover 와 라벨맵으로 제공한다.
+    def _short_labels(values, limit=16):
+        used, out = {}, []
+        for v in values:
+            base = str(v).strip()
+            short = base if len(base) <= limit else base[:limit] + "…"
+            if short in used:
+                used[short] += 1
+                short = "%s(%d)" % (short[:limit - 2], used[short])
+            else:
+                used[short] = 1
+            out.append(short)
+        return out
+
+    prob_labels = _short_labels(top_problems)
+    sol_labels = _short_labels(top_solutions)
+
     n_cells = len(top_problems) * len(top_solutions)
     use_echarts = n_cells > get_limit(settings, "heatmap_max_cells")
     z_counts = [[int(counts.loc[p, s]) for s in top_solutions] for p in top_problems]
     if use_echarts and n_cells > get_limit(settings, "echarts_threshold_cells"):
-        fig = echarts_heatmap(z_counts, top_solutions, top_problems,
+        fig = echarts_heatmap(z_counts, sol_labels, prob_labels,
                               title="문제–해결수단 매트릭스 (건수)")
     else:
-        fig = heatmap(growth_z, top_solutions, top_problems,
+        fig = heatmap(growth_z, sol_labels, prob_labels,
                       title="문제–해결수단 매트릭스 (색=최근 성장률, hover=건수·장벽)",
                       colorscale="RdYlGn", hovertext=hover, colorbar_title="성장률", zmid=0)
         fig["counts_z"] = z_counts
+        # 플롯 영역 확보: 행 수 비례 높이 + 라벨 폰트·여백 제한
+        fig["layout"]["height"] = max(460, 140 + 26 * len(top_problems))
+        fig["layout"]["xaxis"].update({"tickfont": {"size": 10}, "tickangle": -35})
+        fig["layout"]["yaxis"].update({"tickfont": {"size": 10}})
+        fig["layout"]["margin"] = {"l": 150, "r": 30, "t": 48, "b": 110}
 
     zeros = int(sum(1 for row in z_counts for v in row if v == 0))
     flat = [(p, s, int(counts.loc[p, s])) for p in top_problems for s in top_solutions
@@ -140,6 +163,7 @@ def compute_problem_solution(df, settings):
         if flat else [],
         small_sample=check_small_sample(len(sub), settings))
     return ok_result({"figure": fig, "problems": top_problems, "solutions": top_solutions,
+                      "problem_labels": prob_labels, "solution_labels": sol_labels,
                       "cells": cell_meta, "engine": "echarts" if use_echarts else "plotly"},
                      insight=insight,
                      meta={"n_with_ps": int(len(work)), "truncated":

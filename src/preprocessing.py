@@ -552,7 +552,8 @@ def build_standard_frame(raw_df, mapping, applicant_rules=None):
     df = standardize_applicants(df, applicant_rules)
 
     for num_col in ("cites_backward", "cites_forward", "family_size",
-                    "family_country_count", "class_confidence"):
+                    "family_country_count", "class_confidence",
+                    "claims_count", "indep_claims_count"):
         if num_col in df.columns:
             df[num_col] = parse_numeric(df[num_col])
 

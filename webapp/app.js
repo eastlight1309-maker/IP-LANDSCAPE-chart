@@ -950,6 +950,90 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
           '기술분류별 누적 건수 순위와 분류×연도 동향 매트릭스입니다. 다중분류는 Settings 의 처리방식을 따르지 않고 각 분류에 1건씩 계산합니다.',
           ['tech', 'tech_year'],
           '순위: X축=건수, Y축=기술분류 — 포트폴리오가 집중된 기술. 동향 매트릭스: X축=연도, Y축=기술분류, 색=그 해 건수. 읽는 법: 오른쪽(최근)으로 갈수록 진해지는 분류=성장 기술, 왼쪽만 진하고 최근이 옅은 분류=쇠퇴 기술입니다.') },
+      { label: '심화 분석', render: function (h) {
+        analysisCard({
+          analysis: 'advanced-stats', holder: h,
+          title: '심화 통계 (심사기간 · 만료 타임라인 · 청구항 · 공동출원 · IPC)',
+          help: '윈텔립스/WIPS Excel 의 서지 컬럼(등록일·만료예정일·청구항 수·공동출원인·IPC)으로 도출하는 심화 인사이트입니다. 필요한 컬럼이 없는 섹션은 자동으로 생략되고 하단에 사유가 표시됩니다.',
+          renderOk: function (r, c, setTarget) {
+            var s = r.sections || {};
+            var first = true;
+            function addFig(fig, capText, tall) {
+              if (!fig) return;
+              var holder = Ui.el('<div class="chart-holder"' +
+                (tall ? ' style="min-height:460px"' : '') + '></div>');
+              c.body.appendChild(holder);
+              Render.plotly(holder, fig, plotlyDrill);
+              if (first) { setTarget({ kind: 'plotly', el: holder }); first = false; }
+              if (capText) c.body.appendChild(chartCap(capText));
+            }
+            if (s.prosecution) {
+              addFig(s.prosecution.fig_year,
+                'X축=출원연도, Y축=출원부터 등록까지 평균 소요기간(개월). 읽는 법: 기간이 ' +
+                '길어지는 추세면 심사 적체 또는 권리화 난이도 상승을, 짧아지면 우선심사 활용 ' +
+                '등을 시사합니다. 최근 연도는 아직 등록이 완료되지 않은 건이 빠져 짧게 보일 수 ' +
+                '있습니다.');
+              addFig(s.prosecution.fig_company,
+                'X축=평균 등록 소요기간(개월), Y축=기업. 읽는 법: 기간이 짧은 기업은 우선심사 ' +
+                '등 빠른 권리화 전략을, 긴 기업은 심사 대응이 길거나 분할·보정을 많이 거치는 ' +
+                '경향을 시사합니다. 막대 클릭 시 해당 기업 특허 목록이 열립니다.');
+            }
+            if (s.expiry) {
+              addFig(s.expiry.fig,
+                'X축=만료 연도, Y축=만료 예정 건수(' + Ui.esc(s.expiry.scope || '') + ' 기준). ' +
+                '읽는 법: 만료가 몰린 해(특허 절벽) 이후에는 해당 기술의 설계 자유도가 커집니다. ' +
+                '경쟁사 핵심특허의 만료 시점은 진입 타이밍 신호가 됩니다.');
+              if ((s.expiry.expiring || []).length) {
+                var rows = s.expiry.expiring.map(function (x) {
+                  var tr = document.createElement('tr');
+                  var td0 = document.createElement('td');
+                  td0.appendChild(drillCell(x.id, x.drill));
+                  tr.appendChild(td0);
+                  tr.insertAdjacentHTML('beforeend', '<td>' + Ui.esc(x.title) + '</td><td>' +
+                    Ui.esc(x.applicant) + '</td><td>' + Ui.esc(x.expiry) + '</td>' +
+                    '<td class="num">' + (x.cites !== null ? x.cites : '-') + '</td>');
+                  return tr;
+                });
+                var tbl = Ui.el(simpleTable(['번호', '명칭', '출원인', '만료일', '피인용'], []));
+                rows.forEach(function (tr) { tbl.querySelector('tbody').appendChild(tr); });
+                c.body.appendChild(Ui.el('<div style="margin-top:6px"><b style="font-size:12px">' +
+                  '3년 내 만료 예정 주요 특허 (피인용 상위)</b></div>'));
+                c.body.appendChild(tbl);
+              }
+            }
+            if (s.claims) {
+              addFig(s.claims.fig_company,
+                'X축=평균 청구항 수, Y축=기업. 읽는 법: 청구항 수는 권리 설계의 정교함·범위의 ' +
+                '프록시입니다. 평균이 높은 기업은 회피설계를 어렵게 만드는 촘촘한 권리망을 ' +
+                '구축하는 경향이 있습니다 (hover 에 독립항 수 병기).');
+              addFig(s.claims.fig_relation,
+                'X축=청구항 수 구간, Y축=평균 피인용. 읽는 법: 구간이 올라갈수록 피인용이 ' +
+                '높아지면 이 분야에서는 정교한 권리 설계와 기술 영향력이 함께 가는 것입니다.');
+            }
+            if (s.coapplicant) {
+              var cyHolder = Ui.el('<div class="cy-holder"></div>');
+              c.body.appendChild(cyHolder);
+              Render.cytoscape(cyHolder, s.coapplicant.network, {});
+              c.body.appendChild(chartCap('노드=기업(크기=공동출원 참여 건수), 선=두 기업의 ' +
+                '공동출원 건수(두께=빈도). 읽는 법: 굵게 연결된 기업쌍은 공동 R&D·산학협력 등 ' +
+                '긴밀한 협력 관계입니다. 경쟁사가 누구와 협력하는지로 공급망·기술 제휴 구도를 ' +
+                '읽을 수 있습니다. 노드 클릭 시 해당 기업 특허가 열립니다.'));
+            }
+            if (s.ipc) {
+              addFig(s.ipc.fig,
+                'X축=건수, Y축=IPC/CPC 서브클래스(4자리, 예: H01L=반도체 장치). 읽는 법: ' +
+                '당사 기술분류 체계와 별개인 국제 표준 분류 관점의 분포로, 내부 분류가 놓친 ' +
+                '인접 기술 영역을 확인할 수 있습니다.');
+            }
+            if ((r.skipped || []).length) {
+              c.body.appendChild(Ui.el('<div class="disclaimer">생략된 섹션: ' +
+                r.skipped.map(function (x) {
+                  return Ui.esc(x.section) + '(' + Ui.esc(x.reason) + ')';
+                }).join(', ') + '</div>'));
+            }
+          }
+        });
+      } },
       { label: 'Patent Asset Index', render: function (h) {
         analysisCard({
           analysis: 'portfolio-index', holder: h,
@@ -1399,10 +1483,14 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
         } else {
           Render.plotly(holder, r.figure);
           setTarget({ kind: 'plotly', el: holder });
+          // 축에는 축약 라벨이 표시되므로 클릭 시 전체 문구로 역변환
+          var probByLabel = {}, solByLabel = {};
+          (r.problem_labels || []).forEach(function (l, i) { probByLabel[l] = r.problems[i]; });
+          (r.solution_labels || []).forEach(function (l, i) { solByLabel[l] = r.solutions[i]; });
           holder.on('plotly_click', function (ev) {
             var pt = ev.points && ev.points[0];
             if (!pt) return;
-            openCell(pt.y, pt.x);
+            openCell(probByLabel[pt.y] || pt.y, solByLabel[pt.x] || pt.x);
           });
         }
         c.body.appendChild(detail);
