@@ -38,6 +38,9 @@ ALLOWED_LLM_CANDIDATES = [
 DEFAULT_LLM_ID = "azureopenai:dw-aoai-chat-eastus2-cognitiv:gpt-5.4-nano"
 ALLOWED_LLM_IDS = frozenset(llm_id for _, llm_id in ALLOWED_LLM_CANDIDATES)
 
+# 기본 임베딩 모델 (Dataiku 인스턴스에 준비된 한국어 특허 특화 SBERT)
+DEFAULT_SBERT_MODEL = "snunlp/KR-SBERT-Medium-extended-patent2023"
+
 # =========================
 # 규모 상한 (Settings 에서 변경 가능 — settings["limits"] 로 overlay)
 # =========================
@@ -175,7 +178,10 @@ DEFAULT_SETTINGS = {
     "multiclass_mode": DEFAULT_MULTICLASS_MODE,
     "llm_id": DEFAULT_LLM_ID,
     "llm_insights_enabled": False,
-    "embedding_adapter": {"type": "none"},  # none | dataset | rest
+    # none | dataset | rest | sbert(로컬 sentence-transformers) | llm_mesh
+    # 기본: KR-SBERT 특허 특화 모델 — 사전 계산 임베딩 컬럼이 있으면 그것이 우선,
+    # 모델 로드가 불가한 환경에서는 TF-IDF 폴백 (사용 방식은 화면에 표시)
+    "embedding_adapter": {"type": "sbert", "model_name": DEFAULT_SBERT_MODEL},
     "limits": {}, "thresholds": {}, "weights": {},
     "transition_mode": "cooccurrence",  # 4.1 전이 정의 기본값
     "trajectory_weighting": "share",    # share | tfidf
@@ -2622,10 +2628,130 @@ class RestEmbeddingAdapter(EmbeddingAdapter):
         return out
 
 
+class SbertEmbeddingAdapter(EmbeddingAdapter):
+    """로컬 sentence-transformers 모델 구현체.
+
+    기본 모델: snunlp/KR-SBERT-Medium-extended-patent2023 (한국어 특허 특화 SBERT).
+    Dataiku 인스턴스(코드 환경)에 준비된 HuggingFace 모델을 직접 로드하며,
+    GPU(cuda) 가용 시 자동 사용한다. 임베딩 결과는 (모델, 텍스트 SHA1) 키의
+    프로세스 내 캐시에 저장되어 필터 변경·재조회 시 재계산하지 않는다.
+
+    sentence-transformers 미설치·모델 미존재 시 __init__ 에서 예외를 던지고,
+    get_adapter 가 이를 잡아 다음 폴백으로 넘어간다 (임의 벡터 생성 없음).
+    """
+
+    name = "sbert"
+    _models = {}          # model_name -> SentenceTransformer (프로세스 공유)
+    _cache = {}           # (model_name, sha1(text)) -> np.ndarray
+    _CACHE_MAX = 120000   # 약 5만 건 × 여유 (768차원 float32 ≈ 3KB/건)
+
+    def __init__(self, model_name=None, batch_size=64):
+        import re as _re
+        name = str(model_name or DEFAULT_SBERT_MODEL).strip()
+        if not _re.fullmatch(r"[\w\-./]+", name):
+            raise ValueError("허용되지 않는 임베딩 모델명 형식: %r" % name)
+        self.model_name = name
+        self.batch_size = max(1, int(batch_size))
+        self._model = self._load_model(name)
+
+    @classmethod
+    def _load_model(cls, name):
+        if name in cls._models:
+            return cls._models[name]
+        from sentence_transformers import SentenceTransformer  # 미설치 시 ImportError
+        device = None
+        try:
+            import torch
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+        except ImportError:
+            pass
+        logger.info("SBERT 모델 로드: %s (device=%s)", name, device or "auto")
+        model = SentenceTransformer(name, device=device)
+        cls._models[name] = model
+        return model
+
+    @staticmethod
+    def _text_key(text):
+        import hashlib
+        return hashlib.sha1(str(text).encode("utf-8")).hexdigest()
+
+    def get_embeddings(self, ids, texts):
+        ids = [str(i) for i in ids]
+        keys = [(self.model_name, self._text_key(t or "")) for t in texts]
+        missing_idx = [i for i, k in enumerate(keys) if k not in self._cache]
+        if missing_idx:
+            batch_texts = [str(texts[i] or "")[:2000] for i in missing_idx]
+            vectors = self._model.encode(batch_texts, batch_size=self.batch_size,
+                                         show_progress_bar=False,
+                                         convert_to_numpy=True)
+            for i, vec in zip(missing_idx, vectors):
+                if len(self._cache) >= self._CACHE_MAX:
+                    self._cache.clear()  # 상한 도달 시 단순 초기화 (메모리 보호)
+                self._cache[keys[i]] = np.asarray(vec, dtype=np.float32)
+        return {pid: self._cache.get(k) for pid, k in zip(ids, keys)}
+
+
+class LLMMeshEmbeddingAdapter(EmbeddingAdapter):
+    """Dataiku LLM Mesh 임베딩 모델 구현체.
+
+    설정: {"type":"llm_mesh","llm_id":"<Mesh 에 등록된 임베딩 모델 ID>"}
+    (예: KR-SBERT 를 Local HuggingFace 연결로 Mesh 에 등록한 경우.)
+    호출은 Backend 전용이며 llm_id 는 프론트에 노출되지 않는다.
+    """
+
+    name = "llm_mesh"
+
+    def __init__(self, llm_id, batch_size=64):
+        import re as _re
+        if _dataiku_mod_available() is None:
+            raise RuntimeError("dataiku 모듈 미가용 — LLM Mesh 임베딩 사용 불가")
+        llm_id = str(llm_id or "").strip()
+        if not _re.fullmatch(r"[\w\-.:/]+", llm_id):
+            raise ValueError("허용되지 않는 임베딩 LLM ID 형식")
+        self.llm_id = llm_id
+        self.batch_size = max(1, int(batch_size))
+        client = _dataiku_mod_available().api_client()
+        self._llm = client.get_default_project().get_llm(self.llm_id)
+
+    def get_embeddings(self, ids, texts):
+        out = {}
+        ids = [str(i) for i in ids]
+        for start in range(0, len(ids), self.batch_size):
+            batch_ids = ids[start:start + self.batch_size]
+            batch_texts = [str(t or "")[:2000] for t in texts[start:start + self.batch_size]]
+            try:
+                emb = self._llm.new_embeddings()
+                for t in batch_texts:
+                    emb.add_text(t)
+                resp = emb.execute()
+                vectors = resp.get_embeddings()
+                if len(vectors) != len(batch_ids):
+                    raise ValueError("임베딩 응답 개수 불일치")
+                for pid, vec in zip(batch_ids, vectors):
+                    out[pid] = np.asarray(vec, dtype=np.float32) if vec is not None else None
+            except Exception as e:
+                logger.warning("LLM Mesh 임베딩 호출 실패: %s", e)
+                for pid in batch_ids:
+                    out[pid] = None
+        return out
+
+
+def _dataiku_mod_available():
+    try:
+        import dataiku as _d
+        return _d
+    except ImportError:
+        return None
+
+
 def get_adapter(settings, df=None, id_series=None):
     """설정 기반 Adapter 팩토리.
 
-    우선순위: 설정된 adapter(dataset/rest) → Dataset 자체 임베딩 컬럼 → None.
+    우선순위:
+      ① 명시 설정 dataset/rest Adapter
+      ② Dataset 자체 임베딩 벡터 컬럼 (사전 계산 벡터가 있으면 재계산보다 우선)
+      ③ 설정 type=sbert → 로컬 KR-SBERT (기본값) / type=llm_mesh → Mesh 임베딩
+      ④ 전부 불가 시 None (호출부가 TF-IDF 폴백 또는 기능 degrade — 임의 생성 없음)
     """
     conf = (settings or {}).get("embedding_adapter") or {}
     atype = conf.get("type", "none")
@@ -2642,6 +2768,14 @@ def get_adapter(settings, df=None, id_series=None):
     if df is not None and id_series is not None and "_embedding" in df.columns \
             and df["_embedding"].map(lambda v: v is not None).any():
         return ColumnEmbeddingAdapter(df, id_series)
+    try:
+        if atype == "sbert":
+            return SbertEmbeddingAdapter(conf.get("model_name"),
+                                         conf.get("batch_size", 64))
+        if atype == "llm_mesh" and conf.get("llm_id"):
+            return LLMMeshEmbeddingAdapter(conf["llm_id"], conf.get("batch_size", 64))
+    except Exception as e:
+        logger.warning("모델 기반 임베딩 adapter 초기화 실패 (%s) — 폴백 사용: %s", atype, e)
     return None
 
 

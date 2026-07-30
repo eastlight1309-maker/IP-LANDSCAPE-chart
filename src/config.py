@@ -22,6 +22,9 @@ ALLOWED_LLM_CANDIDATES = [
 DEFAULT_LLM_ID = "azureopenai:dw-aoai-chat-eastus2-cognitiv:gpt-5.4-nano"
 ALLOWED_LLM_IDS = frozenset(llm_id for _, llm_id in ALLOWED_LLM_CANDIDATES)
 
+# 기본 임베딩 모델 (Dataiku 인스턴스에 준비된 한국어 특허 특화 SBERT)
+DEFAULT_SBERT_MODEL = "snunlp/KR-SBERT-Medium-extended-patent2023"
+
 # =========================
 # 규모 상한 (Settings 에서 변경 가능 — settings["limits"] 로 overlay)
 # =========================
@@ -159,7 +162,10 @@ DEFAULT_SETTINGS = {
     "multiclass_mode": DEFAULT_MULTICLASS_MODE,
     "llm_id": DEFAULT_LLM_ID,
     "llm_insights_enabled": False,
-    "embedding_adapter": {"type": "none"},  # none | dataset | rest
+    # none | dataset | rest | sbert(로컬 sentence-transformers) | llm_mesh
+    # 기본: KR-SBERT 특허 특화 모델 — 사전 계산 임베딩 컬럼이 있으면 그것이 우선,
+    # 모델 로드가 불가한 환경에서는 TF-IDF 폴백 (사용 방식은 화면에 표시)
+    "embedding_adapter": {"type": "sbert", "model_name": DEFAULT_SBERT_MODEL},
     "limits": {}, "thresholds": {}, "weights": {},
     "transition_mode": "cooccurrence",  # 4.1 전이 정의 기본값
     "trajectory_weighting": "share",    # share | tfidf

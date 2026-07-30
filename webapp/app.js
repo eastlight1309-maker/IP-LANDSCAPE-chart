@@ -1578,7 +1578,7 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
       { label: '청구항 밀집도', render: function (h) {
         analysisCard({
           analysis: 'claim-density', holder: h, title: '권리장벽 지형도 (Claim Density Contour)',
-          help: '독립청구항 임베딩→UMAP/PCA 2D→HDBSCAN 클러스터→KDE 밀도. 점=문헌(크기=피인용, 투명도=권리 유효성, 테두리=등록). FTO 판단이 아닌 우선 검토 스크리닝 도구입니다.',
+          help: '독립청구항 임베딩→UMAP/PCA 2D→HDBSCAN 클러스터→KDE 밀도. 임베딩 우선순위: ① 사전 계산 임베딩 컬럼 ② KR-SBERT 특허 특화 모델(snunlp, 기본) ③ TF-IDF 폴백 — 실제 사용된 방식은 차트 아래 "방법"에 표시됩니다. 점=문헌(크기=피인용, 투명도=권리 유효성, 테두리=등록). FTO 판단이 아닌 우선 검토 스크리닝 도구입니다.',
           controls: function (c, reload) {
             var t = Ui.el('<select><option value="">전체 분류</option></select>');
             ((State.filterOptions || {}).tech || []).slice(0, 50).forEach(function (x) {
@@ -1957,15 +1957,30 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
       saveSettings({ llm_insights_enabled: ev.target.checked });
     });
     c2.body.appendChild(llmEn);
-    var emb = s.embedding_adapter || { type: 'none' };
-    var embSel = Ui.el('<select><option value="none">사용 안 함 (Dataset 임베딩 컬럼 자동)</option>' +
+    var emb = s.embedding_adapter || { type: 'sbert' };
+    var embSel = Ui.el('<select>' +
+      '<option value="sbert">KR-SBERT 로컬 모델 (기본 — snunlp 특허 특화)</option>' +
+      '<option value="llm_mesh">LLM Mesh 임베딩 모델</option>' +
       '<option value="dataset">사전 계산 벡터 Dataset</option>' +
-      '<option value="rest">REST API</option></select>');
-    embSel.value = emb.type || 'none';
+      '<option value="rest">REST API</option>' +
+      '<option value="none">사용 안 함 (임베딩 컬럼만 / TF-IDF 폴백)</option></select>');
+    embSel.value = emb.type || 'sbert';
     var embFields = Ui.el('<div></div>');
     function renderEmbFields() {
       embFields.innerHTML = '';
-      if (embSel.value === 'dataset') {
+      if (embSel.value === 'sbert') {
+        embFields.innerHTML =
+          '<div class="settings-row"><label>모델명</label><input type="text" id="emb-model" style="flex:1" value="' +
+          Ui.esc(emb.model_name || 'snunlp/KR-SBERT-Medium-extended-patent2023') + '"></div>' +
+          '<div class="disclaimer">인스턴스에 준비된 sentence-transformers 모델을 직접 로드해 ' +
+          '독립청구항을 임베딩합니다 (GPU 자동 사용, 결과는 캐시). 사전 계산 임베딩 컬럼이 ' +
+          '매핑되어 있으면 그 벡터가 우선 사용됩니다.</div>';
+      } else if (embSel.value === 'llm_mesh') {
+        embFields.innerHTML =
+          '<div class="settings-row"><label>임베딩 LLM ID</label><input type="text" id="emb-mesh-id" style="flex:1" value="' +
+          Ui.esc(emb.llm_id || '') + '" placeholder="LLM Mesh 에 등록된 임베딩 모델 ID"></div>' +
+          '<div class="disclaimer">KR-SBERT 를 Local HuggingFace 연결로 Mesh 에 등록한 경우 그 ID 를 입력하세요. ID 는 서버에만 저장됩니다.</div>';
+      } else if (embSel.value === 'dataset') {
         embFields.innerHTML =
           '<div class="settings-row"><label>Dataset</label><input type="text" id="emb-ds" value="' + Ui.esc(emb.dataset || '') + '"></div>' +
           '<div class="settings-row"><label>ID 컬럼</label><input type="text" id="emb-id" value="' + Ui.esc(emb.id_column || '') + '"></div>' +
@@ -1985,7 +2000,11 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
     var embSave = Ui.el('<button class="btn small">임베딩 설정 저장</button>');
     embSave.addEventListener('click', function () {
       var conf = { type: embSel.value };
-      if (embSel.value === 'dataset') {
+      if (embSel.value === 'sbert') {
+        conf.model_name = (document.getElementById('emb-model') || {}).value;
+      } else if (embSel.value === 'llm_mesh') {
+        conf.llm_id = (document.getElementById('emb-mesh-id') || {}).value;
+      } else if (embSel.value === 'dataset') {
         conf.dataset = (document.getElementById('emb-ds') || {}).value;
         conf.id_column = (document.getElementById('emb-id') || {}).value;
         conf.vector_column = (document.getElementById('emb-vec') || {}).value;
