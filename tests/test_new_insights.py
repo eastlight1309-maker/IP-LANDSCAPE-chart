@@ -258,6 +258,40 @@ def test_wips_deep_graceful_without_deep_fields(settings):
 
 
 # ---------------------------------------------------------------------------
+# 군집 특징 키워드 고도화
+# ---------------------------------------------------------------------------
+def test_clean_tokens_particles_and_stopwords():
+    from src.analyses.scope_entropy import clean_tokens
+    toks = clean_tokens("기판을 하이브리드 본딩으로 접합하는 구조 및 방법")
+    assert "기판" in toks and "하이브리드" in toks and "본딩" in toks
+    assert "기판을" not in toks and "본딩으로" not in toks   # 조사 제거
+    assert "구조" not in toks and "방법" not in toks          # 범용어 제외
+    # 2글자 단어의 끝 글자는 조사로 오인하지 않음 (증가/온도 보존)
+    toks2 = clean_tokens("온도 증가 감소")
+    assert toks2 == ["온도", "증가", "감소"]
+
+
+def test_distinct_keywords_prefers_bigrams():
+    from src.analyses.semantic_insights import _distinct_keywords
+    from src.analyses.scope_entropy import doc_terms
+    cluster = ["재배선 소재 조성물의 저온 경화", "재배선 소재 기반 저온 경화 접합",
+               "재배선 소재 및 저온 경화 특성"] * 3
+    other = ["웨이퍼 검사 알고리즘"] * 30
+    global_freq = {}
+    for t in cluster + other:
+        for term in doc_terms(t):
+            global_freq[term] = global_freq.get(term, 0) + 1
+    kws = _distinct_keywords(cluster, global_freq, len(cluster) + len(other))
+    assert any(" " in k for k in kws), "2어절 구문이 포함되어야 함: %r" % kws
+    assert "재배선 소재" in kws or "저온 경화" in kws
+    # 구문에 포함된 단일어("소재" 등)는 중복 라벨로 뽑히지 않음
+    for k in kws:
+        if " " not in k:
+            for bg in [x for x in kws if " " in x]:
+                assert k not in bg.split()
+
+
+# ---------------------------------------------------------------------------
 # 경영진 대시보드 · 출원인×연도 버블 · 연도축
 # ---------------------------------------------------------------------------
 def test_executive_summary(prepared, settings):

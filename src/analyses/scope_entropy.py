@@ -69,7 +69,57 @@ _KW_STOP = {"및", "또는", "위한", "이를", "포함", "하는", "있는", "
             "apparatus", "device", "thereof", "same", "based",
             "해결", "해결하기", "해결하는", "제공", "제공하는", "특징", "특징으로",
             "개선", "발명", "대한", "있어서", "구비", "구비한", "형성", "형성된",
-            "포함하는", "따른", "통해", "위해", "관련"}
+            "포함하는", "따른", "통해", "위해", "관련",
+            # 특허 문서 범용어 (군집 라벨로서 정보가 없는 단어)
+            "구조", "부재", "부분", "표면", "상부", "하부", "내부", "외부", "상기",
+            "사용", "적용", "가능", "효과", "문제", "다양", "각각", "복수", "하나",
+            "구성", "배치", "연결", "기재", "단계", "실시", "실시예", "도면", "경우",
+            "기반", "분야", "이용한", "이용하여", "적어도", "해당", "적용한", "기술",
+            "invention", "present", "claim", "wherein", "comprising", "said",
+            "first", "second", "plurality", "least", "one", "having", "includes"}
+
+# 조사(助詞) 제거 — "기판을/기판이/기판의" 를 "기판" 으로 합산해 키워드 변별력 강화
+_PARTICLES_MULTI = ("에서의", "으로써", "으로서", "에서", "으로", "까지", "부터",
+                    "에는", "와의", "과의", "들의", "들을", "들이")
+_PARTICLES_SINGLE = "을를은는이가의에와과도로"
+
+
+def clean_tokens(text):
+    """텍스트 → 정제 토큰 목록 (소문자화·조사 제거·불용어/숫자 제외, 순서 유지)."""
+    out = []
+    for w in _KW_TOKEN_RE.findall(str(text)):
+        w = w.lower()
+        for p in _PARTICLES_MULTI:
+            if w.endswith(p) and len(w) - len(p) >= 2:
+                w = w[:-len(p)]
+                break
+        else:
+            # 1글자 조사는 어간이 2글자 이상 남을 때만 제거 (예: 증가/온도 는 보존)
+            if len(w) >= 3 and w[-1] in _PARTICLES_SINGLE:
+                w = w[:-1]
+        if len(w) >= 2 and w not in _KW_STOP:
+            out.append(w)
+    return out
+
+
+_SENT_SPLIT_RE = re.compile(r"[.,;:·()\[\]{}/|]|및|또는")
+
+
+def doc_terms(text):
+    """문헌 특징 항 집합: 정제 단일어 + 인접 2어절 구문(bigram).
+
+    2어절 구문("하이브리드 본딩", "재배선 소재")이 단일어보다 훨씬 구체적이므로
+    키워드 라벨링에서 우선 사용된다. 구문은 문장부호·'및/또는' 경계를 넘어
+    결합하지 않는다 (무의미한 교차 결합 방지).
+    """
+    terms = set()
+    for seg in _SENT_SPLIT_RE.split(str(text)):
+        toks = clean_tokens(seg)
+        terms.update(toks)
+        for a, b in zip(toks, toks[1:]):
+            if a != b:
+                terms.add(a + " " + b)
+    return terms
 
 
 def _norm_entropy(counts, k_global):
@@ -157,8 +207,7 @@ def _keyword_lists(work):
             texts = s if texts is None else texts + " " + s
     if texts is None:
         return None
-    token_rows = texts.map(lambda t: [w.lower() for w in _KW_TOKEN_RE.findall(str(t))
-                                      if w.lower() not in _KW_STOP])
+    token_rows = texts.map(clean_tokens)
     freq = {}
     for row in token_rows:
         for w in set(row):

@@ -36,7 +36,7 @@ from src.config import get_limit, get_threshold
 from src.gpu_utils import cosine_similarity_matrix
 from src.embedding_adapter import get_adapter
 from src.analyses.claim_density import _tfidf_vectors
-from src.analyses.scope_entropy import _KW_TOKEN_RE, _KW_STOP
+from src.analyses.scope_entropy import doc_terms
 from src.insights import build_insight, fmt_num, fmt_pct, check_small_sample
 from src.viz_payload import ok_result, empty_result, base_layout, color_for, \
     cytoscape_network, PALETTE
@@ -106,22 +106,48 @@ def embed_corpus(df, settings, max_docs, min_docs=20):
 
 
 def _distinct_keywords(cluster_texts, global_freq, n_global, top_k=4):
-    """군집 특징 키워드: 군집 내 문헌빈도 / 전역 문헌빈도 비율 상위."""
+    """군집 특징 키워드 (c-TF-IDF 유사 점수).
+
+    개선점 (애매한 라벨 방지):
+    - 조사 제거·확장 불용어 정제 토큰 사용 (clean_tokens — scope_entropy 공유)
+    - 인접 2어절 구문(bigram)을 단일어보다 1.6배 가중해 우선 선택
+      ("소재" 보다 "재배선 소재" 가 라벨로 유의미)
+    - 변별력(lift) 1.3 미만 항 제외 — 전역에서도 흔한 단어는 라벨에서 배제
+    - 선택된 구문에 이미 포함된 단일어는 중복 제거
+    계산은 카운트·정규식 뿐이라 속도 영향은 무시할 수준이다.
+    """
     freq = {}
     for t in cluster_texts:
-        for w in {w.lower() for w in _KW_TOKEN_RE.findall(str(t))}:
-            if w in _KW_STOP or len(w) < 2:
-                continue
-            freq[w] = freq.get(w, 0) + 1
+        for term in doc_terms(t):
+            freq[term] = freq.get(term, 0) + 1
     n_c = max(len(cluster_texts), 1)
     scored = []
-    for w, c in freq.items():
-        if c < max(2, n_c * 0.15):
+    for term, c in freq.items():
+        is_bigram = " " in term
+        min_c = max(2, int(n_c * (0.12 if is_bigram else 0.18)))
+        if c < min_c:
             continue
-        lift = (c / n_c) / ((global_freq.get(w, 0) + 1.0) / n_global)
-        scored.append((lift * c, w))
+        lift = (c / n_c) / ((global_freq.get(term, 0) + 1.0) / n_global)
+        if lift < 1.3:
+            continue
+        scored.append((lift * c * (1.6 if is_bigram else 1.0), term))
     scored.sort(reverse=True)
-    return [w for _s, w in scored[:top_k]]
+    picked = []
+    picked_words = set()
+    for _s, term in scored:
+        words = set(term.split())
+        if " " not in term and words & picked_words:
+            continue  # 이미 뽑힌 구문에 포함된 단일어
+        if " " in term and words <= picked_words:
+            continue  # 뽑힌 구문들과 완전히 겹치는 구문
+        picked.append(term)
+        picked_words |= words
+        if len(picked) >= top_k:
+            break
+    if not picked:  # 변별 항이 없으면 빈도 상위로 폴백 (라벨 공백 방지)
+        picked = [t for _c, t in sorted(((c, t) for t, c in freq.items()),
+                                        reverse=True)[:top_k]]
+    return picked
 
 
 def _sim_matrix(vectors):
@@ -154,12 +180,11 @@ def compute_emerging_clusters(df, settings):
     recent_from = max_year - recent_n + 1
     recent_share_min = float(get_threshold(settings, "emerging_cluster_recent_share"))
 
-    # 전역 키워드 문헌빈도 (특징 키워드의 분모)
+    # 전역 항(단일어+2어절 구문) 문헌빈도 — 특징 키워드 lift 의 분모
     global_freq = {}
     for t in work["_sem_text"]:
-        for w in {w.lower() for w in _KW_TOKEN_RE.findall(str(t))}:
-            if w not in _KW_STOP and len(w) >= 2:
-                global_freq[w] = global_freq.get(w, 0) + 1
+        for term in doc_terms(t):
+            global_freq[term] = global_freq.get(term, 0) + 1
 
     clusters = []
     for cl in range(k):
