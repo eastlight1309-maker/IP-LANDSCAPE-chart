@@ -1637,6 +1637,41 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
           }
         });
       } },
+      { label: '분류축 교차 (A·B·C)', render: function (h) {
+        analysisCard({
+          analysis: 'axis-cross', holder: h,
+          title: '기술분류 A·B·C축 교차 해석',
+          help: 'A축(기존 기술 대/중/소분류)과 별도 관점의 B축·C축 분류(예: 응용처, 재료/공정)를 ' +
+            '교차해 봅니다. Settings → 컬럼 매핑에서 "B축 대/중/소분류", "C축 대/중/소분류"를 ' +
+            '매핑하면 활성화되며, 매핑된 축의 실제 데이터만 사용합니다 (없는 축은 자동 제외, 값 추정 없음).',
+          guide: '교차 매트릭스: 행·열=두 축의 분류(각 축은 매핑된 가장 세밀한 레벨, 소→중→대 우선), ' +
+            '셀=두 값을 동시에 가진 특허 수. 읽는 법: 진한 셀=두 관점이 만나는 핵심 영역(예: ' +
+            '"하이브리드 본딩 × 차량"), 행·열은 활발한데 셀이 0인 곳=한 관점에서는 다루면서 다른 ' +
+            '관점과 결합되지 않은 공백 후보. 셀 클릭 시 해당 교차 특허가 열립니다. ' +
+            'Sunburst(3축 모두 매핑 시): 안쪽 고리=A축, 중간=B축, 바깥=C축 — 특정 기술이 어떤 ' +
+            '응용·재료로 분해되는지 계층으로 보여줍니다.',
+          renderOk: function (r, c, setTarget) {
+            var first = true;
+            (r.pairs || []).forEach(function (p) {
+              var holder = Ui.el('<div class="chart-holder"></div>');
+              c.body.appendChild(holder);
+              Render.plotly(holder, p.figure, plotlyDrill);
+              if (first) { setTarget({ kind: 'plotly', el: holder }); first = false; }
+              c.body.appendChild(chartCap(p.pair + ': 최다 교차 "' +
+                Ui.esc(p.top_cell.a) + ' × ' + Ui.esc(p.top_cell.b) + '" ' +
+                Ui.num(p.top_cell.n, 0) + '건 · 공백 셀 ' + Ui.pct(p.zero_ratio) +
+                (p.avg_spread !== null && p.avg_spread !== undefined ?
+                  ' · 행별 분산도(엔트로피) ' + Ui.num(p.avg_spread, 2) +
+                  ' (낮을수록 두 분류가 연동)' : '')));
+            });
+            if (r.sunburst) {
+              var sh = Ui.el('<div class="chart-holder tall"></div>');
+              c.body.appendChild(sh);
+              Render.plotly(sh, r.sunburst);
+            }
+          }
+        });
+      } },
       { label: '신흥 기술 탐지 (임베딩)', render: function (h) {
         analysisCard({
           analysis: 'emerging-clusters', holder: h,
@@ -2599,6 +2634,55 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
   }
 
   /* ---------- 7. Settings ---------- */
+  /* ---------- 사용 설명서 ---------- */
+  Views.manual = function (content) {
+    function section(title, bodyHtml) {
+      var c = card(title);
+      c.body.innerHTML = bodyHtml;
+      content.appendChild(c.root);
+    }
+    section('🚀 시작하기 (4단계)',
+      '<ol style="padding-left:18px;line-height:1.9">' +
+      '<li><b>Dataset 선택</b> — Settings &amp; Admin → 분석 Dataset 에서 WIPS Excel 을 올린 Dataset 을 선택합니다.</li>' +
+      '<li><b>컬럼 매핑 확인</b> — Settings → 컬럼 매핑에서 자동 추천 결과를 확인하고, 잘못 잡힌 항목은 직접 수정 후 저장합니다. ' +
+      '각 컬럼의 "예시 값"으로 실제 데이터를 확인할 수 있습니다.</li>' +
+      '<li><b>분석 단위 선택</b> — 문헌(건별) 또는 패밀리 대표 중 선택합니다. 지정국 진입 시차 등 일부 분석은 문헌 단위가 필요합니다.</li>' +
+      '<li><b>분석 시작</b> — 좌측 메뉴를 순서대로 탐색하세요. 필수 컬럼이 없는 분석은 비활성 안내와 함께 필요한 매핑을 알려줍니다.</li></ol>' +
+      '<div class="disclaimer">모든 분석은 매핑된 실제 데이터로만 계산되며 값을 임의로 만들지 않습니다. 데이터가 없는 항목은 "계산 불가 + 사유"로 표시됩니다.</div>');
+    section('🗺️ 메뉴 안내',
+      '<table class="ipls-table"><thead><tr><th>메뉴</th><th>내용</th></tr></thead><tbody>' +
+      '<tr><td>📊 Executive Overview</td><td>KPI·성장/쇠퇴 기술·경보 요약 + 경영진 전략 대시보드(BCG 매트릭스·경쟁 포지션·Alert)</td></tr>' +
+      '<tr><td>📈 Basic Statistics</td><td>연도/국가/출원인/기술분류 기본 통계, 출원인×연도 버블, 심화 분석(심사기간·만료·청구항·IPC), 심층 시그널(연차료 생존곡선·진입 시차·대리인·심사관 인용·우선심사·분할출원·심판), Patent Asset Index</td></tr>' +
+      '<tr><td>🧬 Technology Evolution</td><td>기술 생애주기, 전이 Sankey, Emerging Radar, 조합 네트워크, 분류축 교차(A·B·C), 신흥 기술 탐지(임베딩)</td></tr>' +
+      '<tr><td>🏢 Competitor Intelligence</td><td>기업 DNA, 기술 궤적, 선도–추종, 권리범위 엔트로피, 전략 유사도·중첩도</td></tr>' +
+      '<tr><td>🎯 White Space &amp; R&amp;D</td><td>Opportunity Matrix, 미점유 조합 UpSet, 문제–해결수단 매트릭스(원문/의미 그룹), 추천 R&amp;D 테마</td></tr>' +
+      '<tr><td>⚖️ Patent Power</td><td>핵심특허 영향력, 인용 확산, 청구항 밀집도, 발명자 이동, 의미 기반 영향력(임베딩), 권리 중첩 네트워크(임베딩)</td></tr>' +
+      '<tr><td>🧪 Data Quality</td><td>분류 품질 진단(Confusion Map·응집도), 출원인 표준화 검토</td></tr></tbody></table>');
+    section('🖱️ 차트 공통 기능',
+      '<ul style="padding-left:18px;line-height:1.9">' +
+      '<li><b>드릴다운</b>: 차트의 점·막대·셀·노드를 클릭하면 근거 특허 목록이 열립니다. 표의 파란 텍스트도 클릭 가능합니다.</li>' +
+      '<li><b>Excel</b>: 카드 우상단 Excel 버튼 — 화면에 표시된 차트의 집계 데이터를 시트별로 다운로드합니다 (원본이 아니라 차트 데이터).</li>' +
+      '<li><b>PNG/SVG</b>: 보고서용 이미지 저장.</li>' +
+      '<li><b>🤖 AI 인사이트</b>: "LLM 인사이트 생성" 버튼은 화면 차트의 실제 수치를 근거로 PPT 슬라이드 형식([슬라이드 제목]→[핵심 메시지]→[근거 데이터]→[시사점·제언])의 정리된 인사이트를 만듭니다. AI 패널에서는 추가 질문(챗)이 가능하고 "웹 검색 포함"을 켜면 외부 검색 결과를 참고해 답하며 출처 링크가 표시됩니다.</li>' +
+      '<li><b>비차단 로딩</b>: 계산이 오래 걸리는 분석은 우하단 배지로 진행 상태만 표시됩니다 — 기다리는 동안 다른 탭을 자유롭게 볼 수 있고, 돌아오면 캐시에서 바로 열립니다.</li>' +
+      '<li><b>📖 차트 해석</b>: 각 차트 아래 회색 박스에 축 의미와 읽는 법이 항상 표시됩니다.</li></ul>');
+    section('🧠 임베딩·군집·LLM 안내',
+      '<ul style="padding-left:18px;line-height:1.9">' +
+      '<li><b>임베딩 모델</b>: 사내 서버의 로컬 KR-SBERT 특허 특화 모델을 사용합니다 (네트워크 비용 없음). 실제 사용 방식은 각 카드 하단 "방법: 임베딩 adapter:sbert" 로 확인할 수 있으며, 모델 미가용 시 TF-IDF 폴백이 명시됩니다.</li>' +
+      '<li><b>임베딩 대상</b>: 청구항 분석(밀집도·청구구조 다양성)=독립청구항 / 주제 분석(신흥 탐지·의미 영향력·중첩 네트워크)=명칭+요약(부족 시 독립청구항) / 문제–해결수단 의미 그룹=과제·수단 문구.</li>' +
+      '<li><b>군집화</b>: 밀집도=HDBSCAN(자동), 신흥 탐지=KMeans(k 자동), 의미 그룹=계층 군집(거리 임계값 ps_group_distance 로 조정). 모든 시드는 고정되어 같은 데이터에서 같은 결과가 나옵니다.</li>' +
+      '<li><b>LLM</b>: 허용 목록의 사내 모델만 사용하고, 특허 원문이 아닌 화면 집계값·요약 통계만 전달합니다.</li></ul>');
+    section('❓ 자주 묻는 문제',
+      '<table class="ipls-table"><thead><tr><th>증상</th><th>확인 사항</th></tr></thead><tbody>' +
+      '<tr><td>분석이 "비활성화"로 표시됨</td><td>Settings → 컬럼 매핑에서 안내된 필수 컬럼을 매핑하세요. 매핑했는데도 안 되면 메시지의 [매핑 진단]과 "예시 값"으로 실제 값 형식을 확인하세요.</td></tr>' +
+      '<tr><td>일부 섹션만 생략됨</td><td>심층 시그널·심화 분석은 섹션별로 필요한 컬럼(소멸일·대리인·우선심사 등)이 달라, 있는 데이터만 계산하고 나머지는 하단에 사유를 표시합니다.</td></tr>' +
+      '<tr><td>필터에 이상한 값이 보임</td><td>Settings → 출원인 표준화에서 병합 규칙을 승인하거나, 컬럼 매핑에서 해당 개념의 매핑 컬럼을 바꾸세요.</td></tr>' +
+      '<tr><td>연도가 최근에 급감해 보임</td><td>최근 1~2년은 미공개 출원 때문에 실제보다 낮게 보입니다 (하락으로 단정 금지).</td></tr>' +
+      '<tr><td>지정국 진입 시차가 생략됨</td><td>분석 단위를 "문헌"으로 바꾸세요 (패밀리 대표 단위에서는 구성 문헌이 제거됩니다).</td></tr>' +
+      '<tr><td>의미 그룹이 너무 크게/작게 묶임</td><td>Settings → 임계값 ps_group_distance 를 조정하세요 (낮추면 엄격, 높이면 느슨).</td></tr></tbody></table>' +
+      '<div class="disclaimer">본 앱의 모든 지표는 통계적 신호이며 법률 자문(FTO·유효성 판단)을 대체하지 않습니다.</div>');
+  };
+
   Views.settings = function (content) {
     var grid = Ui.el('<div class="settings-grid"></div>');
     content.appendChild(grid);

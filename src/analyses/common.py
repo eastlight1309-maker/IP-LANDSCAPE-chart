@@ -190,6 +190,13 @@ def select_patents(df, drill):
             mask &= df["problem"].astype(str).str.strip() == str(p)
         if s and "solution" in df.columns:
             mask &= df["solution"].astype(str).str.strip() == str(s)
+    if dtype == "axis_cell":  # A/B/C 분류축 교차 셀: 각 축의 값 동시 포함
+        axis_cols = {"A": "_tech_list", "B": "_tech_b_list", "C": "_tech_c_list"}
+        for cond in (drill.get("conds") or []):
+            col = axis_cols.get(str(cond.get("axis", "")).upper())
+            val = cond.get("value")
+            if col and col in df.columns and val:
+                mask &= df[col].map(lambda lst: str(val) in (lst or []))
     if dtype == "cell_group":  # 의미 그룹 셀: 그룹에 속한 문구 목록으로 매칭
         if drill.get("problems") and "problem" in df.columns:
             wanted_p = set(map(str, drill["problems"]))

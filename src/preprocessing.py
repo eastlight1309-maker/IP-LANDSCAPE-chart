@@ -590,6 +590,16 @@ def build_standard_frame(raw_df, mapping, applicant_rules=None):
         for a, s in zip(df["_is_active_bool"], df["legal_status_norm"])])
 
     df = build_tech_lists(df)
+    # B·C축 기술분류 리스트 (매핑된 경우에만 — 소→중→대 우선, 다중값 지원)
+    for axis in ("b", "c"):
+        target = "_tech_%s_list" % axis
+        for level in ("l3", "l2", "l1"):
+            col = "tech_%s_%s" % (axis, level)
+            if col in df.columns:
+                lists = df[col].map(parse_multiclass_cell)
+                if lists.map(len).any():
+                    df[target] = lists
+                    break
     df = standardize_applicants(df, applicant_rules)
 
     for num_col in ("cites_backward", "cites_forward", "family_size",

@@ -719,19 +719,53 @@ CONCEPTS = {
                      "protection countries", "출원국가 목록"],
     },
     "tech_l1": {
-        "label": "기술 대분류", "dtype": "문자열",
+        "label": "기술 대분류 (A축)", "dtype": "문자열",
         "variants": ["기술 대분류", "대분류", "기술대분류", "tech l1", "level1", "level 1",
-                     "category l1", "main category", "대분류명", "기술분류(대)", "1차분류"],
+                     "category l1", "main category", "대분류명", "기술분류(대)", "1차분류",
+                     "a축 대분류", "대분류a", "a대분류", "기술분류a 대분류", "a축 기술 대분류"],
     },
     "tech_l2": {
-        "label": "기술 중분류", "dtype": "문자열",
+        "label": "기술 중분류 (A축)", "dtype": "문자열",
         "variants": ["기술 중분류", "중분류", "기술중분류", "tech l2", "level2", "level 2",
-                     "category l2", "sub category", "중분류명", "기술분류(중)", "2차분류"],
+                     "category l2", "sub category", "중분류명", "기술분류(중)", "2차분류",
+                     "a축 중분류", "중분류a", "a중분류", "기술분류a 중분류", "a축 기술 중분류"],
     },
     "tech_l3": {
-        "label": "기술 소분류", "dtype": "문자열",
+        "label": "기술 소분류 (A축)", "dtype": "문자열",
         "variants": ["기술 소분류", "소분류", "기술소분류", "tech l3", "level3", "level 3",
-                     "category l3", "detail category", "소분류명", "기술분류(소)", "3차분류"],
+                     "category l3", "detail category", "소분류명", "기술분류(소)", "3차분류",
+                     "a축 소분류", "소분류a", "a소분류", "기술분류a 소분류", "a축 기술 소분류"],
+    },
+    # ---- B·C축 기술분류 (별도 분류 체계 — 예: 응용처/재료/공정 관점) ----
+    "tech_b_l1": {
+        "label": "B축 대분류", "dtype": "문자열",
+        "variants": ["b축 대분류", "대분류b", "b대분류", "기술분류b 대분류", "기술b 대분류",
+                     "b축 기술 대분류", "분류b 대분류", "b-대분류", "tech b l1"],
+    },
+    "tech_b_l2": {
+        "label": "B축 중분류", "dtype": "문자열",
+        "variants": ["b축 중분류", "중분류b", "b중분류", "기술분류b 중분류", "기술b 중분류",
+                     "b축 기술 중분류", "분류b 중분류", "b-중분류", "tech b l2"],
+    },
+    "tech_b_l3": {
+        "label": "B축 소분류", "dtype": "문자열",
+        "variants": ["b축 소분류", "소분류b", "b소분류", "기술분류b 소분류", "기술b 소분류",
+                     "b축 기술 소분류", "분류b 소분류", "b-소분류", "tech b l3"],
+    },
+    "tech_c_l1": {
+        "label": "C축 대분류", "dtype": "문자열",
+        "variants": ["c축 대분류", "대분류c", "c대분류", "기술분류c 대분류", "기술c 대분류",
+                     "c축 기술 대분류", "분류c 대분류", "c-대분류", "tech c l1"],
+    },
+    "tech_c_l2": {
+        "label": "C축 중분류", "dtype": "문자열",
+        "variants": ["c축 중분류", "중분류c", "c중분류", "기술분류c 중분류", "기술c 중분류",
+                     "c축 기술 중분류", "분류c 중분류", "c-중분류", "tech c l2"],
+    },
+    "tech_c_l3": {
+        "label": "C축 소분류", "dtype": "문자열",
+        "variants": ["c축 소분류", "소분류c", "c소분류", "기술분류c 소분류", "기술c 소분류",
+                     "c축 기술 소분류", "분류c 소분류", "c-소분류", "tech c l3"],
     },
     "tech_multi": {
         "label": "다중 기술분류", "dtype": "문자열 (쉼표/세미콜론/파이프/JSON 배열)",
@@ -900,6 +934,7 @@ ANALYSIS_REQUIREMENTS = {
     "similarity-network":    {"required": [{"any": ["abstract", "indep_claim", "title"]}], "optional": ANY_APPLICANT + ["embedding", "is_active", "legal_status"]},
     "wips-deep":             {"required": [{"any": ANY_DATE}], "optional": ANY_APPLICANT + ["reg_date", "lapse_date", "agent", "expedited_exam", "exam_request_date", "oa_count", "examiner_citations", "applicant_citations", "parent_app_number", "drawings_count", "spec_length", "trial_info", "trial_claimant", "family_id", "country", "claims_count"]},
     "executive-summary":     {"required": [{"any": ANY_TECH}, {"any": ANY_DATE}, {"any": ANY_APPLICANT}], "optional": ["cites_forward", "is_active", "legal_status", "expiry_date", "is_own"]},
+    "axis-cross":            {"required": [{"any": ANY_TECH}], "optional": ["tech_b_l1", "tech_b_l2", "tech_b_l3", "tech_c_l1", "tech_c_l2", "tech_c_l3", {"any": ANY_DATE}] + ANY_APPLICANT},
 }
 
 _NORM_RE = re.compile(r"[\s\(\)\[\]\{\}\-_/\\.,:;'\"·|]+")
@@ -1744,6 +1779,16 @@ def build_standard_frame(raw_df, mapping, applicant_rules=None):
         for a, s in zip(df["_is_active_bool"], df["legal_status_norm"])])
 
     df = build_tech_lists(df)
+    # B·C축 기술분류 리스트 (매핑된 경우에만 — 소→중→대 우선, 다중값 지원)
+    for axis in ("b", "c"):
+        target = "_tech_%s_list" % axis
+        for level in ("l3", "l2", "l1"):
+            col = "tech_%s_%s" % (axis, level)
+            if col in df.columns:
+                lists = df[col].map(parse_multiclass_cell)
+                if lists.map(len).any():
+                    df[target] = lists
+                    break
     df = standardize_applicants(df, applicant_rules)
 
     for num_col in ("cites_backward", "cites_forward", "family_size",
@@ -3685,22 +3730,25 @@ def llm_augment_insight(analysis_name, rule_insight, summary_stats, settings,
     if chart_context:
         parts.append(str(chart_context))  # 이미 sanitize 됨
     parts.append(
-        "위에 제공된 정보(차트 설명·규칙 요약·통계·차트 데이터)만 근거로 상세한 "
-        "한국어 인사이트를 작성하세요. 다음 구성을 따르되 각 항목을 '- ' 로 시작하는 "
-        "줄로 쓰세요 (총 8~14줄):\n"
-        "  [차트 의미] 이 차트가 무엇을 보여주는지 1~2줄\n"
-        "  [핵심 발견] 차트 데이터에서 관찰되는 구체적 패턴 4~6줄 — 반드시 실제 "
-        "수치·이름을 인용 (예: 'A사가 2023년 34건으로 최대')\n"
-        "  [긍정 요인] 1~2줄 / [위험 요인] 1~2줄\n"
-        "  [시사점] 실무적 함의와 다음에 확인할 분석 1~2줄\n"
+        "위에 제공된 정보(차트 설명·규칙 요약·통계·차트 데이터)만 근거로, 그대로 "
+        "PPT 슬라이드 한 장에 옮길 수 있는 보고서형 인사이트를 한국어로 작성하세요. "
+        "아래 형식을 정확히 따르세요 (섹션 머리글 포함, 각 불릿은 '- ' 시작):\n"
+        "[슬라이드 제목] 핵심 결론을 담은 한 줄 헤드라인 — 수치 포함 "
+        "(예: '○○ 분야, 최근 3년 연 12% 성장 — A사 집중도 심화')\n"
+        "[차트 개요] 이 차트가 무엇을 보여주는지 1~2줄\n"
+        "[핵심 메시지] 경영진 보고용 핵심 요점 3개 불릿 — 각각 한 문장, 수치 포함\n"
+        "[근거 데이터] 차트에서 읽히는 구체적 사실 4~6개 불릿 — 반드시 실제 "
+        "수치·이름 인용 (예: '- A사 2023년 34건으로 1위, 2위 대비 1.8배')\n"
+        "[시사점·제언] 실무 액션 2~3개 불릿 (검토·모니터링·후속 분석 제안)\n"
+        "[유의사항] 데이터 한계·해석 주의 1줄\n"
         "규칙: 제공된 데이터에 없는 수치를 만들지 말 것. 법률적 판단(FTO/유효성)이나 "
-        "인과관계 단정 금지. 표본이 적으면 한계를 언급할 것.")
+        "인과관계 단정 금지. 표본이 적으면 [유의사항]에 명시할 것.")
     prompt = "\n".join(parts)
-    text = call_llm(prompt, llm_id=(settings or {}).get("llm_id"), max_tokens=1500)
+    text = call_llm(prompt, llm_id=(settings or {}).get("llm_id"), max_tokens=1600)
     out = dict(rule_insight)
     if text:
         out["sentences"] = [s.strip() for s in text.strip().split("\n")
-                            if s.strip()][:16]
+                            if s.strip()][:22]
         out["source"] = "llm"
         out["rule_sentences"] = rule_insight.get("sentences", [])
     else:
@@ -3902,6 +3950,13 @@ def select_patents(df, drill):
             mask &= df["problem"].astype(str).str.strip() == str(p)
         if s and "solution" in df.columns:
             mask &= df["solution"].astype(str).str.strip() == str(s)
+    if dtype == "axis_cell":  # A/B/C 분류축 교차 셀: 각 축의 값 동시 포함
+        axis_cols = {"A": "_tech_list", "B": "_tech_b_list", "C": "_tech_c_list"}
+        for cond in (drill.get("conds") or []):
+            col = axis_cols.get(str(cond.get("axis", "")).upper())
+            val = cond.get("value")
+            if col and col in df.columns and val:
+                mask &= df[col].map(lambda lst: str(val) in (lst or []))
     if dtype == "cell_group":  # 의미 그룹 셀: 그룹에 속한 문구 목록으로 매칭
         if drill.get("problems") and "problem" in df.columns:
             wanted_p = set(map(str, drill["problems"]))
@@ -10509,6 +10564,205 @@ def compute_executive_summary(df, settings, company=None):
 
 
 # ===========================================================================
+# src/analyses/axis_cross.py
+# ===========================================================================
+# -*- coding: utf-8 -*-
+"""
+analyses/axis_cross.py — 기술분류 A·B·C축 교차 해석.
+
+배경:
+  WIPS 데이터에는 서로 다른 관점의 분류 체계가 여러 개 있을 수 있다
+  (예: A축=기술 관점, B축=응용처 관점, C축=재료/공정 관점).
+  A축은 기존 기술 대/중/소/다중 분류이고, B·C축은 컬럼 매핑의
+  "B축 대/중/소분류", "C축 대/중/소분류" 개념으로 매핑한다 (소→중→대 우선).
+
+분석 (매핑된 축만 사용 — 없는 축은 자동 제외):
+  - 축 pair 별 교차 히트맵: 셀 = 두 축 값을 동시에 가진 특허 수.
+    A×B / A×C / B×C 중 데이터가 있는 조합만 생성.
+  - 3축 모두 있으면 Sunburst (A → B → C 계층 분해)로 삼중 교차를 표시.
+  - 셀 클릭 drill: {"type":"axis_cell","conds":[{"axis":"A","value":…},…]}.
+
+인사이트: 최다 교차 조합, pair 별 공백 비율, 특정 A분류가 B/C축에서
+집중/분산되는 정도(엔트로피).
+예외처리: 축이 1개뿐이면 empty + B/C축 매핑 안내.
+"""
+from itertools import combinations
+
+import math
+
+import numpy as np
+
+
+_AXIS_COLS = (("A", "_tech_list", "A축(기술)"), ("B", "_tech_b_list", "B축"),
+              ("C", "_tech_c_list", "C축"))
+
+
+def compute_axis_cross(df, settings):
+    """A·B·C 분류축 교차 히트맵 + 3축 Sunburst."""
+    axes = {}
+    for key, col, label in _AXIS_COLS:
+        if col in df.columns and df[col].map(lambda v: bool(v)).any():
+            axes[key] = {"col": col, "label": label}
+    if len(axes) < 2:
+        return empty_result(
+            "교차 해석에는 분류축이 2개 이상 필요합니다 (현재 %d개: %s). "
+            "Settings → 컬럼 매핑에서 'B축 대/중/소분류' 또는 'C축 대/중/소분류'를 "
+            "매핑하세요 — 매핑된 축의 데이터만 사용하며 값을 추정하지 않습니다."
+            % (len(axes), ", ".join(axes.keys()) or "없음"))
+
+    max_cat = min(int(get_limit(settings, "matrix_max_rows")), 15)
+    top_vals = {}
+    for key in axes:
+        col = axes[key]["col"]
+        counts = {}
+        for lst in df[col]:
+            for v in set(lst or []):
+                counts[v] = counts.get(v, 0) + 1
+        top_vals[key] = [v for v, _c in
+                         sorted(counts.items(), key=lambda kv: -kv[1])[:max_cat]]
+
+    pairs = []
+    for a_key, b_key in combinations(sorted(axes.keys()), 2):
+        rows_v = top_vals[a_key]
+        cols_v = top_vals[b_key]
+        if not rows_v or not cols_v:
+            continue
+        rpos = {v: i for i, v in enumerate(rows_v)}
+        cpos = {v: i for i, v in enumerate(cols_v)}
+        z = [[0] * len(cols_v) for _ in rows_v]
+        for la, lb in zip(df[axes[a_key]["col"]], df[axes[b_key]["col"]]):
+            for va in set(la or []):
+                if va not in rpos:
+                    continue
+                for vb in set(lb or []):
+                    if vb in cpos:
+                        z[rpos[va]][cpos[vb]] += 1
+        n_cells = len(rows_v) * len(cols_v)
+        zeros = sum(1 for row in z for v in row if v == 0)
+        hover = [["%s(%s) × %s(%s): %d건"
+                  % (va, a_key, vb, b_key, z[i][j])
+                  for j, vb in enumerate(cols_v)] for i, va in enumerate(rows_v)]
+        fig = heatmap(z, [str(v) for v in cols_v], [str(v) for v in rows_v],
+                      title="%s × %s 교차 매트릭스 (셀=특허 수)"
+                            % (axes[a_key]["label"], axes[b_key]["label"]),
+                      colorscale="YlGnBu", hovertext=hover, colorbar_title="건수")
+        fig["layout"]["xaxis"]["title"] = {"text": axes[b_key]["label"], "standoff": 6}
+        fig["layout"]["yaxis"]["title"] = {"text": axes[a_key]["label"], "standoff": 6}
+        fig["data"][0]["customdata"] = [
+            [{"drill": {"type": "axis_cell",
+                        "conds": [{"axis": a_key, "value": str(va)},
+                                  {"axis": b_key, "value": str(vb)}]}}
+             for vb in cols_v] for va in rows_v]
+        # 최대 셀 + 행 분산도(행별 열 분포 엔트로피 평균)
+        best = max(((i, j) for i in range(len(rows_v)) for j in range(len(cols_v))),
+                   key=lambda ij: z[ij[0]][ij[1]])
+        ents = []
+        for row in z:
+            tot = float(sum(row))
+            if tot < 5:
+                continue
+            h = -sum((v / tot) * math.log(v / tot) for v in row if v > 0)
+            k = sum(1 for v in row if v > 0)
+            ents.append(h / math.log(len(cols_v)) if len(cols_v) > 1 else 0.0)
+        pairs.append({
+            "pair": "%s×%s" % (a_key, b_key),
+            "a_axis": a_key, "b_axis": b_key, "figure": fig,
+            "n_cells": n_cells, "zero_ratio": round(zeros / float(n_cells), 3),
+            "top_cell": {"a": str(rows_v[best[0]]), "b": str(cols_v[best[1]]),
+                         "n": int(z[best[0]][best[1]])},
+            "avg_spread": round(float(np.mean(ents)), 3) if ents else None,
+        })
+    if not pairs:
+        return empty_result("교차 집계 가능한 축 조합이 없습니다.")
+
+    # 3축 Sunburst (A → B → C)
+    sunburst = None
+    if len(axes) == 3:
+        triple = {}
+        for la, lb, lc in zip(df["_tech_list"], df["_tech_b_list"], df["_tech_c_list"]):
+            for va in set(la or []):
+                if va not in top_vals["A"][:8]:
+                    continue
+                for vb in set(lb or []):
+                    if vb not in top_vals["B"][:8]:
+                        continue
+                    for vc in set(lc or []):
+                        if vc in top_vals["C"][:8]:
+                            triple[(va, vb, vc)] = triple.get((va, vb, vc), 0) + 1
+        if triple:
+            keep = sorted(triple.items(), key=lambda kv: -kv[1])[:80]
+            ids, labels, parents, values = [], [], [], []
+            agg1, agg2 = {}, {}
+            for (va, vb, vc), n in keep:
+                agg1[va] = agg1.get(va, 0) + n
+                agg2[(va, vb)] = agg2.get((va, vb), 0) + n
+            for va, n in agg1.items():
+                ids.append("A|%s" % va)
+                labels.append(str(va))
+                parents.append("")
+                values.append(int(n))
+            for (va, vb), n in agg2.items():
+                ids.append("B|%s|%s" % (va, vb))
+                labels.append(str(vb))
+                parents.append("A|%s" % va)
+                values.append(int(n))
+            for (va, vb, vc), n in keep:
+                ids.append("C|%s|%s|%s" % (va, vb, vc))
+                labels.append(str(vc))
+                parents.append("B|%s|%s" % (va, vb))
+                values.append(int(n))
+            sunburst = {"data": [{"type": "sunburst", "ids": ids, "labels": labels,
+                                  "parents": parents, "values": values,
+                                  "branchvalues": "total",
+                                  "hovertemplate": "%{label}: %{value}건"
+                                                   "<extra></extra>"}],
+                        "layout": base_layout("3축 계층 분해 Sunburst — 안쪽부터 "
+                                              "A축(기술) → B축 → C축", height=560)}
+
+    sentences = []
+    axis_names = ", ".join("%s(%s)" % (k, axes[k]["label"]) for k in sorted(axes))
+    sentences.append("매핑된 분류축 %d개(%s)로 %d개 교차 매트릭스를 생성했습니다."
+                     % (len(axes), axis_names, len(pairs)))
+    biggest = max(pairs, key=lambda p: p["top_cell"]["n"])
+    sentences.append("가장 밀집된 교차는 %s의 '%s × %s'(%s건)로, 두 관점이 만나는 "
+                     "핵심 영역입니다."
+                     % (biggest["pair"], biggest["top_cell"]["a"],
+                        biggest["top_cell"]["b"], fmt_num(biggest["top_cell"]["n"])))
+    emptiest = max(pairs, key=lambda p: p["zero_ratio"])
+    sentences.append("%s 매트릭스는 셀의 %s가 공백입니다 — 한 축에서는 활발하지만 "
+                     "다른 축과 결합되지 않은 영역이 후보 기회입니다."
+                     % (emptiest["pair"], fmt_pct(emptiest["zero_ratio"])))
+    for p in pairs:
+        if p["avg_spread"] is not None and p["avg_spread"] <= 0.35:
+            sentences.append("%s: 행별 분포 엔트로피 %.2f — %s축 값들이 특정 %s축 "
+                             "값에 강하게 집중되어 두 분류가 사실상 연동됩니다."
+                             % (p["pair"], p["avg_spread"], p["a_axis"], p["b_axis"]))
+            break
+    insight = build_insight(
+        sentences,
+        {"n_axes": len(axes), "pairs": [p["pair"] for p in pairs],
+         "zero_ratios": {p["pair"]: p["zero_ratio"] for p in pairs},
+         "top_cells": {p["pair"]: p["top_cell"] for p in pairs}},
+        drills=[{"label": "최다 교차 특허 보기",
+                 "drill": {"type": "axis_cell",
+                           "conds": [{"axis": biggest["a_axis"],
+                                      "value": biggest["top_cell"]["a"]},
+                                     {"axis": biggest["b_axis"],
+                                      "value": biggest["top_cell"]["b"]}]}}],
+        small_sample=check_small_sample(len(df), settings))
+    return ok_result(
+        {"pairs": [{k: p[k] for k in ("pair", "figure", "zero_ratio", "top_cell",
+                                      "avg_spread")} for p in pairs],
+         "sunburst": sunburst,
+         "axes": [{"key": k, "label": axes[k]["label"],
+                   "n_categories": len(top_vals[k])} for k in sorted(axes)]},
+        insight=insight,
+        meta={"note": "매핑된 축의 실제 데이터만 사용하며(없는 축 자동 제외), 각 축은 "
+                      "소분류→중분류→대분류 우선으로 가장 세밀한 매핑 레벨을 씁니다. "
+                      "표시 범주는 축당 상위 %d개입니다." % max_cat})
+
+
+# ===========================================================================
 # src/api.py
 # ===========================================================================
 # -*- coding: utf-8 -*-
@@ -10974,6 +11228,8 @@ def register_routes(app):
             lambda df, s, b: compute_executive_summary(df, s,
                                                        company=b.get("company")),
             extra_key_fields=("company",)),
+        "axis-cross": _analysis_route(
+            "axis-cross", lambda df, s, b: compute_axis_cross(df, s)),
     }
 
     def make_analysis_view(path_name, handler):

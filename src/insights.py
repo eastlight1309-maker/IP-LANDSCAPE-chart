@@ -185,22 +185,25 @@ def llm_augment_insight(analysis_name, rule_insight, summary_stats, settings,
     if chart_context:
         parts.append(str(chart_context))  # 이미 sanitize 됨
     parts.append(
-        "위에 제공된 정보(차트 설명·규칙 요약·통계·차트 데이터)만 근거로 상세한 "
-        "한국어 인사이트를 작성하세요. 다음 구성을 따르되 각 항목을 '- ' 로 시작하는 "
-        "줄로 쓰세요 (총 8~14줄):\n"
-        "  [차트 의미] 이 차트가 무엇을 보여주는지 1~2줄\n"
-        "  [핵심 발견] 차트 데이터에서 관찰되는 구체적 패턴 4~6줄 — 반드시 실제 "
-        "수치·이름을 인용 (예: 'A사가 2023년 34건으로 최대')\n"
-        "  [긍정 요인] 1~2줄 / [위험 요인] 1~2줄\n"
-        "  [시사점] 실무적 함의와 다음에 확인할 분석 1~2줄\n"
+        "위에 제공된 정보(차트 설명·규칙 요약·통계·차트 데이터)만 근거로, 그대로 "
+        "PPT 슬라이드 한 장에 옮길 수 있는 보고서형 인사이트를 한국어로 작성하세요. "
+        "아래 형식을 정확히 따르세요 (섹션 머리글 포함, 각 불릿은 '- ' 시작):\n"
+        "[슬라이드 제목] 핵심 결론을 담은 한 줄 헤드라인 — 수치 포함 "
+        "(예: '○○ 분야, 최근 3년 연 12% 성장 — A사 집중도 심화')\n"
+        "[차트 개요] 이 차트가 무엇을 보여주는지 1~2줄\n"
+        "[핵심 메시지] 경영진 보고용 핵심 요점 3개 불릿 — 각각 한 문장, 수치 포함\n"
+        "[근거 데이터] 차트에서 읽히는 구체적 사실 4~6개 불릿 — 반드시 실제 "
+        "수치·이름 인용 (예: '- A사 2023년 34건으로 1위, 2위 대비 1.8배')\n"
+        "[시사점·제언] 실무 액션 2~3개 불릿 (검토·모니터링·후속 분석 제안)\n"
+        "[유의사항] 데이터 한계·해석 주의 1줄\n"
         "규칙: 제공된 데이터에 없는 수치를 만들지 말 것. 법률적 판단(FTO/유효성)이나 "
-        "인과관계 단정 금지. 표본이 적으면 한계를 언급할 것.")
+        "인과관계 단정 금지. 표본이 적으면 [유의사항]에 명시할 것.")
     prompt = "\n".join(parts)
-    text = call_llm(prompt, llm_id=(settings or {}).get("llm_id"), max_tokens=1500)
+    text = call_llm(prompt, llm_id=(settings or {}).get("llm_id"), max_tokens=1600)
     out = dict(rule_insight)
     if text:
         out["sentences"] = [s.strip() for s in text.strip().split("\n")
-                            if s.strip()][:16]
+                            if s.strip()][:22]
         out["source"] = "llm"
         out["rule_sentences"] = rule_insight.get("sentences", [])
     else:

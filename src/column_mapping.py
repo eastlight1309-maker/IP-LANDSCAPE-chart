@@ -170,19 +170,53 @@ CONCEPTS = {
                      "protection countries", "출원국가 목록"],
     },
     "tech_l1": {
-        "label": "기술 대분류", "dtype": "문자열",
+        "label": "기술 대분류 (A축)", "dtype": "문자열",
         "variants": ["기술 대분류", "대분류", "기술대분류", "tech l1", "level1", "level 1",
-                     "category l1", "main category", "대분류명", "기술분류(대)", "1차분류"],
+                     "category l1", "main category", "대분류명", "기술분류(대)", "1차분류",
+                     "a축 대분류", "대분류a", "a대분류", "기술분류a 대분류", "a축 기술 대분류"],
     },
     "tech_l2": {
-        "label": "기술 중분류", "dtype": "문자열",
+        "label": "기술 중분류 (A축)", "dtype": "문자열",
         "variants": ["기술 중분류", "중분류", "기술중분류", "tech l2", "level2", "level 2",
-                     "category l2", "sub category", "중분류명", "기술분류(중)", "2차분류"],
+                     "category l2", "sub category", "중분류명", "기술분류(중)", "2차분류",
+                     "a축 중분류", "중분류a", "a중분류", "기술분류a 중분류", "a축 기술 중분류"],
     },
     "tech_l3": {
-        "label": "기술 소분류", "dtype": "문자열",
+        "label": "기술 소분류 (A축)", "dtype": "문자열",
         "variants": ["기술 소분류", "소분류", "기술소분류", "tech l3", "level3", "level 3",
-                     "category l3", "detail category", "소분류명", "기술분류(소)", "3차분류"],
+                     "category l3", "detail category", "소분류명", "기술분류(소)", "3차분류",
+                     "a축 소분류", "소분류a", "a소분류", "기술분류a 소분류", "a축 기술 소분류"],
+    },
+    # ---- B·C축 기술분류 (별도 분류 체계 — 예: 응용처/재료/공정 관점) ----
+    "tech_b_l1": {
+        "label": "B축 대분류", "dtype": "문자열",
+        "variants": ["b축 대분류", "대분류b", "b대분류", "기술분류b 대분류", "기술b 대분류",
+                     "b축 기술 대분류", "분류b 대분류", "b-대분류", "tech b l1"],
+    },
+    "tech_b_l2": {
+        "label": "B축 중분류", "dtype": "문자열",
+        "variants": ["b축 중분류", "중분류b", "b중분류", "기술분류b 중분류", "기술b 중분류",
+                     "b축 기술 중분류", "분류b 중분류", "b-중분류", "tech b l2"],
+    },
+    "tech_b_l3": {
+        "label": "B축 소분류", "dtype": "문자열",
+        "variants": ["b축 소분류", "소분류b", "b소분류", "기술분류b 소분류", "기술b 소분류",
+                     "b축 기술 소분류", "분류b 소분류", "b-소분류", "tech b l3"],
+    },
+    "tech_c_l1": {
+        "label": "C축 대분류", "dtype": "문자열",
+        "variants": ["c축 대분류", "대분류c", "c대분류", "기술분류c 대분류", "기술c 대분류",
+                     "c축 기술 대분류", "분류c 대분류", "c-대분류", "tech c l1"],
+    },
+    "tech_c_l2": {
+        "label": "C축 중분류", "dtype": "문자열",
+        "variants": ["c축 중분류", "중분류c", "c중분류", "기술분류c 중분류", "기술c 중분류",
+                     "c축 기술 중분류", "분류c 중분류", "c-중분류", "tech c l2"],
+    },
+    "tech_c_l3": {
+        "label": "C축 소분류", "dtype": "문자열",
+        "variants": ["c축 소분류", "소분류c", "c소분류", "기술분류c 소분류", "기술c 소분류",
+                     "c축 기술 소분류", "분류c 소분류", "c-소분류", "tech c l3"],
     },
     "tech_multi": {
         "label": "다중 기술분류", "dtype": "문자열 (쉼표/세미콜론/파이프/JSON 배열)",
@@ -351,6 +385,7 @@ ANALYSIS_REQUIREMENTS = {
     "similarity-network":    {"required": [{"any": ["abstract", "indep_claim", "title"]}], "optional": ANY_APPLICANT + ["embedding", "is_active", "legal_status"]},
     "wips-deep":             {"required": [{"any": ANY_DATE}], "optional": ANY_APPLICANT + ["reg_date", "lapse_date", "agent", "expedited_exam", "exam_request_date", "oa_count", "examiner_citations", "applicant_citations", "parent_app_number", "drawings_count", "spec_length", "trial_info", "trial_claimant", "family_id", "country", "claims_count"]},
     "executive-summary":     {"required": [{"any": ANY_TECH}, {"any": ANY_DATE}, {"any": ANY_APPLICANT}], "optional": ["cites_forward", "is_active", "legal_status", "expiry_date", "is_own"]},
+    "axis-cross":            {"required": [{"any": ANY_TECH}], "optional": ["tech_b_l1", "tech_b_l2", "tech_b_l3", "tech_c_l1", "tech_c_l2", "tech_c_l3", {"any": ANY_DATE}] + ANY_APPLICANT},
 }
 
 _NORM_RE = re.compile(r"[\s\(\)\[\]\{\}\-_/\\.,:;'\"·|]+")

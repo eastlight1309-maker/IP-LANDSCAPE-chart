@@ -87,7 +87,7 @@ ANALYSIS_PATHS = [
     "/api/basic-stats", "/api/portfolio-index", "/api/advanced-stats",
     "/api/scope-entropy", "/api/combo-upset",
     "/api/emerging-clusters", "/api/semantic-influence", "/api/similarity-network",
-    "/api/wips-deep", "/api/executive-summary",
+    "/api/wips-deep", "/api/executive-summary", "/api/axis-cross",
 ]
 
 

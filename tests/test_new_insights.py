@@ -380,6 +380,38 @@ def test_ps_semantic_matrix(settings):
 
 
 # ---------------------------------------------------------------------------
+# 기술분류 A·B·C축 교차
+# ---------------------------------------------------------------------------
+def test_axis_cross(settings):
+    from src.analyses.axis_cross import compute_axis_cross
+    from src.analyses.common import select_patents
+    df = make_prepared(generate_sample(n=400, seed=31))
+    assert "_tech_b_list" in df.columns and "_tech_c_list" in df.columns
+    r = compute_axis_cross(df, settings)
+    assert r["status"] == "ok"
+    assert {p["pair"] for p in r["pairs"]} == {"A×B", "A×C", "B×C"}
+    assert r["sunburst"] is not None  # 3축 모두 매핑 → 계층 분해
+    cd = r["pairs"][0]["figure"]["data"][0]["customdata"][0][0]["drill"]
+    assert cd["type"] == "axis_cell" and len(cd["conds"]) == 2
+    assert len(select_patents(df, cd)) > 0
+    # 축 1개면 empty + 매핑 안내 (있는 데이터로만 — 값 추정 금지)
+    raw = generate_sample(n=100, seed=32).drop(
+        columns=["B축 대분류", "B축 중분류", "C축 대분류", "C축 중분류"])
+    r2 = compute_axis_cross(make_prepared(raw), settings)
+    assert r2["status"] == "empty" and "B축" in r2["message"]
+
+
+def test_axis_cross_two_axes_only(settings):
+    """B축만 추가 매핑된 경우: A×B 만 생성 (C 자동 제외)."""
+    from src.analyses.axis_cross import compute_axis_cross
+    raw = generate_sample(n=200, seed=33).drop(columns=["C축 대분류", "C축 중분류"])
+    r = compute_axis_cross(make_prepared(raw), settings)
+    assert r["status"] == "ok"
+    assert [p["pair"] for p in r["pairs"]] == ["A×B"]
+    assert r["sunburst"] is None
+
+
+# ---------------------------------------------------------------------------
 # LLM 입력: 화면 차트 데이터 컨텍스트
 # ---------------------------------------------------------------------------
 def test_format_chart_context():
@@ -441,7 +473,10 @@ def test_llm_augment_structured_and_rich(monkeypatch):
     assert len(out["sentences"]) == 12          # 기존 5문장 상한 제거
     p = captured["prompt"]
     assert "차트 의미·해석 가이드" in p and "연도별 출원 동향" in p
-    assert "[차트 의미]" in p and "[핵심 발견]" in p and "[시사점]" in p
+    # PPT 슬라이드 형식 요청 (제목/핵심 메시지/근거/제언/유의)
+    for marker in ("[슬라이드 제목]", "[핵심 메시지]", "[근거 데이터]",
+                   "[시사점·제언]", "[유의사항]"):
+        assert marker in p
     assert captured["max_tokens"] >= 1400
 
 

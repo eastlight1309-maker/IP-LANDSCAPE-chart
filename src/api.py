@@ -98,6 +98,7 @@ from src.analyses.semantic_insights import (compute_emerging_clusters,
                                             compute_similarity_network)
 from src.analyses.wips_deep import compute_wips_deep
 from src.analyses.executive import compute_executive_summary
+from src.analyses.axis_cross import compute_axis_cross
 from src.web_search import search_web, format_web_context
 from src.llm_client import sanitize_for_llm
 
@@ -504,6 +505,8 @@ def register_routes(app):
             lambda df, s, b: compute_executive_summary(df, s,
                                                        company=b.get("company")),
             extra_key_fields=("company",)),
+        "axis-cross": _analysis_route(
+            "axis-cross", lambda df, s, b: compute_axis_cross(df, s)),
     }
 
     def make_analysis_view(path_name, handler):
