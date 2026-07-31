@@ -1699,8 +1699,15 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
               var tr = document.createElement('tr');
               var td0 = document.createElement('td');
               td0.appendChild(drillCell(x.label, x.drill));
+              if (x.label_source === 'llm' && (x.keywords || []).length) {
+                td0.appendChild(Ui.el('<br><span style="color:#93a5b4;font-size:10.5px">키워드: ' +
+                  Ui.esc(x.keywords.slice(0, 3).join(', ')) + '</span>'));
+              }
               tr.appendChild(td0);
               tr.insertAdjacentHTML('beforeend',
+                '<td>' + (x.rep_titles || []).map(function (t) {
+                  return '<div style="font-size:11px;color:#46607a">· ' + Ui.esc(t) + '</div>';
+                }).join('') + '</td>' +
                 '<td>' + (x.emerging ? '<span class="badge good">신흥 후보</span>' : '') +
                 (x.is_new_cluster ? ' <span class="badge warn">새 군집</span>' : '') + '</td>' +
                 '<td class="num">' + Ui.num(x.n, 0) + '</td>' +
@@ -1715,7 +1722,7 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
               return tr;
             });
             var tbl = Ui.el(simpleTable(
-              ['군집 (특징 키워드)', '판정', '건수', '최초 출원', '최근 3년 비중', '신규 출원인', '점수', '주요 출원인'], []));
+              ['군집 명칭', '대표 특허 (중심 최근접)', '판정', '건수', '최초 출원', '최근 3년 비중', '신규 출원인', '점수', '주요 출원인'], []));
             rows.forEach(function (tr) { tbl.querySelector('tbody').appendChild(tr); });
             var wrap = Ui.el('<div style="overflow-x:auto;max-height:320px;overflow-y:auto;margin-top:8px"></div>');
             wrap.appendChild(tbl);
@@ -1723,7 +1730,10 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
             if (r.methods) {
               c.body.appendChild(Ui.el('<div style="margin-top:6px;color:#647b8d;font-size:11.5px">방법: 임베딩 ' +
                 Ui.esc(r.methods.embedding) + ' · 텍스트 ' + Ui.esc(r.methods.text_source) +
-                ' · 문헌 ' + Ui.num(r.methods.n_docs, 0) + '건</div>'));
+                ' · 문헌 ' + Ui.num(r.methods.n_docs, 0) + '건 · 군집 명칭 ' +
+                (r.methods.labeling === 'llm' ? 'LLM 생성 (키워드·대표 특허명 근거)' :
+                  '특징 키워드 자동 — Settings 에서 LLM 인사이트를 켜면 읽기 쉬운 기술 명칭으로 자동 생성') +
+                '</div>'));
             }
           }
         });

@@ -9148,6 +9148,42 @@ def _sim_matrix(vectors):
     return sim
 
 
+def _llm_cluster_names(clusters, settings):
+    """LLM 으로 사람이 읽기 좋은 군집 명칭 생성 (1회 일괄 호출).
+
+    입력: 군집별 특징 키워드 + 중심 최근접 대표 특허 명칭 3건.
+    출력: {cluster_id: 명칭}. LLM 미가용·실패 시 {} (키워드 라벨 유지 — 폴백).
+    명칭 규칙: 한국어 기술 용어 4~16자, 조사·서술어 없이 명사구.
+    """
+    if not (settings or {}).get("llm_insights_enabled") or not llm_available():
+        return {}
+    lines = [
+        "다음은 특허 임베딩 군집별 특징 키워드와 대표 특허 명칭입니다.",
+        "각 군집에 기술 내용을 요약하는 짧은 한국어 명칭을 지어주세요.",
+        "규칙: 4~16자 명사구(예: '하이브리드 본딩 접합', '저유전 몰딩 소재'), "
+        "조사·서술어·따옴표 금지, 키워드 나열 금지, 대표 명칭에 없는 기술 지어내기 금지.",
+        "응답은 각 줄에 '번호: 명칭' 형식만 출력하세요.",
+    ]
+    for c in clusters[:18]:
+        lines.append("%d) 키워드: %s / 대표 특허명: %s"
+                     % (c["cluster"],
+                        sanitize_for_llm(", ".join(c["keywords"][:5]), 120),
+                        sanitize_for_llm(" | ".join(c.get("rep_titles", [])[:3]), 220)))
+    text = call_llm("\n".join(lines), llm_id=(settings or {}).get("llm_id"),
+                    max_tokens=600, temperature=0.1)
+    if not text:
+        return {}
+    import re as _re
+    names = {}
+    for line in str(text).splitlines():
+        m = _re.match(r"^\s*(\d+)\s*[):.\-]\s*(.+?)\s*$", line)
+        if m:
+            name = m.group(2).strip().strip("'\"“”")
+            if 2 <= len(name) <= 30:
+                names[int(m.group(1))] = name
+    return names
+
+
 # ---------------------------------------------------------------------------
 # 1) 신흥 기술 조기 탐지
 # ---------------------------------------------------------------------------
@@ -9205,10 +9241,14 @@ def compute_emerging_clusters(df, settings):
         keywords = _distinct_keywords(
             [sub["_sem_text"].iloc[i] for i in near_idx], global_freq, len(work))
         label_txt = ", ".join(keywords[:3]) or ("군집 %d" % cl)
+        # 대표 특허 명칭 (중심 최근접 3건) — 사람이 군집을 이해하는 근거 + LLM 명명 입력
+        title_col = "title" if "title" in sub.columns else "_sem_text"
+        rep_titles = [str(sub[title_col].iloc[i])[:60] for i in near_idx[:3]]
         top_apps = apps["applicant_display"].value_counts().head(3) if len(apps) \
             else pd.Series(dtype=int)
         clusters.append({
             "cluster": int(cl), "label": label_txt, "keywords": keywords,
+            "rep_titles": rep_titles,
             "n": int(mask.sum()), "first_year": first_year,
             "mean_year": round(mean_year, 1), "recent_share": round(recent_share, 3),
             "new_applicant_ratio": round(new_ratio, 3) if new_ratio is not None else None,
@@ -9222,6 +9262,16 @@ def compute_emerging_clusters(df, settings):
     if not clusters:
         return empty_result("군집을 형성할 표본이 부족합니다.")
     clusters.sort(key=lambda c: -c["score"])
+
+    # 사람이 읽기 좋은 군집 명칭: LLM 일괄 명명 (미가용 시 키워드 라벨 유지)
+    llm_names = _llm_cluster_names(clusters, settings)
+    for c in clusters:
+        if c["cluster"] in llm_names:
+            c["label"] = llm_names[c["cluster"]]
+            c["label_source"] = "llm"
+        else:
+            c["label_source"] = "keywords"
+    label_method = "llm" if llm_names else "keywords"
 
     color_reg = {}
     fig = {"data": [{
@@ -9288,11 +9338,16 @@ def compute_emerging_clusters(df, settings):
         drills=[{"label": "후보 군집 특허 보기", "drill": emergings[0]["drill"]}]
         if emergings else None,
         small_sample=check_small_sample(len(work), settings))
+    methods = dict(methods, labeling=label_method)
     return ok_result({"figure": fig, "clusters": clusters[:20], "methods": methods},
                      insight=insight,
-                     meta={"note": "임베딩: %s (%s 기반). 표본 상한 초과 시 무작위 "
-                                   "샘플링됩니다." % (methods["embedding"],
-                                                methods["text_source"]),
+                     meta={"note": "임베딩: %s (%s 기반). 군집 명칭: %s. 표본 상한 "
+                                   "초과 시 무작위 샘플링됩니다."
+                                   % (methods["embedding"], methods["text_source"],
+                                      "LLM 이 키워드·대표 특허명으로 생성"
+                                      if label_method == "llm"
+                                      else "특징 키워드 자동 (LLM 활성화 시 읽기 쉬운 "
+                                           "기술 명칭으로 자동 개선)"),
                            "truncated": methods["truncated"]})
 
 

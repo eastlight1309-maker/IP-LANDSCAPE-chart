@@ -163,7 +163,35 @@ def test_emerging_clusters_ok(prepared, settings):
     for c in r["clusters"]:
         assert c["label"] and c["drill"]["type"] == "ids"
         assert 0.0 <= c["recent_share"] <= 1.0
+        assert c["rep_titles"]                     # 대표 특허 명칭 제공
+        assert c["label_source"] == "keywords"     # LLM 미가용 → 키워드 폴백
     assert r["methods"]["embedding"]  # 사용 방식이 표기됨
+    assert r["methods"]["labeling"] == "keywords"
+
+
+def test_emerging_clusters_llm_naming(prepared, settings, monkeypatch):
+    """LLM 활성화 시: 군집 명칭을 LLM 이 읽기 쉬운 기술 명칭으로 생성."""
+    from src import llm_client
+    from src.analyses.semantic_insights import compute_emerging_clusters
+    captured = {}
+
+    def fake_call(prompt, llm_id=None, max_tokens=800, temperature=0.2):
+        captured["prompt"] = prompt
+        # 프롬프트에 등장한 군집 번호마다 명칭 생성
+        import re
+        nums = sorted({int(m) for m in re.findall(r"^(\d+)\)", prompt, re.M)})
+        return "\n".join("%d: 기술명칭 %d호" % (n, n) for n in nums)
+    monkeypatch.setattr(llm_client, "call_llm", fake_call)
+    monkeypatch.setattr(llm_client, "llm_available", lambda: True)
+    s = dict(settings, llm_insights_enabled=True)
+    r = compute_emerging_clusters(prepared, s)
+    assert r["status"] == "ok"
+    assert r["methods"]["labeling"] == "llm"
+    assert any(c["label"].startswith("기술명칭") and c["label_source"] == "llm"
+               for c in r["clusters"])
+    # LLM 프롬프트에 키워드·대표 특허명이 근거로 포함됨
+    assert "키워드:" in captured["prompt"] and "대표 특허명:" in captured["prompt"]
+    assert "명사구" in captured["prompt"]  # 명명 규칙 지시
 
 
 def test_semantic_influence_ok(prepared, settings):
