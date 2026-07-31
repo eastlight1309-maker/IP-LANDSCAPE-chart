@@ -43,6 +43,7 @@ api.py — API 응답 모듈. register_routes(app) 로 모든 엔드포인트를
   POST /api/insight             LLM 인사이트 (요약 통계만 전달, 실패 시 규칙 기반)
   POST /api/export              Excel 다운로드
   POST /api/project/save|load   프로젝트 저장·불러오기 (+list)
+  GET/POST /api/uploads         엑셀 업로드 작업 저장소 (+/load, /delete)
   GET/POST /api/settings        설정 조회/저장
   GET/POST /api/applicant-rules 출원인 표준화 규칙
   POST /api/filter-state        필터 상태 저장
@@ -69,6 +70,10 @@ from src.preprocessing import apply_filters, filter_options, auto_standardize_na
 from src.data_access import (list_datasets, validate_dataset_name, get_dataset_columns,
                              get_prepared, inject_dataset, load_sample_dataframe)
 from src import storage
+from src.uploads import (save_upload as uploads_save, list_uploads as uploads_list,
+                         load_upload as uploads_load,
+                         delete_upload as uploads_delete,
+                         ensure_loaded as uploads_ensure_loaded)
 from src.insights import llm_augment_insight, llm_chat, build_insight, \
     format_chart_context
 from src.viz_payload import jsonable, empty_result
@@ -164,7 +169,11 @@ def _make_demo_dataframe(n=400, seed=7):
 
 
 def _resolve_dataset(body):
-    """요청/설정에서 dataset 결정. demo_mode 면 데모 데이터 주입."""
+    """요청/설정에서 dataset 결정. demo_mode 면 데모 데이터 주입.
+
+    업로드 dataset(upload__…)이 Backend 재시작으로 내려간 경우 저장 파일에서
+    자동 재적재한다.
+    """
     settings = _settings()
     name = (body or {}).get("dataset") or settings.get("dataset")
     if settings.get("demo_mode"):
@@ -174,6 +183,8 @@ def _resolve_dataset(body):
             name = DEMO_DATASET_NAME
     if not name:
         raise LookupError(MESSAGES["no_dataset"])
+    if validate_dataset_name(name) is None:
+        uploads_ensure_loaded(name)
     valid = validate_dataset_name(name)
     if valid is None:
         raise LookupError("허용되지 않은 Dataset 입니다: %s" % name)
@@ -704,7 +715,9 @@ def register_routes(app):
             if k == "multiclass_mode" and v not in MULTICLASS_MODES:
                 return _error(400, "잘못된 다중분류 처리방식: %s" % v)
             if k == "dataset" and v and validate_dataset_name(v) is None:
-                return _error(400, "허용되지 않은 Dataset: %s" % v)
+                uploads_ensure_loaded(v)  # 업로드 dataset 자동 재적재 시도
+                if validate_dataset_name(v) is None:
+                    return _error(400, "허용되지 않은 Dataset: %s" % v)
             current[k] = v
         storage.save_settings(current)
         clear_all_caches()
@@ -806,5 +819,47 @@ def register_routes(app):
         """POST {"filters":{...}} → 마지막 필터 상태 저장 (재방문 시 복원)."""
         storage.save_filter_state((json_body() or {}).get("filters") or {})
         return {"status": "ok"}
+
+    # ---------------- 엑셀 업로드 작업 저장소 ----------------
+    @app.route("/api/uploads", methods=["GET", "POST"])
+    @wrap
+    def api_uploads():
+        """엑셀 업로드 작업 저장소.
+
+        GET → {"items":[{id,worker,job,orig_filename,dataset,uploaded_at,
+               n_rows,n_cols,loaded,file_exists}...]} (최신순).
+        POST multipart form: file(필수), worker(작업자 이름, 필수),
+             job(작업명, 필수) → 파일을 서버 저장소에 보관하고 메타데이터를
+             영속화하며 즉시 분석 dataset 으로 등록.
+        오류 400: 작업자/작업명 누락, 형식·크기 위반, 해석 불가.
+        """
+        if request.method == "GET":
+            return {"status": "ok", "items": uploads_list()}
+        f = request.files.get("file")
+        if f is None:
+            return _error(400, "파일이 첨부되지 않았습니다.")
+        try:
+            entry = uploads_save(f.read(), f.filename,
+                                            request.form.get("worker"),
+                                            request.form.get("job"))
+        except ValueError as e:
+            return _error(400, str(e))
+        clear_all_caches()
+        return {"status": "ok", "entry": entry, "items": uploads_list()}
+
+    @app.route("/api/uploads/load", methods=["POST"])
+    @wrap
+    def api_uploads_load():
+        """POST {"id"} → 저장된 작업을 파일에서 (재)적재해 분석 dataset 으로 등록."""
+        entry = uploads_load((json_body() or {}).get("id"))
+        clear_all_caches()
+        return {"status": "ok", "entry": entry}
+
+    @app.route("/api/uploads/delete", methods=["POST"])
+    @wrap
+    def api_uploads_delete():
+        """POST {"id"} → 저장 작업 삭제 (메타데이터 + 서버 파일)."""
+        entry = uploads_delete((json_body() or {}).get("id"))
+        return {"status": "ok", "deleted": entry.get("id")}
 
     return app

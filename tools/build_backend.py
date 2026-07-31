@@ -27,6 +27,7 @@ MODULE_ORDER = [
     "src/metrics.py",
     "src/storage.py",
     "src/data_access.py",
+    "src/uploads.py",
     "src/embedding_adapter.py",
     "src/llm_client.py",
     "src/web_search.py",
@@ -68,7 +69,8 @@ storage = _types.SimpleNamespace(
     load_mapping_for=load_mapping_for, save_mapping_for=save_mapping_for,
     load_applicant_rules=load_applicant_rules, save_applicant_rules=save_applicant_rules,
     load_projects=load_projects, save_projects=save_projects,
-    load_filter_state=load_filter_state, save_filter_state=save_filter_state)
+    load_filter_state=load_filter_state, save_filter_state=save_filter_state,
+    load_uploads=load_uploads, save_uploads=save_uploads, upload_dir=upload_dir)
 """
 
 HEADER = '''# -*- coding: utf-8 -*-

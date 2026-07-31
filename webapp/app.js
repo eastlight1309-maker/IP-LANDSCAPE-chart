@@ -54,6 +54,11 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
           body: JSON.stringify(body || {})
         }).then(handle).finally(function () { spin(false); });
       },
+      upload: function (path, formData, spinText) {
+        spin(true, spinText || '업로드 중…');
+        return fetch(backendUrl(path), { method: 'POST', body: formData })
+          .then(handle).finally(function () { spin(false); });
+      },
       download: function (path, body, filename) {
         spin(true, '파일 생성 중…');
         return fetch(backendUrl(path), {
@@ -2643,7 +2648,7 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
     }
     section('🚀 시작하기 (4단계)',
       '<ol style="padding-left:18px;line-height:1.9">' +
-      '<li><b>Dataset 선택</b> — Settings &amp; Admin → 분석 Dataset 에서 WIPS Excel 을 올린 Dataset 을 선택합니다.</li>' +
+      '<li><b>데이터 준비</b> — Settings &amp; Admin → "📤 엑셀 업로드"에서 <b>작업자 이름·작업명을 입력</b>하고 WIPS Excel 을 직접 올리면 서버에 저장되고 바로 분석 Dataset 으로 설정됩니다 (저장된 작업은 목록에서 언제든 다시 불러오기 가능). 또는 Flow 에 이미 있는 Dataset 을 선택해도 됩니다.</li>' +
       '<li><b>컬럼 매핑 확인</b> — Settings → 컬럼 매핑에서 자동 추천 결과를 확인하고, 잘못 잡힌 항목은 직접 수정 후 저장합니다. ' +
       '각 컬럼의 "예시 값"으로 실제 데이터를 확인할 수 있습니다.</li>' +
       '<li><b>분석 단위 선택</b> — 문헌(건별) 또는 패밀리 대표 중 선택합니다. 지정국 진입 시차 등 일부 분석은 문헌 단위가 필요합니다.</li>' +
@@ -2687,6 +2692,103 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
     var grid = Ui.el('<div class="settings-grid"></div>');
     content.appendChild(grid);
     var s = (State.config && State.config.settings) || {};
+
+    /* 엑셀 업로드 작업 저장소 */
+    var cu = card('📤 엑셀 업로드 (작업 저장소)',
+      'WIPS Excel(xlsx/xls/csv)을 앱에서 직접 올려 바로 분석합니다. 작업자 이름과 작업명은 필수이며, ' +
+      '업로드한 파일은 서버 저장소에 보관되어 아래 목록에서 언제든 다시 불러올 수 있습니다 ' +
+      '(Backend 재시작 후에도 유지). 파일 60MB · 60,000행 이하, 첫 시트만 사용합니다.');
+    grid.appendChild(cu.root);
+    var upForm = Ui.el('<div>' +
+      '<div class="settings-row"><label>작업자 이름 *</label>' +
+      '<input type="text" id="up-worker" maxlength="60" placeholder="예: 홍길동" style="flex:1"></div>' +
+      '<div class="settings-row"><label>작업명 *</label>' +
+      '<input type="text" id="up-job" maxlength="120" placeholder="예: 2026 상반기 패키징 IP 조사" style="flex:1"></div>' +
+      '<div class="settings-row"><label>엑셀 파일 *</label>' +
+      '<input type="file" id="up-file" accept=".xlsx,.xls,.csv" style="flex:1"></div>' +
+      '</div>');
+    cu.body.appendChild(upForm);
+    var upBtn = Ui.el('<button class="btn small primary">업로드 → 저장하고 분석 시작</button>');
+    cu.body.appendChild(upBtn);
+    var listWrap = Ui.el('<div style="margin-top:12px"></div>');
+    cu.body.appendChild(listWrap);
+
+    function useDataset(name) {
+      return Api.post('/api/settings', { dataset: name }).then(function (resp) {
+        State.config.settings = resp.settings;
+        Ui.toast('분석 Dataset 이 "' + name + '" 로 설정되었습니다. 컬럼 매핑을 확인하세요.');
+        boot(true);
+      }).catch(errToast);
+    }
+
+    function renderUploads() {
+      Api.get('/api/uploads').then(function (d) {
+        listWrap.innerHTML = '';
+        var items = d.items || [];
+        listWrap.appendChild(Ui.el('<div style="font-weight:700;font-size:12.5px;margin-bottom:4px">' +
+          '💾 저장된 업로드 작업 (' + items.length + ')</div>'));
+        if (!items.length) {
+          listWrap.appendChild(Ui.el('<div class="status-empty">저장된 작업이 없습니다.</div>'));
+          return;
+        }
+        var rows = items.map(function (it) {
+          var tr = document.createElement('tr');
+          tr.insertAdjacentHTML('beforeend',
+            '<td><b>' + Ui.esc(it.job) + '</b><br><span style="color:#93a5b4;font-size:10.5px">' +
+            Ui.esc(it.orig_filename) + '</span></td>' +
+            '<td>' + Ui.esc(it.worker) + '</td>' +
+            '<td style="white-space:nowrap">' + Ui.esc(it.uploaded_at) + '</td>' +
+            '<td class="num">' + Ui.num(it.n_rows, 0) + '행</td>' +
+            '<td>' + (it.loaded ? '<span class="badge good">로드됨</span>' :
+              (it.file_exists ? '' : '<span class="badge warn">파일 없음</span>')) + '</td>');
+          var tdAct = document.createElement('td');
+          tdAct.style.whiteSpace = 'nowrap';
+          var loadBtn = Ui.el('<button class="btn small">불러와 분석</button>');
+          loadBtn.disabled = !it.file_exists;
+          loadBtn.addEventListener('click', function () {
+            Api.post('/api/uploads/load', { id: it.id }, '저장 파일 불러오는 중…')
+              .then(function (r) { return useDataset(r.entry.dataset); })
+              .catch(errToast);
+          });
+          tdAct.appendChild(loadBtn);
+          var delBtn = Ui.el('<button class="btn small" style="margin-left:4px">삭제</button>');
+          delBtn.addEventListener('click', function () {
+            if (!window.confirm('"' + it.job + '" (' + it.worker + ') 작업을 삭제할까요? 저장 파일도 함께 지워집니다.')) return;
+            Api.post('/api/uploads/delete', { id: it.id }).then(function () {
+              Ui.toast('삭제되었습니다.');
+              renderUploads();
+            }).catch(errToast);
+          });
+          tdAct.appendChild(delBtn);
+          tr.appendChild(tdAct);
+          return tr;
+        });
+        var tbl = Ui.el(simpleTable(['작업명 / 파일', '작업자', '업로드 시각', '행수', '상태', ''], []));
+        rows.forEach(function (tr) { tbl.querySelector('tbody').appendChild(tr); });
+        var wrap = Ui.el('<div style="overflow-x:auto;max-height:280px;overflow-y:auto"></div>');
+        wrap.appendChild(tbl);
+        listWrap.appendChild(wrap);
+      }).catch(errToast);
+    }
+    upBtn.addEventListener('click', function () {
+      var worker = document.getElementById('up-worker').value.trim();
+      var job = document.getElementById('up-job').value.trim();
+      var fileEl = document.getElementById('up-file');
+      if (!worker || !job) { Ui.toast('작업자 이름과 작업명을 반드시 입력하세요.', 'error'); return; }
+      if (!fileEl.files || !fileEl.files[0]) { Ui.toast('엑셀 파일을 선택하세요.', 'error'); return; }
+      var fd = new FormData();
+      fd.append('file', fileEl.files[0]);
+      fd.append('worker', worker);
+      fd.append('job', job);
+      upBtn.disabled = true;
+      Api.upload('/api/uploads', fd, '엑셀 업로드·저장 중…').then(function (r) {
+        Ui.toast('업로드 완료: ' + r.entry.n_rows + '행 저장됨.');
+        fileEl.value = '';
+        renderUploads();
+        return useDataset(r.entry.dataset);
+      }).catch(errToast).finally(function () { upBtn.disabled = false; });
+    });
+    renderUploads();
 
     /* Dataset & 분석 옵션 */
     var c1 = card('Dataset · 분석 옵션');

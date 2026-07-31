@@ -140,3 +140,23 @@ def load_filter_state():
 
 def save_filter_state(state):
     return save_store("filter_state", state)
+
+
+def load_uploads():
+    """업로드 작업 메타데이터 목록 {"items": [...]}."""
+    return load_store("uploads")
+
+
+def save_uploads(uploads):
+    return save_store("uploads", uploads)
+
+
+def upload_dir():
+    """업로드 엑셀 파일 저장 디렉터리 (로컬 store 파일 옆, 없으면 생성)."""
+    base = os.environ.get("IP_LANDSCAPE_UPLOAD_DIR") or os.path.join(
+        os.path.dirname(os.path.abspath(_LOCAL_STORE_PATH)), "ip_landscape_uploads")
+    try:
+        os.makedirs(base, exist_ok=True)
+    except OSError as e:
+        logger.warning("upload dir create failed: %s", e)
+    return base
