@@ -171,7 +171,15 @@ def test_semantic_influence_ok(prepared, settings):
     r = compute_semantic_influence(prepared, settings)
     assert r["status"] in ("ok", "empty")
     if r["status"] == "ok":
-        assert r["sankey"]["data"][0]["type"] == "sankey"
+        tr = r["sankey"]["data"][0]
+        assert tr["type"] == "sankey"
+        # 원천 특허 라벨은 번호 전체 포함 (앞자리 잘림 금지)
+        ids = {p["id"] for p in r["top_patents"]}
+        assert any(any(i in lab for i in ids) for lab in tr["node"]["label"])
+        # 흐름선(link) 명시 색상 + 값 존재 → 중간 띠가 비어 보이지 않음
+        assert tr["link"]["value"] and all(v >= 1 for v in tr["link"]["value"])
+        assert tr["link"]["color"] and all(c.startswith("rgba")
+                                           for c in tr["link"]["color"])
         for p in r["top_patents"]:
             assert p["cross_followers"] >= 2
             assert p["drill"]["type"] == "ids"
@@ -378,6 +386,29 @@ def test_llm_chat_uses_chart_context(monkeypatch):
     assert "삼성전자 | 120" in p          # 실제 수치 전달됨
     assert "요약 지표(JSON)" not in p     # 빈 metrics 는 생략 (빈 JSON 혼란 방지)
     assert "화면 차트 데이터" in p
+
+
+def test_llm_augment_structured_and_rich(monkeypatch):
+    """인사이트 버튼: 차트 의미 포함 + 구조화된 8~14줄 요청 + 넉넉한 토큰."""
+    from src import insights
+    captured = {}
+
+    def fake_call(prompt, llm_id=None, max_tokens=800, temperature=0.2):
+        captured["prompt"], captured["max_tokens"] = prompt, max_tokens
+        return "\n".join("- 문장 %d" % i for i in range(12))
+    monkeypatch.setattr(insights, "call_llm", fake_call)
+    monkeypatch.setattr(insights, "llm_available", lambda: True)
+    rule = insights.build_insight(["규칙 문장"], {"total": 10})
+    out = insights.llm_augment_insight(
+        "basic-stats", rule, {"total": 10}, {"llm_insights_enabled": True},
+        chart_context="화면 차트 데이터: ...",
+        description="연도별 출원 동향 — X축=연도, Y축=건수")
+    assert out["source"] == "llm"
+    assert len(out["sentences"]) == 12          # 기존 5문장 상한 제거
+    p = captured["prompt"]
+    assert "차트 의미·해석 가이드" in p and "연도별 출원 동향" in p
+    assert "[차트 의미]" in p and "[핵심 발견]" in p and "[시사점]" in p
+    assert captured["max_tokens"] >= 1400
 
 
 def test_format_web_context_sanitizes():

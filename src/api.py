@@ -662,7 +662,8 @@ def register_routes(app):
             return out
         rule = build_insight(sentences, metrics)
         out = llm_augment_insight(analysis, rule, metrics, settings,
-                                  chart_context=chart_context)
+                                  chart_context=chart_context,
+                                  description=body.get("description"))
         out["status"] = "ok"
         return out
 

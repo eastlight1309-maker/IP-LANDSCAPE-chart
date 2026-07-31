@@ -363,28 +363,41 @@ def compute_semantic_influence(df, settings):
                             "탐지합니다." % th)
 
     # Sankey: 원천 특허 → 후속 기업
+    # 라벨은 문헌번호 전체를 사용한다 (뒤 몇 자리만 자르면 앞자리가 사라져
+    # 번호가 잘못 보임). 흐름선은 원천 특허 색의 반투명으로 명시해 잘 보이게 한다.
+    def _rgba(hex_color, alpha):
+        h = hex_color.lstrip("#")
+        return "rgba(%d,%d,%d,%.2f)" % (int(h[0:2], 16), int(h[2:4], 16),
+                                        int(h[4:6], 16), alpha)
     src_nodes = top[:8]
     node_labels, node_colors = [], []
     comp_index = {}
     for i, r in enumerate(src_nodes):
-        node_labels.append("%s (%s)" % (r["id"][-14:], r["applicant"][:10]))
+        node_labels.append("%s · %s" % (r["id"], r["applicant"][:8]))
         node_colors.append(PALETTE[i % len(PALETTE)])
-    links = {"source": [], "target": [], "value": [], "label": []}
+    links = {"source": [], "target": [], "value": [], "label": [], "color": []}
     for i, r in enumerate(src_nodes):
         for comp, cnt in sorted(r["company_counts"].items(), key=lambda kv: -kv[1])[:6]:
             if comp not in comp_index:
                 comp_index[comp] = len(node_labels)
                 node_labels.append(comp)
-                node_colors.append("#B0BEC5")
+                node_colors.append("#8fa6b8")
             links["source"].append(i)
             links["target"].append(comp_index[comp])
-            links["value"].append(cnt)
-            links["label"].append("유사 후속 %d건" % cnt)
-    sankey = {"data": [{"type": "sankey",
-                        "node": {"label": node_labels, "color": node_colors, "pad": 12},
-                        "link": links}],
-              "layout": base_layout("의미 기반 영향력 확산 — 원천 특허 → 후속 기업 "
-                                    "(값=유사 후속 출원 수)", height=480)}
+            links["value"].append(int(cnt))
+            links["label"].append("%s → %s: 유사 후속 %d건" % (r["id"], comp, cnt))
+            links["color"].append(_rgba(PALETTE[i % len(PALETTE)], 0.45))
+    n_side = max(len(src_nodes), len(comp_index))
+    sankey = {"data": [{"type": "sankey", "orientation": "h",
+                        "textfont": {"size": 11},
+                        "node": {"label": node_labels, "color": node_colors,
+                                 "pad": 22, "thickness": 18,
+                                 "line": {"width": 0.5, "color": "#7a8b99"},
+                                 "hovertemplate": "%{label}<extra></extra>"},
+                        "link": dict(links, hovertemplate="%{label}<extra></extra>")}],
+              "layout": base_layout("의미 기반 영향력 확산 — 왼쪽=원천 특허, 오른쪽=유사 "
+                                    "후속 특허를 낸 기업, 띠 두께=후속 출원 수",
+                                    height=max(480, 140 + 52 * n_side))}
 
     scatter = None
     with_cites = [r for r in records if r["cites"] is not None]
@@ -570,7 +583,7 @@ def compute_similarity_network(df, settings, threshold=None):
         group = app if app in top_apps else "기타"
         deg = len(adj[i])
         nodes_payload.append({
-            "id": "n%d" % i, "label": str(ids[i])[-16:],
+            "id": "n%d" % i, "label": str(ids[i]),  # 전체 번호 (잘림은 말줄임 처리)
             "full_id": ids[i],
             "title": str(row.get("title", ""))[:60],
             "applicant": app or "-", "group": group,

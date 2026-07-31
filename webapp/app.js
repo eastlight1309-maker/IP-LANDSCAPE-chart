@@ -522,7 +522,7 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
 
   /* -------------------------------------------------------------- Insight */
   var Insight = (function () {
-    function box(result, analysisName) {
+    function box(result, analysisName, description) {
       var ins = result.insight || { sentences: [] };
       var meta = result.meta || {};
       var div = Ui.el('<div class="insight-box"></div>');
@@ -551,10 +551,19 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
         var lb = Ui.el('<button class="btn small">LLM 인사이트 생성</button>');
         lb.addEventListener('click', function () {
           var cardEl = div.closest('.card');
+          // 차트 의미(카드 설명+해석 가이드)를 함께 전달 → 인사이트에 차트 의미 포함
+          var desc = description;
+          if (!desc && cardEl) {
+            var descEl = cardEl.querySelector('.card-desc');
+            var guideEl = cardEl.querySelector('.chart-guide');
+            desc = ((descEl ? descEl.textContent : '') + ' ' +
+                    (guideEl ? guideEl.textContent : '')).trim();
+          }
           Api.post('/api/insight', {
             analysis: analysisName,
             metrics: ins.metrics || {},
             sentences: ins.sentences || [],
+            description: (desc || '').slice(0, 900),
             chart_data: compactChartData(cardEl && cardEl.querySelector('.card-body'))
           }, 'LLM 인사이트 생성 중…').then(function (data) {
             ul.innerHTML = '';
@@ -2318,7 +2327,7 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
                 '<td class="num">' + (x.avg_sim !== null && x.avg_sim !== undefined ?
                   Ui.num(x.avg_sim, 2) : '-') + '</td>' +
                 '<td>' + (x.bridges || []).map(function (b) {
-                  return '<span class="badge warn">' + Ui.esc(String(b).slice(-14)) + '</span>';
+                  return '<span class="badge warn">' + Ui.esc(String(b)) + '</span>';
                 }).join('') + '</td>');
               return tr;
             });
