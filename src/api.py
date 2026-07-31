@@ -78,7 +78,8 @@ from src.analyses.tech_network import compute_tech_network
 from src.analyses.emerging import compute_emerging
 from src.analyses.lifecycle import compute_lifecycle
 from src.analyses.whitespace import compute_opportunity
-from src.analyses.problem_solution import compute_problem_solution, cell_detail
+from src.analyses.problem_solution import compute_problem_solution, cell_detail, \
+    compute_ps_semantic
 from src.analyses.transition import compute_transition, TRANSITION_MODES
 from src.analyses.trajectory import compute_trajectory
 from src.analyses.company_dna import compute_company_dna
@@ -436,8 +437,11 @@ def register_routes(app):
         "problem-solution": _analysis_route(
             "problem-solution",
             lambda df, s, b: (cell_detail(df, s, b.get("problem"), b.get("solution"))
-                              if b.get("cell") else compute_problem_solution(df, s)),
-            extra_key_fields=("cell", "problem", "solution")),
+                              if b.get("cell") else
+                              (compute_ps_semantic(df, s)
+                               if b.get("group_mode") == "semantic"
+                               else compute_problem_solution(df, s))),
+            extra_key_fields=("cell", "problem", "solution", "group_mode")),
         "technology-transition": _analysis_route(
             "technology-transition",
             lambda df, s, b: compute_transition(df, s, mode=b.get("mode"),

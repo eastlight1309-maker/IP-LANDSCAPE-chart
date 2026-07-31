@@ -2034,8 +2034,57 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
   function renderProblemSolution(h) {
     analysisCard({
       analysis: 'problem-solution', holder: h, title: '문제–해결수단 매트릭스',
-      help: '행=해결과제, 열=해결수단. 색=최근 성장률, hover=건수·유효비율·상위 출원인. 셀 클릭 시 관련 특허·추이·대표 청구항 패널 표시.',
+      help: '행=해결과제, 열=해결수단. 색=최근 성장률, hover=건수·유효비율·상위 출원인. 셀 클릭 시 관련 특허·추이·대표 청구항 패널 표시. ' +
+        '"의미 그룹" 보기는 유사한 과제·수단 문구를 KR-SBERT 임베딩으로 묶어 표현만 다른 중복을 통합합니다 ("본 발명은" 등 상투구는 자동 제거).',
+      controls: function (c, reload) {
+        var modeSel = Ui.el('<select><option value="">원문 기준</option>' +
+          '<option value="semantic">의미 그룹 (임베딩)</option></select>');
+        modeSel.addEventListener('change', function () {
+          reload({ group_mode: modeSel.value || null });
+        });
+        c.controls.prepend(modeSel);
+      },
       renderOk: function (r, c, setTarget) {
+        if (r.group_mode === 'semantic') {
+          var gh = Ui.el('<div class="chart-holder tall"></div>');
+          c.body.appendChild(gh);
+          Render.plotly(gh, r.figure, plotlyDrill);
+          setTarget({ kind: 'plotly', el: gh });
+          if (r.methods) {
+            c.body.appendChild(Ui.el('<div style="margin:6px 0;color:#647b8d;font-size:11.5px">방법: 임베딩 ' +
+              Ui.esc(r.methods.embedding) + ' · 군집 ' + Ui.esc(r.methods.clustering) + '</div>'));
+          }
+          function groupTable(title, groups, kind) {
+            c.body.appendChild(Ui.el('<div style="font-weight:700;font-size:12.5px;margin:10px 0 4px">' +
+              Ui.esc(title) + '</div>'));
+            var rows = (groups || []).map(function (g) {
+              var tr = document.createElement('tr');
+              var td0 = document.createElement('td');
+              var drill = { type: 'cell_group' };
+              drill[kind] = g.members;
+              td0.appendChild(drillCell(g.label, drill));
+              tr.appendChild(td0);
+              tr.insertAdjacentHTML('beforeend',
+                '<td class="num">' + Ui.num(g.n, 0) + '</td>' +
+                '<td>' + (g.members || []).slice(0, 6).map(function (m) {
+                  return '<span class="badge">' + Ui.esc(String(m).slice(0, 30)) + '</span>';
+                }).join('') + ((g.members || []).length > 6 ? ' 외 ' + (g.members.length - 6) : '') + '</td>');
+              return tr;
+            });
+            var tbl = Ui.el(simpleTable(['그룹 (대표 문구)', '건수', '포함 문구'], []));
+            rows.forEach(function (tr) { tbl.querySelector('tbody').appendChild(tr); });
+            var wrap = Ui.el('<div style="overflow-x:auto;max-height:260px;overflow-y:auto"></div>');
+            wrap.appendChild(tbl);
+            c.body.appendChild(wrap);
+          }
+          groupTable('해결과제 그룹 (행)', r.problem_groups, 'problems');
+          groupTable('해결수단 그룹 (열)', r.solution_groups, 'solutions');
+          c.body.appendChild(chartCap('행·열=임베딩 코사인 유사도로 묶인 과제·수단 그룹(라벨=그룹 내 최다 빈도 문구), ' +
+            '셀=해당 그룹 조합의 특허 수. 원문 매트릭스에서는 표현이 달라 흩어져 보이던 조합이 통합되어 ' +
+            '실질적인 밀집·공백을 판단하기 좋습니다. 셀·그룹 클릭 시 그룹 전체 문구의 특허가 열립니다. ' +
+            '그룹이 너무 크게/작게 묶이면 Settings → 임계값 ps_group_distance 를 조정하세요.'));
+          return;
+        }
         var holder = Ui.el('<div class="chart-holder tall"></div>');
         c.body.appendChild(holder);
         var detail = Ui.el('<div></div>');

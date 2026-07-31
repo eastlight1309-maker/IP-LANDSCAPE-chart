@@ -105,6 +105,8 @@ THRESHOLDS = {
     "semantic_sim_threshold": 0.8,   # 의미 기반 후속 특허 판정 코사인 임계값
     "overlap_sim_threshold": 0.85,   # 권리 중첩 네트워크 엣지 코사인 임계값
     "emerging_cluster_recent_share": 0.5,  # 신흥 군집: 최근 3년 출원 비중 기준
+    "ps_group_distance": 0.45,       # 문제-해결수단 의미 그룹핑 코사인 거리 임계값
+                                     # (낮을수록 엄격 → 그룹 많아짐)
 }
 
 # =========================
@@ -1581,6 +1583,39 @@ def resolve_mapped_columns(mapping, available_columns):
     return out
 
 
+# 해결과제·해결수단 상투구 제거: "본 발명은 휨 저감…" → "휨 저감…"
+_PS_BOILER_RE = re.compile(
+    r"^\s*(?:본\s*(?:발명|고안|출원|기술|실시예?)|상기|이\s*발명)"
+    r"(?:에\s*(?:따른|의한|있어서)|에서는|에서|의|은|는|이|가|을|를)?\s*[,:·]?\s*")
+_PS_TAIL_RE = re.compile(r"\s*(?:을|를)?\s*(?:제공|해결|목적으로)\s*(?:하는|한다|함)?\s*"
+                         r"(?:것이다|것|이다)?\s*[.。]?\s*$")
+
+
+def clean_ps_text(value):
+    """해결과제/해결수단 텍스트 정리.
+
+    - 선두 상투구("본 발명은/본 고안의/상기 …") 반복 제거
+    - 말미 상투구("…를 제공하는 것이다") 제거 (2회까지)
+    - 공백 정리. 전부 제거되어 비면 원문 유지 (정보 손실 방지).
+    """
+    s = str(value or "").strip()
+    if not s or s.lower() in ("nan", "none"):
+        return value
+    out = s
+    for _ in range(3):
+        new = _PS_BOILER_RE.sub("", out)
+        if new == out:
+            break
+        out = new
+    for _ in range(2):
+        new = _PS_TAIL_RE.sub("", out)
+        if new == out:
+            break
+        out = new
+    out = re.sub(r"\s+", " ", out).strip(" ,·:;")
+    return out if len(out) >= 2 else s
+
+
 def _derive_country(df):
     """국가 컬럼 검증·파생.
 
@@ -1665,6 +1700,13 @@ def build_standard_frame(raw_df, mapping, applicant_rules=None):
     # 국가 폴백: 국가 컬럼이 없거나 값이 오염(숫자·날짜·빈값)됐으면 문헌번호 앞
     # 2자리 국가코드(KR10-…, US…)에서 파생. 원본은 country_raw 로 보존.
     df = _derive_country(df)
+
+    # 해결과제·해결수단 상투구 제거 ("본 발명은 …" 등) — 원문은 *_raw 로 보존.
+    # 매트릭스·필터·drill-down 이 모두 동일한 정제 값을 쓰도록 전처리에서 일괄 적용.
+    for ps_col in ("problem", "solution"):
+        if ps_col in df.columns:
+            df[ps_col + "_raw"] = df[ps_col]
+            df[ps_col] = df[ps_col].map(clean_ps_text)
 
     if "legal_status" in df.columns:
         df["legal_status_raw"] = df["legal_status"]
@@ -3860,6 +3902,13 @@ def select_patents(df, drill):
             mask &= df["problem"].astype(str).str.strip() == str(p)
         if s and "solution" in df.columns:
             mask &= df["solution"].astype(str).str.strip() == str(s)
+    if dtype == "cell_group":  # 의미 그룹 셀: 그룹에 속한 문구 목록으로 매칭
+        if drill.get("problems") and "problem" in df.columns:
+            wanted_p = set(map(str, drill["problems"]))
+            mask &= df["problem"].astype(str).str.strip().isin(wanted_p)
+        if drill.get("solutions") and "solution" in df.columns:
+            wanted_s = set(map(str, drill["solutions"]))
+            mask &= df["solution"].astype(str).str.strip().isin(wanted_s)
     if drill.get("inventor") and "_inventor_list" in df.columns:
         inv = str(drill["inventor"])
         mask &= df["_inventor_list"].map(lambda lst: inv in (lst or []))
@@ -5337,6 +5386,168 @@ def cell_detail(df, settings, problem, solution):
         "top_applicants": [{"name": str(a), "count": int(c)} for a, c in top_apps.items()],
         "representative_claim": rep_claim,
     }, insight=insight)
+
+
+# ---------------------------------------------------------------------------
+# 의미 그룹 매트릭스 — 해결과제·해결수단을 각각 임베딩해 유사 그룹으로 묶은 표
+# ---------------------------------------------------------------------------
+def _embed_phrases(texts, settings):
+    """고유 문구 목록 임베딩 (KR-SBERT adapter → TF-IDF 폴백). (vectors, method)."""
+    import hashlib
+    vectors, method = None, None
+    adapter = get_adapter(settings)
+    if adapter is not None:
+        ids = [hashlib.sha1(t.encode("utf-8")).hexdigest()[:16] for t in texts]
+        emb = adapter.get_embeddings(ids, texts)
+        got = [emb.get(i) for i in ids]
+        dims = {len(v) for v in got if v is not None}
+        if all(v is not None for v in got) and len(dims) == 1:
+            vectors = np.vstack(got).astype(np.float64)
+            method = "adapter:%s" % adapter.name
+    if vectors is None:
+        vectors = np.asarray(_tfidf_vectors(list(texts)), dtype=np.float64)
+        method = "tfidf_fallback"
+    # 0 벡터(어휘 미포함 희귀 문구)는 서로 직교하는 단위벡터로 대체 → 어느 그룹에도
+    # 억지로 묶이지 않고 단독 그룹이 된다 (cosine 군집의 0-벡터 오류 방지).
+    norms = np.linalg.norm(vectors, axis=1)
+    for zi in np.where(norms == 0)[0]:
+        vectors[zi, int(zi) % vectors.shape[1]] = 1.0
+    norms = np.linalg.norm(vectors, axis=1, keepdims=True)
+    return vectors / norms, method
+
+
+def _semantic_groups(value_counts, settings):
+    """고유 문구 → 의미 그룹 (계층 군집, 코사인 거리 임계값 방식).
+
+    군집법: AgglomerativeClustering(cosine, average linkage,
+    distance_threshold=ps_group_distance). 군집 수를 미리 정하지 않고
+    "이 거리보다 가까운 문구끼리 묶는다" 단일 파라미터로 동작한다 —
+    임계값은 Settings → 임계값 ps_group_distance 로 조정 가능.
+    반환: (mapping{문구→gid}, groups[{gid,label,members,n}], method) 또는 (None,None,사유)
+    """
+    texts = [str(t) for t in value_counts.index[:300]]
+    if len(texts) < 4:
+        return None, None, "고유 문구가 %d개뿐 (최소 4개)" % len(texts)
+    vectors, method = _embed_phrases(texts, settings)
+    from sklearn.cluster import AgglomerativeClustering
+    dist = float(get_threshold(settings, "ps_group_distance"))
+    kwargs = {"n_clusters": None, "distance_threshold": dist, "linkage": "average"}
+    try:
+        model = AgglomerativeClustering(metric="cosine", **kwargs)
+        labels = model.fit_predict(vectors)
+    except TypeError:  # sklearn<1.2 는 metric 대신 affinity
+        model = AgglomerativeClustering(affinity="cosine", **kwargs)
+        labels = model.fit_predict(vectors)
+    by_gid = {}
+    for t, l in zip(texts, labels):
+        by_gid.setdefault(int(l), []).append(t)
+    groups, mapping = [], {}
+    for members in by_gid.values():
+        members.sort(key=lambda t: -int(value_counts.get(t, 0)))
+        total = int(sum(int(value_counts.get(t, 0)) for t in members))
+        rep = members[0]
+        label = rep[:20] + ("…" if len(rep) > 20 else "")
+        if len(members) > 1:
+            label += " 외 %d" % (len(members) - 1)
+        groups.append({"label": label, "rep": rep, "members": members, "n": total})
+    groups.sort(key=lambda g: -g["n"])
+    for gid, g in enumerate(groups):
+        g["gid"] = gid
+        for t in g["members"]:
+            mapping[t] = gid
+    return mapping, groups, method
+
+
+def compute_ps_semantic(df, settings):
+    """의미 그룹 매트릭스: 임베딩 유사도로 묶은 해결과제 그룹 × 해결수단 그룹."""
+    missing = [label for col, label in (("problem", "해결과제"), ("solution", "해결수단"))
+               if col not in df.columns]
+    if missing:
+        return disabled_result(missing)
+    work = df.copy()
+    work["problem"] = _clean_text_series(work["problem"])
+    work["solution"] = _clean_text_series(work["solution"])
+    work = work[work["problem"].notna() & work["solution"].notna()]
+    if len(work) < 10:
+        return empty_result("해결과제·해결수단 값이 있는 특허가 부족합니다 (최소 10건).")
+    p_counts = work["problem"].value_counts()
+    s_counts = work["solution"].value_counts()
+    p_map, p_groups, p_method = _semantic_groups(p_counts, settings)
+    s_map, s_groups, s_method = _semantic_groups(s_counts, settings)
+    if p_map is None or s_map is None:
+        return empty_result("의미 그룹을 만들 수 없습니다 — %s. 고유 문구가 적으면 "
+                            "'원문 기준' 보기를 사용하세요."
+                            % (p_method if p_map is None else s_method))
+
+    max_rows = get_limit(settings, "matrix_max_rows")
+    p_show = p_groups[:max_rows]
+    s_show = s_groups[:max_rows]
+    p_keep = {g["gid"] for g in p_show}
+    s_keep = {g["gid"] for g in s_show}
+    z = [[0] * len(s_show) for _ in p_show]
+    p_pos = {g["gid"]: i for i, g in enumerate(p_show)}
+    s_pos = {g["gid"]: i for i, g in enumerate(s_show)}
+    n_used = 0
+    for p, s in zip(work["problem"], work["solution"]):
+        pg, sg = p_map.get(str(p)), s_map.get(str(s))
+        if pg in p_keep and sg in s_keep:
+            z[p_pos[pg]][s_pos[sg]] += 1
+            n_used += 1
+    hover = [["<b>%s</b> × <b>%s</b><br>%d건<br>과제 예: %s<br>수단 예: %s"
+              % (pg_["label"], sg_["label"], z[i][j],
+                 " / ".join(m[:24] for m in pg_["members"][:2]),
+                 " / ".join(m[:24] for m in sg_["members"][:2]))
+              for j, sg_ in enumerate(s_show)] for i, pg_ in enumerate(p_show)]
+    fig = heatmap(z, [g["label"] for g in s_show], [g["label"] for g in p_show],
+                  title="문제–해결수단 의미 그룹 매트릭스 (임베딩 유사 문구 통합, 셀=건수)",
+                  colorscale="YlGnBu", hovertext=hover, colorbar_title="건수")
+    fig["layout"]["xaxis"]["title"] = {"text": "해결수단 그룹", "standoff": 6}
+    fig["layout"]["yaxis"]["title"] = {"text": "해결과제 그룹", "standoff": 6}
+    fig["data"][0]["customdata"] = [
+        [{"drill": {"type": "cell_group",
+                    "problems": pg_["members"][:50],
+                    "solutions": sg_["members"][:50]}}
+         for sg_ in s_show] for pg_ in p_show]
+
+    zeros = sum(1 for row in z for v in row if v == 0)
+    n_cells = len(p_show) * len(s_show)
+    best_i, best_j = max(((i, j) for i in range(len(p_show))
+                          for j in range(len(s_show))), key=lambda ij: z[ij[0]][ij[1]])
+    sentences = [
+        "임베딩 유사도로 해결과제 %s개 문구를 %s개 그룹으로, 해결수단 %s개 문구를 "
+        "%s개 그룹으로 통합했습니다 (유사 표현 중복 제거)."
+        % (fmt_num(len(p_counts)), fmt_num(len(p_groups)),
+           fmt_num(len(s_counts)), fmt_num(len(s_groups))),
+        "최다 조합은 '%s × %s'(%s건)이며, 그룹 매트릭스 %s개 셀 중 %s개(%s)가 "
+        "공백입니다 — 원문 매트릭스보다 실질 공백을 판단하기 쉽습니다."
+        % (p_show[best_i]["label"], s_show[best_j]["label"],
+           fmt_num(z[best_i][best_j]), fmt_num(n_cells), fmt_num(zeros),
+           fmt_pct(zeros / float(n_cells))),
+        "그룹 라벨은 그룹 내 최다 빈도 문구이며, 셀 클릭 시 그룹에 속한 모든 문구의 "
+        "특허가 열립니다.",
+    ]
+    insight = build_insight(
+        sentences,
+        {"n_problem_phrases": int(len(p_counts)), "n_problem_groups": len(p_groups),
+         "n_solution_phrases": int(len(s_counts)), "n_solution_groups": len(s_groups),
+         "empty_cells": zeros, "n_cells": n_cells,
+         "embedding": p_method},
+        small_sample=check_small_sample(len(work), settings))
+    return ok_result(
+        {"figure": fig, "group_mode": "semantic",
+         "problem_groups": [{k: g[k] for k in ("gid", "label", "members", "n")}
+                            for g in p_show],
+         "solution_groups": [{k: g[k] for k in ("gid", "label", "members", "n")}
+                             for g in s_show],
+         "methods": {"embedding": p_method,
+                     "clustering": "agglomerative(cosine·average, "
+                                   "distance<%.2f)" % float(
+                                       get_threshold(settings, "ps_group_distance"))}},
+        insight=insight,
+        meta={"note": "그룹핑은 임베딩 코사인 거리 기반 계층 군집이며, 거리 임계값은 "
+                      "Settings → 임계값 ps_group_distance 로 조정할 수 있습니다 "
+                      "(낮출수록 더 엄격하게 나뉨). 상투구('본 발명은' 등)는 "
+                      "전처리에서 제거됩니다."})
 
 
 # ===========================================================================
@@ -10696,8 +10907,11 @@ def register_routes(app):
         "problem-solution": _analysis_route(
             "problem-solution",
             lambda df, s, b: (cell_detail(df, s, b.get("problem"), b.get("solution"))
-                              if b.get("cell") else compute_problem_solution(df, s)),
-            extra_key_fields=("cell", "problem", "solution")),
+                              if b.get("cell") else
+                              (compute_ps_semantic(df, s)
+                               if b.get("group_mode") == "semantic"
+                               else compute_problem_solution(df, s))),
+            extra_key_fields=("cell", "problem", "solution", "group_mode")),
         "technology-transition": _analysis_route(
             "technology-transition",
             lambda df, s, b: compute_transition(df, s, mode=b.get("mode"),

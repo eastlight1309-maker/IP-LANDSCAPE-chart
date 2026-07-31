@@ -89,6 +89,8 @@ THRESHOLDS = {
     "semantic_sim_threshold": 0.8,   # 의미 기반 후속 특허 판정 코사인 임계값
     "overlap_sim_threshold": 0.85,   # 권리 중첩 네트워크 엣지 코사인 임계값
     "emerging_cluster_recent_share": 0.5,  # 신흥 군집: 최근 3년 출원 비중 기준
+    "ps_group_distance": 0.45,       # 문제-해결수단 의미 그룹핑 코사인 거리 임계값
+                                     # (낮을수록 엄격 → 그룹 많아짐)
 }
 
 # =========================

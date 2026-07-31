@@ -346,6 +346,40 @@ def test_km_curve_basic():
 
 
 # ---------------------------------------------------------------------------
+# 문제-해결수단: 상투구 제거 + 의미 그룹 매트릭스
+# ---------------------------------------------------------------------------
+def test_clean_ps_text():
+    from src.preprocessing import clean_ps_text
+    assert clean_ps_text("본 발명은 휨(warpage) 저감을 제공하는 것이다.") \
+        == "휨(warpage) 저감"
+    assert clean_ps_text("본 발명의 미세피치 접합 신뢰성") == "미세피치 접합 신뢰성"
+    assert clean_ps_text("상기 방열 특성 개선") == "방열 특성 개선"
+    assert clean_ps_text("수율 향상") == "수율 향상"      # 상투구 없으면 그대로
+    assert clean_ps_text("본 발명은") == "본 발명은"      # 전부 제거되면 원문 유지
+
+
+def test_ps_semantic_matrix(settings):
+    from src.analyses.problem_solution import compute_ps_semantic
+    from src.analyses.common import select_patents
+    raw = generate_sample(n=400, seed=29)
+    raw["해결과제"] = "본 발명은 " + raw["해결과제"].astype(str)
+    df = make_prepared(raw)
+    assert not df["problem"].astype(str).str.startswith("본 발명").any()
+    r = compute_ps_semantic(df, settings)
+    assert r["status"] == "ok"
+    assert r["group_mode"] == "semantic"
+    assert r["problem_groups"] and r["solution_groups"]
+    total_members = sum(len(g["members"]) for g in r["problem_groups"])
+    assert total_members >= len(r["problem_groups"])  # 그룹이 문구를 포함
+    # 셀 drill = cell_group (그룹 소속 문구 목록) → select_patents 매칭
+    cd = r["figure"]["data"][0]["customdata"][0][0]["drill"]
+    assert cd["type"] == "cell_group"
+    sub = select_patents(df, cd)
+    assert len(sub) > 0
+    assert r["methods"]["clustering"].startswith("agglomerative")
+
+
+# ---------------------------------------------------------------------------
 # LLM 입력: 화면 차트 데이터 컨텍스트
 # ---------------------------------------------------------------------------
 def test_format_chart_context():

@@ -190,6 +190,13 @@ def select_patents(df, drill):
             mask &= df["problem"].astype(str).str.strip() == str(p)
         if s and "solution" in df.columns:
             mask &= df["solution"].astype(str).str.strip() == str(s)
+    if dtype == "cell_group":  # 의미 그룹 셀: 그룹에 속한 문구 목록으로 매칭
+        if drill.get("problems") and "problem" in df.columns:
+            wanted_p = set(map(str, drill["problems"]))
+            mask &= df["problem"].astype(str).str.strip().isin(wanted_p)
+        if drill.get("solutions") and "solution" in df.columns:
+            wanted_s = set(map(str, drill["solutions"]))
+            mask &= df["solution"].astype(str).str.strip().isin(wanted_s)
     if drill.get("inventor") and "_inventor_list" in df.columns:
         inv = str(drill["inventor"])
         mask &= df["_inventor_list"].map(lambda lst: inv in (lst or []))

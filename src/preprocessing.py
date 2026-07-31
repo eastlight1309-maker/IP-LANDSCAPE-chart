@@ -429,6 +429,39 @@ def resolve_mapped_columns(mapping, available_columns):
     return out
 
 
+# 해결과제·해결수단 상투구 제거: "본 발명은 휨 저감…" → "휨 저감…"
+_PS_BOILER_RE = re.compile(
+    r"^\s*(?:본\s*(?:발명|고안|출원|기술|실시예?)|상기|이\s*발명)"
+    r"(?:에\s*(?:따른|의한|있어서)|에서는|에서|의|은|는|이|가|을|를)?\s*[,:·]?\s*")
+_PS_TAIL_RE = re.compile(r"\s*(?:을|를)?\s*(?:제공|해결|목적으로)\s*(?:하는|한다|함)?\s*"
+                         r"(?:것이다|것|이다)?\s*[.。]?\s*$")
+
+
+def clean_ps_text(value):
+    """해결과제/해결수단 텍스트 정리.
+
+    - 선두 상투구("본 발명은/본 고안의/상기 …") 반복 제거
+    - 말미 상투구("…를 제공하는 것이다") 제거 (2회까지)
+    - 공백 정리. 전부 제거되어 비면 원문 유지 (정보 손실 방지).
+    """
+    s = str(value or "").strip()
+    if not s or s.lower() in ("nan", "none"):
+        return value
+    out = s
+    for _ in range(3):
+        new = _PS_BOILER_RE.sub("", out)
+        if new == out:
+            break
+        out = new
+    for _ in range(2):
+        new = _PS_TAIL_RE.sub("", out)
+        if new == out:
+            break
+        out = new
+    out = re.sub(r"\s+", " ", out).strip(" ,·:;")
+    return out if len(out) >= 2 else s
+
+
 def _derive_country(df):
     """국가 컬럼 검증·파생.
 
@@ -513,6 +546,13 @@ def build_standard_frame(raw_df, mapping, applicant_rules=None):
     # 국가 폴백: 국가 컬럼이 없거나 값이 오염(숫자·날짜·빈값)됐으면 문헌번호 앞
     # 2자리 국가코드(KR10-…, US…)에서 파생. 원본은 country_raw 로 보존.
     df = _derive_country(df)
+
+    # 해결과제·해결수단 상투구 제거 ("본 발명은 …" 등) — 원문은 *_raw 로 보존.
+    # 매트릭스·필터·drill-down 이 모두 동일한 정제 값을 쓰도록 전처리에서 일괄 적용.
+    for ps_col in ("problem", "solution"):
+        if ps_col in df.columns:
+            df[ps_col + "_raw"] = df[ps_col]
+            df[ps_col] = df[ps_col].map(clean_ps_text)
 
     if "legal_status" in df.columns:
         df["legal_status_raw"] = df["legal_status"]
