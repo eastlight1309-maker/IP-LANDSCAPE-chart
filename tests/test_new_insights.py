@@ -349,6 +349,30 @@ def test_executive_summary(prepared, settings):
     assert r2["kpi"]["focal_basis"] == "화면에서 선택"
 
 
+def test_tech_year_bubble(prepared, settings):
+    from src.analyses.basic_stats import compute_tech_year_bubble
+    from src.analyses.common import select_patents
+    # 전체 모드: 단일 시리즈, 색=건수
+    r = compute_tech_year_bubble(prepared, settings)
+    assert r["status"] == "ok" and len(r["figure"]["data"]) == 1
+    assert r["figure"]["layout"]["xaxis"]["dtick"] == 1
+    cd = r["figure"]["data"][0]["customdata"][0]
+    assert cd["drill"]["type"] == "tech" and "year" in cd["drill"]
+    # 2개사 비교: 회사별 trace + 범례 + 출원인 조건 drill
+    apps = prepared["applicant_display"].value_counts().index.tolist()
+    r2 = compute_tech_year_bubble(prepared, settings, companies=apps[:2])
+    assert r2["status"] == "ok" and len(r2["figure"]["data"]) == 2
+    assert r2["figure"]["layout"]["showlegend"] is True
+    names = {tr["name"] for tr in r2["figure"]["data"]}
+    assert names == set(apps[:2])
+    cd2 = r2["figure"]["data"][0]["customdata"][0]["drill"]
+    assert cd2.get("applicant") in apps[:2]
+    assert len(select_patents(prepared, cd2)) > 0
+    # 존재하지 않는 회사 → empty 안내
+    r3 = compute_tech_year_bubble(prepared, settings, companies=["없는회사"])
+    assert r3["status"] == "empty"
+
+
 def test_applicant_year_bubble(prepared, settings):
     from src.analyses.basic_stats import compute_basic_stats
     r = compute_basic_stats(prepared, settings)

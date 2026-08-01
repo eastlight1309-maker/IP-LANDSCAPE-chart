@@ -1154,6 +1154,46 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
           '기술분류별 누적 건수 순위와 분류×연도 동향 매트릭스입니다. 다중분류는 Settings 의 처리방식을 따르지 않고 각 분류에 1건씩 계산합니다.',
           ['tech', 'tech_year'],
           '순위: X축=건수, Y축=기술분류 — 포트폴리오가 집중된 기술. 동향 매트릭스: X축=연도, Y축=기술분류, 색=그 해 건수. 읽는 법: 오른쪽(최근)으로 갈수록 진해지는 분류=성장 기술, 왼쪽만 진하고 최근이 옅은 분류=쇠퇴 기술입니다.') },
+      { label: '기술×연도 버블', render: function (h) {
+        var sel1, sel2, sel3;
+        function selectedCompanies() {
+          return [sel1.value, sel2.value, sel3.value].filter(function (v) { return v; });
+        }
+        analysisCard({
+          analysis: 'tech-year-bubble', holder: h,
+          title: '기술분류 × 출원연도 버블 (출원인 선택·최대 3개사 비교)',
+          help: 'X축=출원연도(1년=1칸), Y축=기술분류, 버블 크기=해당 연도·분류의 출원건수입니다. ' +
+            '상단에서 출원인을 선택하면 그 회사만 표시되고, 2~3개사를 고르면 회사별 색으로 같은 축에 ' +
+            '겹쳐 비교합니다 (같은 기술 행에서 세로로 살짝 어긋나게 배치되어 겹침 없이 비교 가능). ' +
+            '아무도 선택하지 않으면 전체 데이터 기준입니다.',
+          guide: '읽는 법(단일/전체): 오른쪽으로 갈수록 최근이며, 행에서 버블이 커지는 기술=투자 확대, ' +
+            '사라지는 기술=철수 신호입니다. 읽는 법(비교): 같은 기술 행에서 색이 다른 버블의 등장 ' +
+            '시점을 비교하면 누가 먼저 진입했는지(선행), 크기를 비교하면 누가 더 크게 투자하는지 ' +
+            '보입니다. 한 회사에만 버블이 있는 행=그 회사의 독점 영역이자 상대 회사의 공백입니다. ' +
+            '버블 클릭 시 해당 (회사×)기술×연도 특허가 열립니다.',
+          controls: function (c, reload) {
+            function mkSel(ph) {
+              var s = Ui.el('<select><option value="">' + ph + '</option></select>');
+              ((State.filterOptions || {}).applicants || []).slice(0, 60).forEach(function (a) {
+                var o = document.createElement('option'); o.value = a; o.textContent = a;
+                s.appendChild(o);
+              });
+              s.addEventListener('change', function () {
+                reload({ companies: selectedCompanies() });
+              });
+              return s;
+            }
+            sel1 = mkSel('회사 1 (전체)'); sel2 = mkSel('회사 2'); sel3 = mkSel('회사 3');
+            c.controls.prepend(sel3); c.controls.prepend(sel2); c.controls.prepend(sel1);
+          },
+          renderOk: function (r, c, setTarget) {
+            var holder = Ui.el('<div class="chart-holder tall"></div>');
+            c.body.appendChild(holder);
+            Render.plotly(holder, r.figure, plotlyDrill);
+            setTarget({ kind: 'plotly', el: holder });
+          }
+        });
+      } },
       { label: '심화 분석', render: function (h) {
         analysisCard({
           analysis: 'advanced-stats', holder: h,

@@ -208,3 +208,121 @@ def compute_basic_stats(df, settings):
         "applicant_year_bubble": fig_app_bubble,
         "tech": fig_tech, "tech_year": fig_tech_year,
     }, insight=insight)
+
+
+# ---------------------------------------------------------------------------
+# 기술분류 × 출원연도 버블 (출원인 선택·다사 비교)
+# ---------------------------------------------------------------------------
+def compute_tech_year_bubble(df, settings, companies=None):
+    """X=출원연도, Y=기술분류 버블 (크기=출원건수).
+
+    companies 미지정: 전체 데이터 1개 시리즈 (색=건수).
+    companies 1~4개: 회사별 색 + 같은 셀에서 겹치지 않도록 세로 미세 오프셋 —
+    두세 회사의 기술별 투자 시점·규모를 한 화면에서 비교한다.
+    Drill: 버블 클릭 → 해당 (기술분류 × 연도 [× 출원인]) 특허.
+    """
+    from src.viz_payload import color_for
+    if not len(df) or not df["_base_year"].notna().any():
+        return empty_result(diagnose_year_tech(df))
+    if not df["_tech_list"].map(lambda v: bool(v)).any():
+        return empty_result(diagnose_year_tech(df))
+    comps = [str(c) for c in (companies or []) if str(c).strip()][:4]
+    scope = df[df["applicant_display"].isin(comps)] if comps else df
+    if comps and not len(scope):
+        return empty_result("선택한 출원인(%s)의 특허가 현재 필터에 없습니다."
+                            % ", ".join(comps))
+
+    max_rows = min(int(get_limit(settings, "matrix_max_rows")), 15)
+    tech_counts = pd.Series([t for lst in scope["_tech_list"] for t in (lst or [])])
+    if not len(tech_counts):
+        return empty_result("기술분류 값이 없습니다.")
+    top_techs = tech_counts.value_counts().head(max_rows).index.tolist()
+    tpos = {t: i for i, t in enumerate(top_techs)}
+    year_lo = int(scope["_base_year"].dropna().min())
+    year_hi = int(scope["_base_year"].dropna().max())
+
+    def cell_counts(sub):
+        counts = {}
+        for lst, y in zip(sub["_tech_list"], sub["_base_year"]):
+            if y is None or (isinstance(y, float) and np.isnan(y)):
+                continue
+            for t in set(lst or []):
+                if t in tpos:
+                    counts[(t, int(y))] = counts.get((t, int(y)), 0) + 1
+        return counts
+
+    groups = comps if comps else [None]
+    all_counts = [cell_counts(scope[scope["applicant_display"] == g] if g else scope)
+                  for g in groups]
+    vmax = max([max(c.values()) for c in all_counts if c] or [1])
+    n_g = len(groups)
+    offsets = [0.0] if n_g == 1 else \
+        [(-0.22 + 0.44 * i / (n_g - 1)) for i in range(n_g)]
+
+    color_reg = {}
+    traces = []
+    for gi, (g, counts) in enumerate(zip(groups, all_counts)):
+        if not counts:
+            continue
+        name = g if g else "전체"
+        xs, ys, sizes, colors, hovers, customs = [], [], [], [], [], []
+        for (t, y), n in counts.items():
+            xs.append(int(y))
+            ys.append(tpos[t] + offsets[gi])
+            sizes.append(float(max(7.0, min(40.0, 6 + 30 * np.sqrt(n / vmax)))))
+            colors.append(n)
+            hovers.append("%s — %s %d년: %s건" % (name, t, y, fmt_num(n)))
+            drill = {"type": "tech", "tech": str(t), "year": int(y)}
+            if g:
+                drill["applicant"] = g
+            customs.append({"drill": drill,
+                            "m": {"출원인": name, "기술분류": str(t),
+                                  "연도": int(y), "건수": int(n)}})
+        marker = {"size": sizes, "line": {"width": 0.6, "color": "#5b7a8a"}}
+        if n_g == 1:
+            marker.update({"color": colors, "colorscale": "Blues", "cmin": 0,
+                           "colorbar": {"title": "출원건수", "thickness": 12}})
+        else:
+            marker.update({"color": color_for(name, color_reg), "opacity": 0.85})
+        traces.append({"type": "scatter", "mode": "markers", "name": name,
+                       "x": xs, "y": ys, "hovertext": hovers, "hoverinfo": "text",
+                       "customdata": customs, "marker": marker})
+    title = ("기술분류 × 출원연도 버블 — %s 비교 (크기=출원건수)" % " vs ".join(comps)
+             if comps else "기술분류 × 출원연도 버블 (크기·색=출원건수, 전체)")
+    fig = {"data": traces, "layout": base_layout(
+        title,
+        xaxis={"title": "출원연도", "dtick": 1, "tickformat": "d",
+               "range": [year_lo - 0.7, year_hi + 0.7]},
+        yaxis={"title": "", "tickmode": "array",
+               "tickvals": list(range(len(top_techs))),
+               "ticktext": [str(t)[:22] for t in top_techs],
+               "range": [-0.7, len(top_techs) - 0.3], "automargin": True},
+        showlegend=bool(comps),
+        height=max(440, 140 + 36 * len(top_techs)))}
+
+    sentences = []
+    if comps:
+        for g, counts in zip(groups, all_counts):
+            if not counts:
+                sentences.append("'%s'는 현재 필터에서 상위 기술분류 출원이 없습니다." % g)
+                continue
+            (bt, by), bn = max(counts.items(), key=lambda kv: kv[1])
+            recent_total = sum(n for (t, y), n in counts.items() if y >= year_hi - 2)
+            sentences.append("'%s'의 최대 집중은 '%s' %d년(%s건)이며 최근 3년 상위 분류 "
+                             "출원은 %s건입니다."
+                             % (g, bt, by, fmt_num(bn), fmt_num(recent_total)))
+        sentences.append("같은 행(기술)에서 색이 다른 버블의 크기·등장 시점을 비교하면 "
+                         "누가 먼저·더 크게 투자했는지 보입니다.")
+    else:
+        counts = all_counts[0]
+        (bt, by), bn = max(counts.items(), key=lambda kv: kv[1])
+        sentences.append("최대 밀집 셀은 '%s' %d년(%s건)입니다. 위 출원인 선택으로 "
+                         "특정 회사·최대 3개사 비교 보기가 가능합니다."
+                         % (bt, by, fmt_num(bn)))
+    insight = build_insight(
+        sentences,
+        {"companies": comps or "전체", "n_techs": len(top_techs),
+         "period": "%d–%d" % (year_lo, year_hi)},
+        small_sample=check_small_sample(len(scope), settings))
+    return ok_result({"figure": fig, "techs": top_techs, "companies": comps},
+                     insight=insight)
