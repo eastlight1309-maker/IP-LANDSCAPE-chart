@@ -179,6 +179,26 @@ def test_project_save_load(client):
     _post(client, "/api/project/load", {"name": "테스트 프로젝트", "delete": True})
 
 
+def test_snapshot_roundtrip_with_settings_and_note(client):
+    """분석 스냅샷: Dataset·화면·분석 단위·메모까지 저장·복원되는지."""
+    _post(client, "/api/project/save",
+          {"name": "스냅샷A", "filters": {"year_from": 2019, "countries": ["KR"]},
+           "note": "상반기 검토용",
+           "settings": {"dataset": DATASET, "view": "whitespace",
+                        "analysis_unit": "document", "multiclass_mode": "duplicate"}})
+    lst = _post(client, "/api/project/load", {}).get_json()["projects"]
+    entry = next(p for p in lst if p["name"] == "스냅샷A")
+    assert entry["note"] == "상반기 검토용"
+    got = _post(client, "/api/project/load", {"name": "스냅샷A"}).get_json()["project"]
+    assert got["settings"]["dataset"] == DATASET
+    assert got["settings"]["view"] == "whitespace"
+    assert got["filters"]["countries"] == ["KR"]
+    # 삭제 후 목록에서 제거
+    _post(client, "/api/project/load", {"name": "스냅샷A", "delete": True})
+    lst2 = _post(client, "/api/project/load", {}).get_json()["projects"]
+    assert all(p["name"] != "스냅샷A" for p in lst2)
+
+
 def test_filter_state(client):
     r = _post(client, "/api/filter-state", {"filters": {"year_from": 2019}})
     assert r.get_json()["status"] == "ok"

@@ -2949,6 +2949,7 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
       '<li><b>PNG/SVG</b>: 보고서용 이미지 저장.</li>' +
       '<li><b>🤖 AI 인사이트</b>: "LLM 인사이트 생성" 버튼은 화면 차트의 실제 수치를 근거로 PPT 슬라이드 형식([슬라이드 제목]→[핵심 메시지]→[근거 데이터]→[시사점·제언])의 정리된 인사이트를 만듭니다. AI 패널에서는 추가 질문(챗)이 가능하고 "웹 검색 포함"을 켜면 외부 검색 결과를 참고해 답하며 출처 링크가 표시됩니다.</li>' +
       '<li><b>🗂️ 인사이트 보관함</b>: LLM 이 생성한 인사이트는 자동 저장되어 좌측 "인사이트 보관함" 메뉴에서 계속 볼 수 있고, 원하는 항목을 골라 PPT 보고서(.pptx)로 다운로드할 수 있습니다.</li>' +
+      '<li><b>💾 분석 스냅샷</b>: Settings 의 "분석 스냅샷" 카드(또는 상단 헤더 저장 버튼)로 현재 분석 상태(Dataset·필터·분석 단위·보던 화면)를 이름 붙여 저장하고, 목록이나 헤더 드롭다운에서 선택해 그대로 복원할 수 있습니다. 데이터가 그대로면 결과는 서버 캐시에서 즉시 열립니다.</li>' +
       '<li><b>비차단 로딩</b>: 계산이 오래 걸리는 분석은 우하단 배지로 진행 상태만 표시됩니다 — 기다리는 동안 다른 탭을 자유롭게 볼 수 있고, 돌아오면 캐시에서 바로 열립니다.</li>' +
       '<li><b>📖 차트 해석</b>: 각 차트 아래 회색 박스에 축 의미와 읽는 법이 항상 표시됩니다.</li></ul>');
     section('🧠 임베딩·군집·LLM 안내',
@@ -3069,6 +3070,73 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
       }).catch(errToast).finally(function () { upBtn.disabled = false; });
     });
     renderUploads();
+
+    /* 분석 스냅샷 저장·불러오기 */
+    var cs = card('💾 분석 스냅샷 — 기존 분석 결과 불러오기',
+      '현재 분석 상태(Dataset·필터·분석 단위·보고 있던 화면)를 이름을 붙여 저장하고, 목록에서 ' +
+      '선택해 그대로 복원합니다. 데이터가 바뀌지 않았다면 분석 결과는 서버 캐시에서 즉시 열립니다. ' +
+      '상단 헤더의 "저장된 분석…" 드롭다운에서도 바로 불러올 수 있습니다.');
+    grid.appendChild(cs.root);
+    var snapForm = Ui.el('<div class="settings-row">' +
+      '<input type="text" id="snap-name" maxlength="60" placeholder="스냅샷 이름 *" style="flex:1">' +
+      '<input type="text" id="snap-note" maxlength="200" placeholder="메모 (선택)" style="flex:2"></div>');
+    cs.body.appendChild(snapForm);
+    var snapSave = Ui.el('<button class="btn small primary">현재 분석 상태 저장</button>');
+    cs.body.appendChild(snapSave);
+    var snapList = Ui.el('<div style="margin-top:10px"></div>');
+    cs.body.appendChild(snapList);
+    function renderSnapshots() {
+      Api.post('/api/project/load', {}).then(function (d) {
+        snapList.innerHTML = '';
+        var items = d.projects || [];
+        if (!items.length) {
+          snapList.innerHTML = '<div class="status-empty">저장된 분석 스냅샷이 없습니다.</div>';
+          return;
+        }
+        var rows = items.map(function (p) {
+          var tr = document.createElement('tr');
+          var td0 = document.createElement('td');
+          var b = Ui.el('<span class="clickable"><b>' + Ui.esc(p.name) + '</b></span>');
+          b.addEventListener('click', function () { loadSnapshot(p.name).catch(errToast); });
+          td0.appendChild(b);
+          tr.appendChild(td0);
+          tr.insertAdjacentHTML('beforeend',
+            '<td style="white-space:nowrap">' + Ui.esc(p.saved_at || '') + '</td>' +
+            '<td>' + Ui.esc(p.note || '') + '</td>');
+          var tdAct = document.createElement('td');
+          tdAct.style.whiteSpace = 'nowrap';
+          var loadBtn = Ui.el('<button class="btn small">불러오기</button>');
+          loadBtn.addEventListener('click', function () { loadSnapshot(p.name).catch(errToast); });
+          tdAct.appendChild(loadBtn);
+          var delBtn = Ui.el('<button class="btn small" style="margin-left:4px">삭제</button>');
+          delBtn.addEventListener('click', function () {
+            if (!window.confirm("스냅샷 '" + p.name + "' 을(를) 삭제할까요?")) return;
+            Api.post('/api/project/load', { name: p.name, delete: true }).then(function () {
+              Ui.toast('삭제되었습니다.');
+              renderSnapshots(); refreshProjects();
+            }).catch(errToast);
+          });
+          tdAct.appendChild(delBtn);
+          tr.appendChild(tdAct);
+          return tr;
+        });
+        var tbl = Ui.el(simpleTable(['이름', '저장 시각', '메모', ''], []));
+        rows.forEach(function (tr) { tbl.querySelector('tbody').appendChild(tr); });
+        var wrap = Ui.el('<div style="overflow-x:auto;max-height:260px;overflow-y:auto"></div>');
+        wrap.appendChild(tbl);
+        snapList.appendChild(wrap);
+      }).catch(errToast);
+    }
+    snapSave.addEventListener('click', function () {
+      var name = document.getElementById('snap-name').value.trim();
+      if (!name) { Ui.toast('스냅샷 이름을 입력하세요.', 'error'); return; }
+      saveSnapshot(name, document.getElementById('snap-note').value.trim())
+        .then(function () {
+          document.getElementById('snap-name').value = '';
+          renderSnapshots();
+        }).catch(errToast);
+    });
+    renderSnapshots();
 
     /* Dataset & 분석 옵션 */
     var c1 = card('Dataset · 분석 옵션');
@@ -3387,12 +3455,51 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
     renderApplicantManager(holder, false);
   };
 
-  /* ---------------------------------------------------------- 프로젝트 */
+  /* ------------------------------------------- 분석 스냅샷 (프로젝트) */
+  function saveSnapshot(name, note) {
+    /* 현재 분석 상태 전체 저장: Dataset + 필터 + 분석 단위/다중분류 + 보던 화면 */
+    var s = (State.config && State.config.settings) || {};
+    return Api.post('/api/project/save', {
+      name: name, filters: Filters.collect(), note: note || '',
+      settings: { dataset: s.dataset || null, view: State.view,
+                  analysis_unit: s.analysis_unit, multiclass_mode: s.multiclass_mode }
+    }).then(function () {
+      Ui.toast("분석 스냅샷 '" + name + "' 이(가) 저장되었습니다.");
+      refreshProjects();
+    });
+  }
+
+  function loadSnapshot(name) {
+    /* 저장된 분석 상태 복원: Dataset 설정 → 필터 → 저장했던 화면으로 이동.
+       분석 결과는 서버 캐시에서 즉시 로드된다 (데이터가 그대로인 경우). */
+    return Api.post('/api/project/load', { name: name }).then(function (d) {
+      var proj = d.project || {};
+      var saved = proj.settings || {};
+      var patch = {};
+      if (saved.dataset) patch.dataset = saved.dataset;
+      if (saved.analysis_unit) patch.analysis_unit = saved.analysis_unit;
+      if (saved.multiclass_mode) patch.multiclass_mode = saved.multiclass_mode;
+      var pre = Object.keys(patch).length ?
+        Api.post('/api/settings', patch).then(function (resp) {
+          State.config.settings = resp.settings;
+        }) : Promise.resolve();
+      return pre.then(function () {
+        State.config.filter_state = proj.filters || {};
+        return Filters.load();
+      }).then(function () {
+        Views.render(saved.view || State.view);
+        Ui.toast("분석 스냅샷 '" + name + "' 을(를) 불러왔습니다" +
+          (saved.dataset ? ' (Dataset: ' + saved.dataset + ')' : '') + '.');
+      });
+    });
+  }
+
   function refreshProjects() {
     Api.post('/api/project/load', {}).then(function (d) {
+      State.projects = d.projects || [];
       var sel = document.getElementById('project-list');
-      sel.innerHTML = '<option value="">프로젝트…</option>';
-      (d.projects || []).forEach(function (p) {
+      sel.innerHTML = '<option value="">저장된 분석…</option>';
+      State.projects.forEach(function (p) {
         var o = document.createElement('option');
         o.value = p.name; o.textContent = p.name + ' (' + (p.saved_at || '') + ')';
         sel.appendChild(o);
@@ -3400,20 +3507,15 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
     }).catch(function () {});
   }
   document.getElementById('btn-save-project').addEventListener('click', function () {
-    var name = prompt('프로젝트 이름 (현재 필터·설정 저장):');
+    var name = prompt('분석 스냅샷 이름 (현재 Dataset·필터·화면 저장):');
     if (!name) return;
-    Api.post('/api/project/save', { name: name, filters: Filters.collect() })
-      .then(function () { Ui.toast('프로젝트가 저장되었습니다.'); refreshProjects(); })
-      .catch(errToast);
+    saveSnapshot(name).catch(errToast);
   });
   document.getElementById('project-list').addEventListener('change', function (ev) {
     var name = ev.target.value;
+    ev.target.value = '';
     if (!name) return;
-    Api.post('/api/project/load', { name: name }).then(function (d) {
-      State.config.filter_state = d.project.filters || {};
-      Filters.load().then(function () { Views.render(State.view); });
-      Ui.toast("프로젝트 '" + name + "' 필터를 불러왔습니다.");
-    }).catch(errToast);
+    loadSnapshot(name).catch(errToast);
   });
 
   /* ------------------------------------------------------------- 부트 */
