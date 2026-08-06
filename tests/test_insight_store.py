@@ -134,6 +134,19 @@ def test_minimal_pptx_with_image_opens_with_library(tmp_path, monkeypatch):
     assert MSO_SHAPE_TYPE.PICTURE in shapes
 
 
+def test_title_font_shrinks_for_long_titles():
+    from src.insight_store import _title_size
+    assert _title_size("짧은 제목") == 20
+    assert _title_size("가" * 55) == 16
+    assert _title_size("가" * 100) == 13
+    # 슬라이드 XML 에 축소된 크기 반영 + 섹션 머리글 앞 여백(spcBef)
+    from src.insight_store import _slide_xml
+    long_title = "패키징 분야 연 12% 성장과 A사 집중 심화 및 후발 진입 리스크 종합 진단 보고"
+    xml = _slide_xml(long_title, ["[핵심 메시지]", "- 본문"], has_image=False)
+    assert 'sz="%d"' % (_title_size(long_title) * 100) in xml
+    assert "spcBef" in xml
+
+
 def test_minimal_pptx_opens_with_pptx_library():
     """내장 생성기 결과를 python-pptx 의 엄격한 OPC 파서로 검증 (설치 시에만)."""
     pptx = pytest.importorskip("pptx")

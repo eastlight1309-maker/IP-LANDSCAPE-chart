@@ -197,28 +197,35 @@ def _pptx_via_library(slides):
     blank = prs.slide_layouts[6]
     for sl in slides:
         slide = prs.slides.add_slide(blank)
-        tbox = slide.shapes.add_textbox(Inches(0.5), Inches(0.35),
-                                        Inches(12.3), Inches(1.0))
+        tbox = slide.shapes.add_textbox(Inches(0.5), Inches(0.3),
+                                        Inches(12.3), Inches(1.1))
+        tbox.text_frame.word_wrap = True
         p = tbox.text_frame.paragraphs[0]
         p.text = sl["title"]
-        p.font.size = Pt(24)
+        p.font.size = Pt(_title_size(sl["title"]))
         p.font.bold = True
         has_img = bool(sl.get("image"))
         if has_img:
             slide.shapes.add_picture(io.BytesIO(sl["image"]),
-                                     Inches(0.4), Inches(1.45),
-                                     width=Inches(7.1), height=Inches(4.14))
-            body_x, body_w, fsize = Inches(7.7), Inches(5.2), 11
+                                     Inches(0.4), Inches(1.55),
+                                     width=Inches(6.9), height=Inches(4.03))
+            body_x, body_w, fsize = Inches(7.5), Inches(5.5), 12
         else:
-            body_x, body_w, fsize = Inches(0.6), Inches(12.1), 14
-        body = slide.shapes.add_textbox(body_x, Inches(1.5), body_w, Inches(5.6))
+            body_x, body_w, fsize = Inches(0.6), Inches(12.1), 13
+        body = slide.shapes.add_textbox(body_x, Inches(1.55), body_w, Inches(5.5))
         tf = body.text_frame
         tf.word_wrap = True
         for i, line in enumerate(sl["lines"]):
+            s = str(line)
             para = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
-            para.text = str(line)
-            para.font.size = Pt((fsize + 4) if line.startswith("[") else fsize)
-            para.font.bold = line.startswith("[")
+            para.text = s
+            if i == 0 and s.startswith("·"):
+                para.font.size = Pt(9)
+            else:
+                para.font.size = Pt((fsize + 2) if s.startswith("[") else fsize)
+                para.font.bold = s.startswith("[")
+                if s.startswith("["):
+                    para.space_before = Pt(8)
     buf = io.BytesIO()
     prs.save(buf)
     return buf.getvalue()
@@ -314,14 +321,33 @@ def _picture_xml(shape_id, x, y, w, h):
             % (shape_id, x, y, w, h))
 
 
+def _title_size(title):
+    """제목 길이에 따라 글자 크기 축소 (화면 밖으로 나가지 않게)."""
+    n = len(str(title))
+    if n <= 40:
+        return 20
+    if n <= 70:
+        return 16
+    return 13
+
+
 def _textbox(shape_id, name, x, y, w, h, paragraphs):
-    """EMU 좌표 텍스트박스 sp XML. paragraphs: [(text, size_pt, bold)]"""
+    """EMU 좌표 텍스트박스 sp XML.
+
+    paragraphs: [(text, size_pt, bold[, space_before_pt])] — 섹션 머리글 앞에
+    여백을 줘 그래프·본문과 조화롭게 읽히도록 한다.
+    """
     paras = []
-    for text, size, bold in paragraphs:
+    for para in paragraphs:
+        text, size, bold = para[0], para[1], para[2]
+        spc = para[3] if len(para) > 3 else 0
         t = escape(str(text)) or " "
+        ppr = ('<a:pPr><a:spcBef><a:spcPts val="%d"/></a:spcBef></a:pPr>'
+               % int(spc * 100)) if spc else "<a:pPr/>"
         paras.append(
-            '<a:p><a:pPr/><a:r><a:rPr lang="ko-KR" sz="%d" b="%d" dirty="0"/>'
-            '<a:t>%s</a:t></a:r></a:p>' % (int(size * 100), 1 if bold else 0, t))
+            '<a:p>%s<a:r><a:rPr lang="ko-KR" sz="%d" b="%d" dirty="0"/>'
+            '<a:t>%s</a:t></a:r></a:p>' % (ppr, int(size * 100),
+                                           1 if bold else 0, t))
     return ('<p:sp><p:nvSpPr><p:cNvPr id="%d" name="%s"/>'
             '<p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr>'
             '<p:spPr><a:xfrm><a:off x="%d" y="%d"/><a:ext cx="%d" cy="%d"/></a:xfrm>'
@@ -332,21 +358,29 @@ def _textbox(shape_id, name, x, y, w, h, paragraphs):
 
 
 def _slide_xml(title, lines, has_image=False):
-    title_box = _textbox(2, "title", 457200, 320040, 11277600, 914400,
-                         [(title, 24, True)])
+    # 제목: 길이 비례 축소 + 2줄 여유 박스 (화면 밖 이탈 방지)
+    title_box = _textbox(2, "title", 457200, 274320, 11277600, 1005840,
+                         [(title, _title_size(title), True)])
     body_paras = []
-    base_size = 11 if has_image else 14
-    for line in lines:
-        is_head = str(line).startswith("[")
-        body_paras.append((line, (base_size + 4) if is_head else base_size, is_head))
+    base_size = 12 if has_image else 13
+    for i, line in enumerate(lines):
+        s = str(line)
+        is_head = s.startswith("[")
+        is_meta = i == 0 and s.startswith("·")
+        if is_meta:
+            body_paras.append((s, 9, False))          # 메타줄은 작은 회색톤 느낌
+        elif is_head:
+            body_paras.append((s, base_size + 2, True, 8))  # 섹션 머리글: 위 여백
+        else:
+            body_paras.append((s, base_size, False))
     if has_image:
-        # 차트(좌 7.1") + 인사이트 텍스트(우 5.2")
-        pic = _picture_xml(4, 365760, 1326000, 6492240, 3786000)
-        body_box = _textbox(3, "body", 7040880, 1326000, 4754880, 5120640,
+        # 차트(좌 6.9") + 인사이트 텍스트(우 5.6") — 세로 정렬 맞춤
+        pic = _picture_xml(4, 365760, 1417320, 6309360, 3680460)
+        body_box = _textbox(3, "body", 6858000, 1417320, 5029200, 5029200,
                             body_paras or [(" ", base_size, False)])
         shapes = pic + body_box
     else:
-        body_box = _textbox(3, "body", 548640, 1371600, 11094720, 5120640,
+        body_box = _textbox(3, "body", 548640, 1417320, 11094720, 5029200,
                             body_paras or [(" ", base_size, False)])
         shapes = body_box
     return ("""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>

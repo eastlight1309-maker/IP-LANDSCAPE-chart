@@ -653,13 +653,26 @@ def _disclosure_section(df, settings):
 # ⑨ 무효심판·이의 충돌 지도
 # ---------------------------------------------------------------------------
 def _trial_section(df, settings):
-    if "trial_info" not in df.columns:
-        return None, "심판 이력 컬럼 필요"
-    has = df["trial_info"].astype(str).str.strip() \
-        .map(lambda v: v not in ("", "nan", "None"))
+    tr_cnt = parse_numeric(df["trial_count"]) if "trial_count" in df.columns else None
+    ls_cnt = parse_numeric(df["lawsuit_count"]) if "lawsuit_count" in df.columns \
+        else None
+    has_info = df["trial_info"].astype(str).str.strip() \
+        .map(lambda v: v not in ("", "nan", "None")) if "trial_info" in df.columns \
+        else pd.Series(False, index=df.index)
+    has = has_info.copy()
+    if tr_cnt is not None:
+        has |= tr_cnt.fillna(0) > 0
+    if ls_cnt is not None:
+        has |= ls_cnt.fillna(0) > 0
+    if not has.any():
+        return None, "심판 이력/심판 전체 횟수/소송 전체 횟수 컬럼 필요"
     sub = df[has].copy()
     if len(sub) < 3:
-        return None, "심판 이력 보유 문헌 부족 (3건 미만)"
+        return None, "심판·소송 이력 보유 문헌 부족 (3건 미만)"
+    if tr_cnt is not None:
+        sub["_tr_cnt"] = tr_cnt[has]
+    if ls_cnt is not None:
+        sub["_ls_cnt"] = ls_cnt[has]
     sub["_ptech"] = _primary_tech(sub)
     by_tech = sub["_ptech"].dropna().value_counts().head(10)
     fig_bar = None
@@ -717,11 +730,143 @@ def _trial_section(df, settings):
                      for (c, o), rec in pairs.items()]
             network = cytoscape_network(nodes, edges)
             top_target = max(in_deg, key=in_deg.get)
-    trial_types = sub["trial_info"].astype(str).str.strip().value_counts().head(6)
+    trial_types = sub["trial_info"].astype(str).str.strip().value_counts().head(6) \
+        if "trial_info" in sub.columns else pd.Series(dtype=int)
+    trial_types = trial_types[trial_types.index.map(
+        lambda v: v not in ("", "nan", "None"))]
+
+    # 다분쟁 특허 목록 (심판+소송 횟수 상위 = 상업적으로 가장 뜨거운 특허)
+    hot_patents = []
+    if "_tr_cnt" in sub.columns or "_ls_cnt" in sub.columns:
+        sub["_disputes"] = sub.get("_tr_cnt", pd.Series(0, index=sub.index)) \
+            .fillna(0) + sub.get("_ls_cnt", pd.Series(0, index=sub.index)).fillna(0)
+        ids = _ids_of(sub)
+        for idx, r in sub.nlargest(10, "_disputes").iterrows():
+            if r["_disputes"] <= 0:
+                continue
+            hot_patents.append({
+                "id": str(ids.loc[idx]),
+                "title": str(r.get("title", ""))[:60],
+                "applicant": str(r.get("applicant_display", "")),
+                "trials": int(r.get("_tr_cnt", 0) or 0),
+                "lawsuits": int(r.get("_ls_cnt", 0) or 0),
+                "court": (str(r.get("court_type", "")).strip()
+                          if "court_type" in sub.columns else ""),
+                "cites": (int(r["cites_forward"])
+                          if "cites_forward" in sub.columns
+                          and pd.notna(r.get("cites_forward")) else None),
+                "drill": {"type": "ids", "ids": [str(ids.loc[idx])]}})
+
+    # 관할 법원 분포 (분쟁 무대 — 법원별 특성 파악)
+    fig_court = None
+    if "court_type" in sub.columns:
+        courts = sub["court_type"].astype(str).str.strip()
+        courts = courts[~courts.str.lower().isin(["", "nan", "none"])] \
+            .value_counts().head(10)
+        if len(courts):
+            fig_court = bar_chart([str(c) for c in courts.index][::-1],
+                                  [int(v) for v in courts.values][::-1],
+                                  title="관할 법원 분포 — 분쟁이 진행되는 무대",
+                                  orientation="h", x_title="건수")
+
+    # 분쟁 특허 vs 일반 특허 품질 비교 (분쟁은 가치의 방증)
+    dispute_quality = None
+    if "cites_forward" in df.columns and df["cites_forward"].notna().any():
+        d_c = sub["cites_forward"].dropna()
+        n_c = df[~has]["cites_forward"].dropna()
+        if len(d_c) >= 3 and len(n_c) >= 10:
+            dispute_quality = {"disputed_avg": round(float(d_c.mean()), 2),
+                               "normal_avg": round(float(n_c.mean()), 2)}
+
     return {"fig": fig_bar, "network": network,
             "trial_types": [{"type": str(t), "n": int(v)}
                             for t, v in trial_types.items()],
+            "hot_patents": hot_patents, "fig_court": fig_court,
+            "dispute_quality": dispute_quality,
             "top_target": top_target, "n_trials": int(len(sub))}, None
+
+
+# ---------------------------------------------------------------------------
+# ⑩ 국가연구 과제 연계 분석
+# ---------------------------------------------------------------------------
+def _gov_program_section(df, settings):
+    if "gov_program" not in df.columns:
+        return None, "국가연구 과제명 컬럼 필요"
+    prog = df["gov_program"].astype(str).str.strip()
+    linked = ~prog.str.lower().isin(["", "nan", "none", "-"])
+    if linked.sum() < 3:
+        return None, "국가연구 과제 연계 문헌 부족 (3건 미만)"
+    sub = df[linked].copy()
+    ratio = float(linked.mean())
+
+    # 과제 프로그램별 특허 산출 순위
+    top_progs = sub["gov_program"].astype(str).str.strip().value_counts().head(12)
+    fig_prog = bar_chart(
+        [str(p)[:34] for p in top_progs.index][::-1],
+        [int(v) for v in top_progs.values][::-1],
+        title="국가연구 과제별 특허 산출 — 어떤 국책과제가 특허를 만들고 있나",
+        orientation="h", x_title="특허 수",
+        hovertext=[str(p) for p in top_progs.index][::-1])
+
+    # 기업별 정부과제 연계율
+    fig_comp = None
+    comp_rows = []
+    apps = df["applicant_display"].replace("", np.nan).dropna()
+    if len(apps):
+        min_n = int(get_threshold(settings, "min_class_patents")) + 2
+        for comp, total in apps.value_counts().head(12).items():
+            if total < min_n:
+                continue
+            n_link = int(linked[df["applicant_display"] == comp].sum())
+            comp_rows.append((str(comp), n_link, int(total),
+                              n_link / float(total)))
+        if comp_rows:
+            comp_rows.sort(key=lambda r: r[3])
+            fig_comp = bar_chart(
+                [r[0] for r in comp_rows], [round(r[3], 3) for r in comp_rows],
+                title="기업별 국가연구 과제 연계율 — 높을수록 국책과제 의존 R&D",
+                orientation="h", x_title="연계율",
+                hovertext=["%s — 정부과제 연계 %d건 / 전체 %d건 (%s)"
+                           % (r[0], r[1], r[2], fmt_pct(r[3])) for r in comp_rows],
+                customdata=[{"drill": {"type": "applicant", "applicant": r[0]}}
+                            for r in comp_rows])
+
+    # 기술분류별 연계율 (국가 지원이 집중되는 기술)
+    fig_tech = None
+    if df["_tech_list"].map(lambda v: bool(v)).any():
+        link_tech = pd.Series([t for lst in sub["_tech_list"]
+                               for t in (lst or [])]).value_counts()
+        all_tech = pd.Series([t for lst in df["_tech_list"]
+                              for t in (lst or [])]).value_counts()
+        rows = [(str(t), int(c), int(all_tech.get(t, c)),
+                 c / float(all_tech.get(t, c)))
+                for t, c in link_tech.head(10).items() if all_tech.get(t, 0) >= 5]
+        if rows:
+            rows.sort(key=lambda r: r[3])
+            fig_tech = bar_chart(
+                [r[0] for r in rows], [round(r[3], 3) for r in rows],
+                title="기술분류별 국가과제 연계율 — 국가 지원이 집중되는 기술",
+                orientation="h", x_title="연계율",
+                hovertext=["%s — 연계 %d건 / 전체 %d건 (%s)"
+                           % (r[0], r[1], r[2], fmt_pct(r[3])) for r in rows],
+                customdata=[{"drill": {"type": "tech", "tech": r[0]}}
+                            for r in rows])
+
+    # 정부과제 특허 vs 자체 특허 품질
+    quality = None
+    if "cites_forward" in df.columns and df["cites_forward"].notna().any():
+        g_c = sub["cites_forward"].dropna()
+        s_c = df[~linked]["cites_forward"].dropna()
+        if len(g_c) >= 5 and len(s_c) >= 5:
+            quality = {"gov_avg": round(float(g_c.mean()), 2),
+                       "own_avg": round(float(s_c.mean()), 2)}
+
+    return {"fig_prog": fig_prog, "fig_company": fig_comp, "fig_tech": fig_tech,
+            "linked_ratio": round(ratio, 4), "n_linked": int(linked.sum()),
+            "top_program": str(top_progs.index[0]), "quality": quality,
+            "note": "국가연구 과제명이 기재된 특허 기준입니다. 과제 연계율이 높은 "
+                    "기업·기술은 정부 R&D 의존도가 높아 과제 종료·정책 변화가 출원 "
+                    "흐름에 영향을 줄 수 있습니다."}, None
 
 
 # ---------------------------------------------------------------------------
@@ -731,7 +876,7 @@ _SECTIONS = (("survival", _survival_section), ("market_entry", _market_entry_sec
              ("agent", _agent_section), ("examiner_eye", _examiner_eye_section),
              ("expedited", _expedited_section), ("divisional", _divisional_section),
              ("anomaly", _anomaly_section), ("disclosure", _disclosure_section),
-             ("trial", _trial_section))
+             ("trial", _trial_section), ("gov_program", _gov_program_section))
 
 
 def compute_wips_deep(df, settings):
@@ -790,6 +935,23 @@ def compute_wips_deep(df, settings):
     if "trial" in sections and sections["trial"]["top_target"]:
         sentences.append("심판 청구가 '%s'로 수렴합니다 — 병목(핵심) 특허 보유자일 "
                          "가능성이 있습니다." % sections["trial"]["top_target"])
+    if "trial" in sections and sections["trial"].get("hot_patents"):
+        hp = sections["trial"]["hot_patents"][0]
+        sentences.append("분쟁이 가장 많은 특허는 %s(심판 %d·소송 %d회)로, 반복 분쟁은 "
+                         "그 권리가 상업적으로 중요하다는 방증입니다."
+                         % (hp["id"], hp["trials"], hp["lawsuits"]))
+    if "trial" in sections and sections["trial"].get("dispute_quality"):
+        dq = sections["trial"]["dispute_quality"]
+        sentences.append("분쟁 특허의 평균 피인용은 %s로 일반 특허(%s) 대비 %s배 — "
+                         "분쟁 대상이 곧 핵심 기술임을 보여줍니다."
+                         % (dq["disputed_avg"], dq["normal_avg"],
+                            round(dq["disputed_avg"] / max(dq["normal_avg"], 0.1), 1)))
+    if "gov_program" in sections:
+        gp = sections["gov_program"]
+        sentences.append("전체의 %s(%s건)가 국가연구 과제 연계 특허이며, 최다 산출 "
+                         "과제는 '%s'입니다."
+                         % (fmt_pct(gp["linked_ratio"]), fmt_num(gp["n_linked"]),
+                            gp["top_program"][:40]))
     if not sentences:
         sentences.append("%s 기준 심층 시그널 %d개 섹션이 계산되었습니다."
                          % (period, len(sections)))

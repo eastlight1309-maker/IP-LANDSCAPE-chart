@@ -1482,7 +1482,7 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
               addFig(s.disclosure.fig_scatter, null);
             }
             if (s.trial) {
-              head('⑨ 무효심판·이의 충돌 지도 — 직접 증거');
+              head('⑨ 심판·소송 충돌 지도 — 분쟁 기록은 가치의 직접 증거');
               addFig(s.trial.fig,
                 'X축=심판 건수, Y축=기술분류. 읽는 법: 심판이 집중된 분류가 곧 상업적으로 가장 ' +
                 '뜨거운 영역입니다 (hover 에 분류 내 심판 비율).');
@@ -1495,11 +1495,58 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
                   '한 기업으로 수렴하면 그 기업이 병목(핵심) 특허 보유자입니다. 노드 클릭 시 해당 ' +
                   '기업 특허가 열립니다.'));
               }
+              addFig(s.trial.fig_court,
+                'X축=건수, Y축=관할 법원. 읽는 법: 특허법원·대법원 단계까지 간 분쟁이 많을수록 ' +
+                '끝까지 다투는 고가치 권리이며, 지방법원 위주면 침해금지·손해배상 소송 무대입니다.');
+              if ((s.trial.hot_patents || []).length) {
+                c.body.appendChild(Ui.el('<div style="font-weight:700;font-size:12.5px;margin:8px 0 4px">' +
+                  '🔥 다분쟁 특허 (심판+소송 횟수 상위 — 상업적으로 가장 뜨거운 권리)</div>'));
+                addTable(['특허', '명칭', '권리자/출원인', '심판', '소송', '관할법원', '피인용'],
+                  s.trial.hot_patents.map(function (x) {
+                    var tr = document.createElement('tr');
+                    var td0 = document.createElement('td');
+                    td0.appendChild(drillCell(x.id, x.drill));
+                    tr.appendChild(td0);
+                    tr.insertAdjacentHTML('beforeend',
+                      '<td>' + Ui.esc(x.title) + '</td><td>' + Ui.esc(x.applicant) + '</td>' +
+                      '<td class="num">' + x.trials + '</td><td class="num">' + x.lawsuits + '</td>' +
+                      '<td>' + Ui.esc(x.court || '-') + '</td>' +
+                      '<td class="num">' + (x.cites !== null && x.cites !== undefined ? x.cites : '-') + '</td>');
+                    return tr;
+                  }));
+              }
+              if (s.trial.dispute_quality) {
+                c.body.appendChild(Ui.el('<div style="margin-top:6px;color:#46607a;font-size:12px">' +
+                  '분쟁 특허 평균 피인용 <b>' + Ui.num(s.trial.dispute_quality.disputed_avg, 1) +
+                  '</b> vs 일반 특허 <b>' + Ui.num(s.trial.dispute_quality.normal_avg, 1) +
+                  '</b> — 분쟁 대상이 곧 핵심 기술이라는 신호입니다.</div>'));
+              }
               if ((s.trial.trial_types || []).length) {
                 c.body.appendChild(Ui.el('<div style="margin-top:6px">' +
                   s.trial.trial_types.map(function (t) {
                     return '<span class="badge">' + Ui.esc(t.type) + ' ' + t.n + '건</span>';
                   }).join('') + '</div>'));
+              }
+            }
+            if (s.gov_program) {
+              head('⑩ 국가연구 과제 연계 — 정부 R&D 가 만드는 특허');
+              c.body.appendChild(Ui.el('<div style="color:#46607a;font-size:12.5px;margin-bottom:6px">' +
+                '전체의 <b>' + Ui.pct(s.gov_program.linked_ratio) + '</b> (' +
+                Ui.num(s.gov_program.n_linked, 0) + '건)가 국가연구 과제 연계 특허' +
+                (s.gov_program.quality ? ' · 평균 피인용: 과제 연계 <b>' +
+                  Ui.num(s.gov_program.quality.gov_avg, 1) + '</b> vs 자체 <b>' +
+                  Ui.num(s.gov_program.quality.own_avg, 1) + '</b>' : '') + '</div>'));
+              addFig(s.gov_program.fig_prog,
+                'X축=특허 수, Y축=국가연구 과제명. 읽는 법: 특허 산출이 많은 국책과제가 이 분야 ' +
+                'R&D 의 실질적 자금줄입니다 — 과제 종료 시점이 출원 흐름 변곡점이 될 수 있습니다.');
+              addFig(s.gov_program.fig_company,
+                'X축=국가과제 연계율, Y축=기업. 읽는 법: 연계율이 높은 기업은 정부 R&D 의존형 — ' +
+                '정책·과제 선정 변화에 출원이 민감합니다. 낮은 기업은 자체 자금 R&D 중심입니다.');
+              addFig(s.gov_program.fig_tech,
+                'X축=연계율, Y축=기술분류. 읽는 법: 연계율 높은 기술=국가가 전략적으로 밀고 있는 ' +
+                '영역 — 정부 로드맵과 함께 읽으면 향후 지원 지속 여부를 가늠할 수 있습니다.');
+              if (s.gov_program.note) {
+                c.body.appendChild(Ui.el('<div class="disclaimer">' + Ui.esc(s.gov_program.note) + '</div>'));
               }
             }
             if ((r.skipped || []).length) {

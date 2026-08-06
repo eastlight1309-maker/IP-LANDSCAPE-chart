@@ -263,10 +263,19 @@ def test_wips_deep_all_sections(settings):
     r = compute_wips_deep(df, settings)
     assert r["status"] == "ok"
     s = r["sections"]
-    # 합성 데이터에는 9개 섹션 필드가 전부 있음
+    # 합성 데이터에는 10개 섹션 필드가 전부 있음
     for key in ("survival", "market_entry", "agent", "examiner_eye", "expedited",
-                "divisional", "anomaly", "disclosure", "trial"):
+                "divisional", "anomaly", "disclosure", "trial", "gov_program"):
         assert key in s, "%s 섹션 누락 (skipped: %r)" % (key, r.get("skipped"))
+    # 심판·소송 확장: 다분쟁 특허 목록 + 관할 법원 분포 + 품질 비교
+    assert s["trial"]["hot_patents"]
+    hp = s["trial"]["hot_patents"][0]
+    assert hp["trials"] + hp["lawsuits"] > 0 and hp["drill"]["type"] == "ids"
+    assert s["trial"]["fig_court"] is not None
+    # 국가연구 과제 연계: 비율·최다 과제·기업/기술 연계율 차트
+    gp = s["gov_program"]
+    assert 0 < gp["linked_ratio"] < 1 and gp["top_program"]
+    assert gp["fig_prog"] and gp["fig_company"] and gp["fig_tech"]
     # 생존곡선: 확률 0~1 단조 비증가
     for tr in s["survival"]["fig"]["data"]:
         ys = tr["y"]
@@ -283,7 +292,8 @@ def test_wips_deep_graceful_without_deep_fields(settings):
     df_raw = generate_sample(n=200, seed=18)
     deep_cols = ["소멸일", "대리인", "우선심사 여부", "심사청구일", "거절이유통지 횟수",
                  "심사관 인용문헌 수", "출원인 인용문헌 수", "원출원번호", "도면 수",
-                 "명세서 페이지 수", "심판 이력", "심판 청구인"]
+                 "명세서 페이지 수", "심판 이력", "심판 청구인", "심판전체횟수",
+                 "소송전체횟수", "관할법원종류", "국가연구 과제명"]
     df = make_prepared(df_raw.drop(columns=deep_cols))
     r = compute_wips_deep(df, settings)
     assert r["status"] == "ok"  # 진입 시차·이상탐지 등 기존 필드 섹션은 계산됨
@@ -494,6 +504,25 @@ def test_axis_cross_two_axes_only(settings):
     assert r["status"] == "ok"
     assert [p["pair"] for p in r["pairs"]] == ["A×B"]
     assert r["sunburst"] is None
+
+
+# ---------------------------------------------------------------------------
+# 기본 매핑 우선순위 (preferred 변형)
+# ---------------------------------------------------------------------------
+def test_preferred_default_mappings():
+    from src.column_mapping import suggest_mapping
+    m = suggest_mapping(["표준화출원인", "출원인 대표명화 국문명",
+                         "인용 수", "인용 문헌수", "피인용 수", "피인용 문헌수",
+                         "해결과제", "해결과제 요약"])
+    assert m["applicant_std"]["column"] == "출원인 대표명화 국문명"
+    assert m["cites_backward"]["column"] == "인용 문헌수"
+    assert m["cites_forward"]["column"] == "피인용 문헌수"
+    assert m["problem"]["column"] == "해결과제 요약"
+    # preferred 컬럼이 없으면 기존 변형으로 정상 매핑
+    m2 = suggest_mapping(["표준화출원인", "피인용 수", "해결과제"])
+    assert m2["applicant_std"]["column"] == "표준화출원인"
+    assert m2["cites_forward"]["column"] == "피인용 수"
+    assert m2["problem"]["column"] == "해결과제"
 
 
 # ---------------------------------------------------------------------------

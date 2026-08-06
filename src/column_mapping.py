@@ -81,7 +81,10 @@ CONCEPTS = {
     },
     "applicant_std": {
         "label": "표준화 출원인", "dtype": "문자열 (정비된 대표 출원인명)",
+        "preferred": ["출원인 대표명화 국문명"],  # 기본 매핑 (동률 시 우선)
         "variants": ["표준화 출원인", "표준 출원인", "대표 출원인", "출원인 대표명",
+                     "출원인 대표명화 국문명", "출원인대표명화국문명", "출원인 대표명화",
+                     "출원인 대표명 국문", "대표명화 국문명",
                      "standardized applicant", "normalized applicant", "std applicant",
                      "대표출원인", "출원인(정비)", "current assignee normalized", "출원인 그룹"],
     },
@@ -143,13 +146,17 @@ CONCEPTS = {
     },
     "cites_backward": {
         "label": "인용 수", "dtype": "정수 (선행문헌 인용 수)",
-        "variants": ["인용 수", "인용수", "인용문헌수", "인용 문헌 수", "backward citations",
+        "preferred": ["인용 문헌수"],  # 기본 매핑
+        "variants": ["인용 수", "인용수", "인용문헌수", "인용 문헌 수", "인용 문헌수",
+                     "backward citations",
                      "citing count", "cited references", "references cited", "인용특허수",
                      "backward citation count", "인용횟수"],
     },
     "cites_forward": {
         "label": "피인용 수", "dtype": "정수 (후행문헌에 의한 피인용 수)",
-        "variants": ["피인용 수", "피인용수", "피인용횟수", "피인용 문헌 수", "forward citations",
+        "preferred": ["피인용 문헌수"],  # 기본 매핑
+        "variants": ["피인용 수", "피인용수", "피인용횟수", "피인용 문헌 수", "피인용 문헌수",
+                     "forward citations",
                      "cited by count", "citation count", "forward citation count", "피인용특허수",
                      "cited by"],
     },
@@ -231,7 +238,9 @@ CONCEPTS = {
     },
     "problem": {
         "label": "해결과제", "dtype": "문자열",
-        "variants": ["해결과제", "해결 과제", "과제", "기술적 과제", "problem", "technical problem",
+        "preferred": ["해결과제 요약"],  # 기본 매핑
+        "variants": ["해결과제", "해결 과제", "과제", "기술적 과제", "해결과제 요약",
+                     "해결과제요약", "과제 요약", "problem", "technical problem",
                      "problem to solve", "해결하려는 과제", "발명의 과제"],
     },
     "solution": {
@@ -347,10 +356,33 @@ CONCEPTS = {
         "variants": ["심판 청구인", "심판청구인", "무효심판 청구인", "청구인",
                      "trial claimant", "심판 신청인"],
     },
+    "trial_count": {
+        "label": "심판 전체 횟수", "dtype": "숫자",
+        "variants": ["심판전체횟수", "심판 전체 횟수", "심판횟수", "심판 횟수",
+                     "심판 건수", "심판건수", "trial count"],
+    },
+    "lawsuit_count": {
+        "label": "소송 전체 횟수", "dtype": "숫자",
+        "variants": ["소송전체횟수", "소송 전체 횟수", "소송횟수", "소송 횟수",
+                     "소송 건수", "소송건수", "litigation count", "lawsuit count"],
+    },
+    "court_type": {
+        "label": "관할 법원 종류", "dtype": "문자열",
+        "variants": ["관할법원종류", "관할 법원 종류", "관할법원", "관할 법원",
+                     "법원종류", "법원 종류", "court", "court type", "jurisdiction"],
+    },
+    "gov_program": {
+        "label": "국가연구 과제명", "dtype": "문자열 (정부 R&D 과제명)",
+        "variants": ["국가연구 과제명", "국가연구과제명", "국가 연구 과제명", "국가r&d 과제명",
+                     "정부과제명", "정부 과제명", "국책과제명", "국가연구개발 과제명",
+                     "national r&d program", "government program"],
+    },
 }
 # 기존 assignee 개념에 변형 표기 보강 (최종권리자·등록권리자 등)
 CONCEPTS["assignee"]["variants"] += ["최종권리자", "최종 권리자", "등록권리자",
                                      "현재 소유자", "현재소유자", "current owner"]
+# 심판종류 컬럼은 기존 '심판 이력' 개념으로 흡수 (값=심판 유형 문자열)
+CONCEPTS["trial_info"]["variants"] += ["심판종류", "심판 종류"]
 
 CONCEPT_KEYS = list(CONCEPTS.keys())
 
@@ -386,7 +418,7 @@ ANALYSIS_REQUIREMENTS = {
     "emerging-clusters":     {"required": [{"any": ["abstract", "indep_claim", "title"]}, {"any": ANY_DATE}], "optional": ANY_APPLICANT + ["embedding"]},
     "semantic-influence":    {"required": [{"any": ["abstract", "indep_claim", "title"]}, {"any": ANY_DATE}], "optional": ANY_APPLICANT + ["embedding", "cites_forward"]},
     "similarity-network":    {"required": [{"any": ["abstract", "indep_claim", "title"]}], "optional": ANY_APPLICANT + ["embedding", "is_active", "legal_status"]},
-    "wips-deep":             {"required": [{"any": ANY_DATE}], "optional": ANY_APPLICANT + ["reg_date", "lapse_date", "agent", "expedited_exam", "exam_request_date", "oa_count", "examiner_citations", "applicant_citations", "parent_app_number", "drawings_count", "spec_length", "trial_info", "trial_claimant", "family_id", "country", "claims_count"]},
+    "wips-deep":             {"required": [{"any": ANY_DATE}], "optional": ANY_APPLICANT + ["reg_date", "lapse_date", "agent", "expedited_exam", "exam_request_date", "oa_count", "examiner_citations", "applicant_citations", "parent_app_number", "drawings_count", "spec_length", "trial_info", "trial_claimant", "trial_count", "lawsuit_count", "court_type", "gov_program", "family_id", "country", "claims_count"]},
     "executive-summary":     {"required": [{"any": ANY_TECH}, {"any": ANY_DATE}, {"any": ANY_APPLICANT}], "optional": ["cites_forward", "is_active", "legal_status", "expiry_date", "is_own"]},
     "axis-cross":            {"required": [{"any": ANY_TECH}], "optional": ["tech_b_l1", "tech_b_l2", "tech_b_l3", "tech_c_l1", "tech_c_l2", "tech_c_l3", {"any": ANY_DATE}] + ANY_APPLICANT},
     "tech-year-bubble":      {"required": [{"any": ANY_TECH}, {"any": ANY_DATE}], "optional": ANY_APPLICANT},
@@ -410,6 +442,7 @@ CONCEPT_KINDS = {
     "lapse_date": "date", "exam_request_date": "date",
     "oa_count": "number", "drawings_count": "number", "spec_length": "number",
     "examiner_citations": "number", "applicant_citations": "number",
+    "trial_count": "number", "lawsuit_count": "number",
     "expedited_exam": "bool",
 }
 
@@ -471,7 +504,9 @@ def suggest_mapping(actual_columns, cutoff=None):
                 continue
             best = None
             if ncol in norm_variants:
-                best = (1.0, "exact")
+                # preferred 변형(개념별 기본 매핑 지정)은 완전일치 간 동률에서 우선
+                pref = [_norm(v) for v in spec.get("preferred", [])]
+                best = (1.01 if ncol in pref else 1.0, "exact")
             else:
                 # 부분일치: 변형↔헤더 겹침 비율로 점수 차등 (긴 일치 우선)
                 part_score = 0.0

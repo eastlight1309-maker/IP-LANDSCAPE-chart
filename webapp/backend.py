@@ -656,7 +656,10 @@ CONCEPTS = {
     },
     "applicant_std": {
         "label": "표준화 출원인", "dtype": "문자열 (정비된 대표 출원인명)",
+        "preferred": ["출원인 대표명화 국문명"],  # 기본 매핑 (동률 시 우선)
         "variants": ["표준화 출원인", "표준 출원인", "대표 출원인", "출원인 대표명",
+                     "출원인 대표명화 국문명", "출원인대표명화국문명", "출원인 대표명화",
+                     "출원인 대표명 국문", "대표명화 국문명",
                      "standardized applicant", "normalized applicant", "std applicant",
                      "대표출원인", "출원인(정비)", "current assignee normalized", "출원인 그룹"],
     },
@@ -718,13 +721,17 @@ CONCEPTS = {
     },
     "cites_backward": {
         "label": "인용 수", "dtype": "정수 (선행문헌 인용 수)",
-        "variants": ["인용 수", "인용수", "인용문헌수", "인용 문헌 수", "backward citations",
+        "preferred": ["인용 문헌수"],  # 기본 매핑
+        "variants": ["인용 수", "인용수", "인용문헌수", "인용 문헌 수", "인용 문헌수",
+                     "backward citations",
                      "citing count", "cited references", "references cited", "인용특허수",
                      "backward citation count", "인용횟수"],
     },
     "cites_forward": {
         "label": "피인용 수", "dtype": "정수 (후행문헌에 의한 피인용 수)",
-        "variants": ["피인용 수", "피인용수", "피인용횟수", "피인용 문헌 수", "forward citations",
+        "preferred": ["피인용 문헌수"],  # 기본 매핑
+        "variants": ["피인용 수", "피인용수", "피인용횟수", "피인용 문헌 수", "피인용 문헌수",
+                     "forward citations",
                      "cited by count", "citation count", "forward citation count", "피인용특허수",
                      "cited by"],
     },
@@ -806,7 +813,9 @@ CONCEPTS = {
     },
     "problem": {
         "label": "해결과제", "dtype": "문자열",
-        "variants": ["해결과제", "해결 과제", "과제", "기술적 과제", "problem", "technical problem",
+        "preferred": ["해결과제 요약"],  # 기본 매핑
+        "variants": ["해결과제", "해결 과제", "과제", "기술적 과제", "해결과제 요약",
+                     "해결과제요약", "과제 요약", "problem", "technical problem",
                      "problem to solve", "해결하려는 과제", "발명의 과제"],
     },
     "solution": {
@@ -922,10 +931,33 @@ CONCEPTS = {
         "variants": ["심판 청구인", "심판청구인", "무효심판 청구인", "청구인",
                      "trial claimant", "심판 신청인"],
     },
+    "trial_count": {
+        "label": "심판 전체 횟수", "dtype": "숫자",
+        "variants": ["심판전체횟수", "심판 전체 횟수", "심판횟수", "심판 횟수",
+                     "심판 건수", "심판건수", "trial count"],
+    },
+    "lawsuit_count": {
+        "label": "소송 전체 횟수", "dtype": "숫자",
+        "variants": ["소송전체횟수", "소송 전체 횟수", "소송횟수", "소송 횟수",
+                     "소송 건수", "소송건수", "litigation count", "lawsuit count"],
+    },
+    "court_type": {
+        "label": "관할 법원 종류", "dtype": "문자열",
+        "variants": ["관할법원종류", "관할 법원 종류", "관할법원", "관할 법원",
+                     "법원종류", "법원 종류", "court", "court type", "jurisdiction"],
+    },
+    "gov_program": {
+        "label": "국가연구 과제명", "dtype": "문자열 (정부 R&D 과제명)",
+        "variants": ["국가연구 과제명", "국가연구과제명", "국가 연구 과제명", "국가r&d 과제명",
+                     "정부과제명", "정부 과제명", "국책과제명", "국가연구개발 과제명",
+                     "national r&d program", "government program"],
+    },
 }
 # 기존 assignee 개념에 변형 표기 보강 (최종권리자·등록권리자 등)
 CONCEPTS["assignee"]["variants"] += ["최종권리자", "최종 권리자", "등록권리자",
                                      "현재 소유자", "현재소유자", "current owner"]
+# 심판종류 컬럼은 기존 '심판 이력' 개념으로 흡수 (값=심판 유형 문자열)
+CONCEPTS["trial_info"]["variants"] += ["심판종류", "심판 종류"]
 
 CONCEPT_KEYS = list(CONCEPTS.keys())
 
@@ -961,7 +993,7 @@ ANALYSIS_REQUIREMENTS = {
     "emerging-clusters":     {"required": [{"any": ["abstract", "indep_claim", "title"]}, {"any": ANY_DATE}], "optional": ANY_APPLICANT + ["embedding"]},
     "semantic-influence":    {"required": [{"any": ["abstract", "indep_claim", "title"]}, {"any": ANY_DATE}], "optional": ANY_APPLICANT + ["embedding", "cites_forward"]},
     "similarity-network":    {"required": [{"any": ["abstract", "indep_claim", "title"]}], "optional": ANY_APPLICANT + ["embedding", "is_active", "legal_status"]},
-    "wips-deep":             {"required": [{"any": ANY_DATE}], "optional": ANY_APPLICANT + ["reg_date", "lapse_date", "agent", "expedited_exam", "exam_request_date", "oa_count", "examiner_citations", "applicant_citations", "parent_app_number", "drawings_count", "spec_length", "trial_info", "trial_claimant", "family_id", "country", "claims_count"]},
+    "wips-deep":             {"required": [{"any": ANY_DATE}], "optional": ANY_APPLICANT + ["reg_date", "lapse_date", "agent", "expedited_exam", "exam_request_date", "oa_count", "examiner_citations", "applicant_citations", "parent_app_number", "drawings_count", "spec_length", "trial_info", "trial_claimant", "trial_count", "lawsuit_count", "court_type", "gov_program", "family_id", "country", "claims_count"]},
     "executive-summary":     {"required": [{"any": ANY_TECH}, {"any": ANY_DATE}, {"any": ANY_APPLICANT}], "optional": ["cites_forward", "is_active", "legal_status", "expiry_date", "is_own"]},
     "axis-cross":            {"required": [{"any": ANY_TECH}], "optional": ["tech_b_l1", "tech_b_l2", "tech_b_l3", "tech_c_l1", "tech_c_l2", "tech_c_l3", {"any": ANY_DATE}] + ANY_APPLICANT},
     "tech-year-bubble":      {"required": [{"any": ANY_TECH}, {"any": ANY_DATE}], "optional": ANY_APPLICANT},
@@ -985,6 +1017,7 @@ CONCEPT_KINDS = {
     "lapse_date": "date", "exam_request_date": "date",
     "oa_count": "number", "drawings_count": "number", "spec_length": "number",
     "examiner_citations": "number", "applicant_citations": "number",
+    "trial_count": "number", "lawsuit_count": "number",
     "expedited_exam": "bool",
 }
 
@@ -1046,7 +1079,9 @@ def suggest_mapping(actual_columns, cutoff=None):
                 continue
             best = None
             if ncol in norm_variants:
-                best = (1.0, "exact")
+                # preferred 변형(개념별 기본 매핑 지정)은 완전일치 간 동률에서 우선
+                pref = [_norm(v) for v in spec.get("preferred", [])]
+                best = (1.01 if ncol in pref else 1.0, "exact")
             else:
                 # 부분일치: 변형↔헤더 겹침 비율로 점수 차등 (긴 일치 우선)
                 part_score = 0.0
@@ -3138,28 +3173,35 @@ def _pptx_via_library(slides):
     blank = prs.slide_layouts[6]
     for sl in slides:
         slide = prs.slides.add_slide(blank)
-        tbox = slide.shapes.add_textbox(Inches(0.5), Inches(0.35),
-                                        Inches(12.3), Inches(1.0))
+        tbox = slide.shapes.add_textbox(Inches(0.5), Inches(0.3),
+                                        Inches(12.3), Inches(1.1))
+        tbox.text_frame.word_wrap = True
         p = tbox.text_frame.paragraphs[0]
         p.text = sl["title"]
-        p.font.size = Pt(24)
+        p.font.size = Pt(_title_size(sl["title"]))
         p.font.bold = True
         has_img = bool(sl.get("image"))
         if has_img:
             slide.shapes.add_picture(io.BytesIO(sl["image"]),
-                                     Inches(0.4), Inches(1.45),
-                                     width=Inches(7.1), height=Inches(4.14))
-            body_x, body_w, fsize = Inches(7.7), Inches(5.2), 11
+                                     Inches(0.4), Inches(1.55),
+                                     width=Inches(6.9), height=Inches(4.03))
+            body_x, body_w, fsize = Inches(7.5), Inches(5.5), 12
         else:
-            body_x, body_w, fsize = Inches(0.6), Inches(12.1), 14
-        body = slide.shapes.add_textbox(body_x, Inches(1.5), body_w, Inches(5.6))
+            body_x, body_w, fsize = Inches(0.6), Inches(12.1), 13
+        body = slide.shapes.add_textbox(body_x, Inches(1.55), body_w, Inches(5.5))
         tf = body.text_frame
         tf.word_wrap = True
         for i, line in enumerate(sl["lines"]):
+            s = str(line)
             para = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
-            para.text = str(line)
-            para.font.size = Pt((fsize + 4) if line.startswith("[") else fsize)
-            para.font.bold = line.startswith("[")
+            para.text = s
+            if i == 0 and s.startswith("·"):
+                para.font.size = Pt(9)
+            else:
+                para.font.size = Pt((fsize + 2) if s.startswith("[") else fsize)
+                para.font.bold = s.startswith("[")
+                if s.startswith("["):
+                    para.space_before = Pt(8)
     buf = io.BytesIO()
     prs.save(buf)
     return buf.getvalue()
@@ -3255,14 +3297,33 @@ def _picture_xml(shape_id, x, y, w, h):
             % (shape_id, x, y, w, h))
 
 
+def _title_size(title):
+    """제목 길이에 따라 글자 크기 축소 (화면 밖으로 나가지 않게)."""
+    n = len(str(title))
+    if n <= 40:
+        return 20
+    if n <= 70:
+        return 16
+    return 13
+
+
 def _textbox(shape_id, name, x, y, w, h, paragraphs):
-    """EMU 좌표 텍스트박스 sp XML. paragraphs: [(text, size_pt, bold)]"""
+    """EMU 좌표 텍스트박스 sp XML.
+
+    paragraphs: [(text, size_pt, bold[, space_before_pt])] — 섹션 머리글 앞에
+    여백을 줘 그래프·본문과 조화롭게 읽히도록 한다.
+    """
     paras = []
-    for text, size, bold in paragraphs:
+    for para in paragraphs:
+        text, size, bold = para[0], para[1], para[2]
+        spc = para[3] if len(para) > 3 else 0
         t = escape(str(text)) or " "
+        ppr = ('<a:pPr><a:spcBef><a:spcPts val="%d"/></a:spcBef></a:pPr>'
+               % int(spc * 100)) if spc else "<a:pPr/>"
         paras.append(
-            '<a:p><a:pPr/><a:r><a:rPr lang="ko-KR" sz="%d" b="%d" dirty="0"/>'
-            '<a:t>%s</a:t></a:r></a:p>' % (int(size * 100), 1 if bold else 0, t))
+            '<a:p>%s<a:r><a:rPr lang="ko-KR" sz="%d" b="%d" dirty="0"/>'
+            '<a:t>%s</a:t></a:r></a:p>' % (ppr, int(size * 100),
+                                           1 if bold else 0, t))
     return ('<p:sp><p:nvSpPr><p:cNvPr id="%d" name="%s"/>'
             '<p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr>'
             '<p:spPr><a:xfrm><a:off x="%d" y="%d"/><a:ext cx="%d" cy="%d"/></a:xfrm>'
@@ -3273,21 +3334,29 @@ def _textbox(shape_id, name, x, y, w, h, paragraphs):
 
 
 def _slide_xml(title, lines, has_image=False):
-    title_box = _textbox(2, "title", 457200, 320040, 11277600, 914400,
-                         [(title, 24, True)])
+    # 제목: 길이 비례 축소 + 2줄 여유 박스 (화면 밖 이탈 방지)
+    title_box = _textbox(2, "title", 457200, 274320, 11277600, 1005840,
+                         [(title, _title_size(title), True)])
     body_paras = []
-    base_size = 11 if has_image else 14
-    for line in lines:
-        is_head = str(line).startswith("[")
-        body_paras.append((line, (base_size + 4) if is_head else base_size, is_head))
+    base_size = 12 if has_image else 13
+    for i, line in enumerate(lines):
+        s = str(line)
+        is_head = s.startswith("[")
+        is_meta = i == 0 and s.startswith("·")
+        if is_meta:
+            body_paras.append((s, 9, False))          # 메타줄은 작은 회색톤 느낌
+        elif is_head:
+            body_paras.append((s, base_size + 2, True, 8))  # 섹션 머리글: 위 여백
+        else:
+            body_paras.append((s, base_size, False))
     if has_image:
-        # 차트(좌 7.1") + 인사이트 텍스트(우 5.2")
-        pic = _picture_xml(4, 365760, 1326000, 6492240, 3786000)
-        body_box = _textbox(3, "body", 7040880, 1326000, 4754880, 5120640,
+        # 차트(좌 6.9") + 인사이트 텍스트(우 5.6") — 세로 정렬 맞춤
+        pic = _picture_xml(4, 365760, 1417320, 6309360, 3680460)
+        body_box = _textbox(3, "body", 6858000, 1417320, 5029200, 5029200,
                             body_paras or [(" ", base_size, False)])
         shapes = pic + body_box
     else:
-        body_box = _textbox(3, "body", 548640, 1371600, 11094720, 5120640,
+        body_box = _textbox(3, "body", 548640, 1417320, 11094720, 5029200,
                             body_paras or [(" ", base_size, False)])
         shapes = body_box
     return ("""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -10936,13 +11005,26 @@ def _disclosure_section(df, settings):
 # ⑨ 무효심판·이의 충돌 지도
 # ---------------------------------------------------------------------------
 def _trial_section(df, settings):
-    if "trial_info" not in df.columns:
-        return None, "심판 이력 컬럼 필요"
-    has = df["trial_info"].astype(str).str.strip() \
-        .map(lambda v: v not in ("", "nan", "None"))
+    tr_cnt = parse_numeric(df["trial_count"]) if "trial_count" in df.columns else None
+    ls_cnt = parse_numeric(df["lawsuit_count"]) if "lawsuit_count" in df.columns \
+        else None
+    has_info = df["trial_info"].astype(str).str.strip() \
+        .map(lambda v: v not in ("", "nan", "None")) if "trial_info" in df.columns \
+        else pd.Series(False, index=df.index)
+    has = has_info.copy()
+    if tr_cnt is not None:
+        has |= tr_cnt.fillna(0) > 0
+    if ls_cnt is not None:
+        has |= ls_cnt.fillna(0) > 0
+    if not has.any():
+        return None, "심판 이력/심판 전체 횟수/소송 전체 횟수 컬럼 필요"
     sub = df[has].copy()
     if len(sub) < 3:
-        return None, "심판 이력 보유 문헌 부족 (3건 미만)"
+        return None, "심판·소송 이력 보유 문헌 부족 (3건 미만)"
+    if tr_cnt is not None:
+        sub["_tr_cnt"] = tr_cnt[has]
+    if ls_cnt is not None:
+        sub["_ls_cnt"] = ls_cnt[has]
     sub["_ptech"] = _primary_tech(sub)
     by_tech = sub["_ptech"].dropna().value_counts().head(10)
     fig_bar = None
@@ -11000,11 +11082,143 @@ def _trial_section(df, settings):
                      for (c, o), rec in pairs.items()]
             network = cytoscape_network(nodes, edges)
             top_target = max(in_deg, key=in_deg.get)
-    trial_types = sub["trial_info"].astype(str).str.strip().value_counts().head(6)
+    trial_types = sub["trial_info"].astype(str).str.strip().value_counts().head(6) \
+        if "trial_info" in sub.columns else pd.Series(dtype=int)
+    trial_types = trial_types[trial_types.index.map(
+        lambda v: v not in ("", "nan", "None"))]
+
+    # 다분쟁 특허 목록 (심판+소송 횟수 상위 = 상업적으로 가장 뜨거운 특허)
+    hot_patents = []
+    if "_tr_cnt" in sub.columns or "_ls_cnt" in sub.columns:
+        sub["_disputes"] = sub.get("_tr_cnt", pd.Series(0, index=sub.index)) \
+            .fillna(0) + sub.get("_ls_cnt", pd.Series(0, index=sub.index)).fillna(0)
+        ids = _ids_of(sub)
+        for idx, r in sub.nlargest(10, "_disputes").iterrows():
+            if r["_disputes"] <= 0:
+                continue
+            hot_patents.append({
+                "id": str(ids.loc[idx]),
+                "title": str(r.get("title", ""))[:60],
+                "applicant": str(r.get("applicant_display", "")),
+                "trials": int(r.get("_tr_cnt", 0) or 0),
+                "lawsuits": int(r.get("_ls_cnt", 0) or 0),
+                "court": (str(r.get("court_type", "")).strip()
+                          if "court_type" in sub.columns else ""),
+                "cites": (int(r["cites_forward"])
+                          if "cites_forward" in sub.columns
+                          and pd.notna(r.get("cites_forward")) else None),
+                "drill": {"type": "ids", "ids": [str(ids.loc[idx])]}})
+
+    # 관할 법원 분포 (분쟁 무대 — 법원별 특성 파악)
+    fig_court = None
+    if "court_type" in sub.columns:
+        courts = sub["court_type"].astype(str).str.strip()
+        courts = courts[~courts.str.lower().isin(["", "nan", "none"])] \
+            .value_counts().head(10)
+        if len(courts):
+            fig_court = bar_chart([str(c) for c in courts.index][::-1],
+                                  [int(v) for v in courts.values][::-1],
+                                  title="관할 법원 분포 — 분쟁이 진행되는 무대",
+                                  orientation="h", x_title="건수")
+
+    # 분쟁 특허 vs 일반 특허 품질 비교 (분쟁은 가치의 방증)
+    dispute_quality = None
+    if "cites_forward" in df.columns and df["cites_forward"].notna().any():
+        d_c = sub["cites_forward"].dropna()
+        n_c = df[~has]["cites_forward"].dropna()
+        if len(d_c) >= 3 and len(n_c) >= 10:
+            dispute_quality = {"disputed_avg": round(float(d_c.mean()), 2),
+                               "normal_avg": round(float(n_c.mean()), 2)}
+
     return {"fig": fig_bar, "network": network,
             "trial_types": [{"type": str(t), "n": int(v)}
                             for t, v in trial_types.items()],
+            "hot_patents": hot_patents, "fig_court": fig_court,
+            "dispute_quality": dispute_quality,
             "top_target": top_target, "n_trials": int(len(sub))}, None
+
+
+# ---------------------------------------------------------------------------
+# ⑩ 국가연구 과제 연계 분석
+# ---------------------------------------------------------------------------
+def _gov_program_section(df, settings):
+    if "gov_program" not in df.columns:
+        return None, "국가연구 과제명 컬럼 필요"
+    prog = df["gov_program"].astype(str).str.strip()
+    linked = ~prog.str.lower().isin(["", "nan", "none", "-"])
+    if linked.sum() < 3:
+        return None, "국가연구 과제 연계 문헌 부족 (3건 미만)"
+    sub = df[linked].copy()
+    ratio = float(linked.mean())
+
+    # 과제 프로그램별 특허 산출 순위
+    top_progs = sub["gov_program"].astype(str).str.strip().value_counts().head(12)
+    fig_prog = bar_chart(
+        [str(p)[:34] for p in top_progs.index][::-1],
+        [int(v) for v in top_progs.values][::-1],
+        title="국가연구 과제별 특허 산출 — 어떤 국책과제가 특허를 만들고 있나",
+        orientation="h", x_title="특허 수",
+        hovertext=[str(p) for p in top_progs.index][::-1])
+
+    # 기업별 정부과제 연계율
+    fig_comp = None
+    comp_rows = []
+    apps = df["applicant_display"].replace("", np.nan).dropna()
+    if len(apps):
+        min_n = int(get_threshold(settings, "min_class_patents")) + 2
+        for comp, total in apps.value_counts().head(12).items():
+            if total < min_n:
+                continue
+            n_link = int(linked[df["applicant_display"] == comp].sum())
+            comp_rows.append((str(comp), n_link, int(total),
+                              n_link / float(total)))
+        if comp_rows:
+            comp_rows.sort(key=lambda r: r[3])
+            fig_comp = bar_chart(
+                [r[0] for r in comp_rows], [round(r[3], 3) for r in comp_rows],
+                title="기업별 국가연구 과제 연계율 — 높을수록 국책과제 의존 R&D",
+                orientation="h", x_title="연계율",
+                hovertext=["%s — 정부과제 연계 %d건 / 전체 %d건 (%s)"
+                           % (r[0], r[1], r[2], fmt_pct(r[3])) for r in comp_rows],
+                customdata=[{"drill": {"type": "applicant", "applicant": r[0]}}
+                            for r in comp_rows])
+
+    # 기술분류별 연계율 (국가 지원이 집중되는 기술)
+    fig_tech = None
+    if df["_tech_list"].map(lambda v: bool(v)).any():
+        link_tech = pd.Series([t for lst in sub["_tech_list"]
+                               for t in (lst or [])]).value_counts()
+        all_tech = pd.Series([t for lst in df["_tech_list"]
+                              for t in (lst or [])]).value_counts()
+        rows = [(str(t), int(c), int(all_tech.get(t, c)),
+                 c / float(all_tech.get(t, c)))
+                for t, c in link_tech.head(10).items() if all_tech.get(t, 0) >= 5]
+        if rows:
+            rows.sort(key=lambda r: r[3])
+            fig_tech = bar_chart(
+                [r[0] for r in rows], [round(r[3], 3) for r in rows],
+                title="기술분류별 국가과제 연계율 — 국가 지원이 집중되는 기술",
+                orientation="h", x_title="연계율",
+                hovertext=["%s — 연계 %d건 / 전체 %d건 (%s)"
+                           % (r[0], r[1], r[2], fmt_pct(r[3])) for r in rows],
+                customdata=[{"drill": {"type": "tech", "tech": r[0]}}
+                            for r in rows])
+
+    # 정부과제 특허 vs 자체 특허 품질
+    quality = None
+    if "cites_forward" in df.columns and df["cites_forward"].notna().any():
+        g_c = sub["cites_forward"].dropna()
+        s_c = df[~linked]["cites_forward"].dropna()
+        if len(g_c) >= 5 and len(s_c) >= 5:
+            quality = {"gov_avg": round(float(g_c.mean()), 2),
+                       "own_avg": round(float(s_c.mean()), 2)}
+
+    return {"fig_prog": fig_prog, "fig_company": fig_comp, "fig_tech": fig_tech,
+            "linked_ratio": round(ratio, 4), "n_linked": int(linked.sum()),
+            "top_program": str(top_progs.index[0]), "quality": quality,
+            "note": "국가연구 과제명이 기재된 특허 기준입니다. 과제 연계율이 높은 "
+                    "기업·기술은 정부 R&D 의존도가 높아 과제 종료·정책 변화가 출원 "
+                    "흐름에 영향을 줄 수 있습니다."}, None
 
 
 # ---------------------------------------------------------------------------
@@ -11014,7 +11228,7 @@ _SECTIONS = (("survival", _survival_section), ("market_entry", _market_entry_sec
              ("agent", _agent_section), ("examiner_eye", _examiner_eye_section),
              ("expedited", _expedited_section), ("divisional", _divisional_section),
              ("anomaly", _anomaly_section), ("disclosure", _disclosure_section),
-             ("trial", _trial_section))
+             ("trial", _trial_section), ("gov_program", _gov_program_section))
 
 
 def compute_wips_deep(df, settings):
@@ -11073,6 +11287,23 @@ def compute_wips_deep(df, settings):
     if "trial" in sections and sections["trial"]["top_target"]:
         sentences.append("심판 청구가 '%s'로 수렴합니다 — 병목(핵심) 특허 보유자일 "
                          "가능성이 있습니다." % sections["trial"]["top_target"])
+    if "trial" in sections and sections["trial"].get("hot_patents"):
+        hp = sections["trial"]["hot_patents"][0]
+        sentences.append("분쟁이 가장 많은 특허는 %s(심판 %d·소송 %d회)로, 반복 분쟁은 "
+                         "그 권리가 상업적으로 중요하다는 방증입니다."
+                         % (hp["id"], hp["trials"], hp["lawsuits"]))
+    if "trial" in sections and sections["trial"].get("dispute_quality"):
+        dq = sections["trial"]["dispute_quality"]
+        sentences.append("분쟁 특허의 평균 피인용은 %s로 일반 특허(%s) 대비 %s배 — "
+                         "분쟁 대상이 곧 핵심 기술임을 보여줍니다."
+                         % (dq["disputed_avg"], dq["normal_avg"],
+                            round(dq["disputed_avg"] / max(dq["normal_avg"], 0.1), 1)))
+    if "gov_program" in sections:
+        gp = sections["gov_program"]
+        sentences.append("전체의 %s(%s건)가 국가연구 과제 연계 특허이며, 최다 산출 "
+                         "과제는 '%s'입니다."
+                         % (fmt_pct(gp["linked_ratio"]), fmt_num(gp["n_linked"]),
+                            gp["top_program"][:40]))
     if not sentences:
         sentences.append("%s 기준 심층 시그널 %d개 섹션이 계산되었습니다."
                          % (period, len(sections)))

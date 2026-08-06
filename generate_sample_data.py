@@ -194,6 +194,14 @@ def generate_sample(n=600, seed=42, sep="; ", multiclass_format="sep",
             "심판 이력": (["무효심판", "거절결정불복심판"][i % 2] if has_trial else ""),
             "심판 청구인": (COMPANIES[(COMPANIES.index(comp) + 1) % len(COMPANIES)]
                       if (has_trial and i % 2 == 0) else ""),
+            "심판전체횟수": (int(rng.integers(1, 4)) if has_trial else 0),
+            "소송전체횟수": (int(rng.integers(1, 3))
+                       if (has_trial and rng.random() < 0.5) or i % 53 == 0 else 0),
+            "관할법원종류": (["특허법원", "서울중앙지방법원", "대법원"][i % 3]
+                       if (has_trial and rng.random() < 0.5) or i % 53 == 0 else ""),
+            "국가연구 과제명": (["소재부품장비 기술개발사업", "K-반도체 전략 지원사업",
+                          "차세대 지능형 반도체 기술개발", "나노소재 원천기술개발"]
+                         [(l1_idx + i) % 4] if rng.random() < 0.15 else ""),
         })
     return pd.DataFrame(rows)
 
