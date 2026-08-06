@@ -1959,6 +1959,75 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
           }
         });
       } },
+      { label: '출원인·권리자 관계', render: function (h) {
+        analysisCard({
+          analysis: 'ownership', holder: h,
+          title: '출원인 ↔ 현재 권리자 — 특허 이전(양도) 분석',
+          help: '최초 출원인과 현재 권리자가 다른 특허는 양도·매각·M&A 를 거친 특허입니다. ' +
+            '누가 누구의 특허를 확보했는지(이전 흐름), 기업별 확보/유출 규모, 거래가 활발한 ' +
+            '기술분류, 이전 특허의 품질을 분석합니다. 사명 변경·계열사 재편이 양도처럼 보일 수 ' +
+            '있으므로(출원인 표준화로 병합 가능) 통계 신호로 해석하세요.',
+          guide: '이전 흐름 네트워크: 화살표=출원인→현재 권리자(특허가 이동한 방향), 두께=건수, ' +
+            '노드 색: 초록=순확보(매수 우위)·빨강=순유출(매도 우위)·파랑=균형. 읽는 법: 화살표가 ' +
+            '한 기업으로 모이면 그 기업이 적극적 기술 매입자(M&A·포트폴리오 구축)입니다. ' +
+            '확보/유출 막대: 오른쪽(초록)=타사 출원 특허를 보유(확보), 왼쪽(빨강)=출원했지만 권리가 ' +
+            '떠남(유출). 거래 활발 분류: 이전이 몰린 기술=시장에서 돈을 주고 살 만큼 가치가 확인된 ' +
+            '영역입니다. 막대·노드·엣지 클릭 시 근거 특허가 열립니다.',
+          renderOk: function (r, c, setTarget) {
+            var k = r.kpi || {};
+            var grid = Ui.el('<div class="kpi-grid" style="margin-bottom:10px"></div>');
+            [[Ui.num(k.n_docs, 0), '분석 문헌'],
+             [Ui.num(k.n_transferred, 0), '권리 이전 특허'],
+             [Ui.pct(k.transfer_rate), '이전 비율'],
+             [k.quality ? (Ui.num(k.quality.transferred_avg, 1) + ' vs ' +
+               Ui.num(k.quality.kept_avg, 1)) : '-', '평균 피인용 (이전 vs 보유)']]
+              .forEach(function (x) {
+                grid.appendChild(Ui.el('<div class="kpi"><div class="kpi-value">' + Ui.esc(x[0]) +
+                  '</div><div class="kpi-label">' + Ui.esc(x[1]) + '</div></div>'));
+              });
+            c.body.appendChild(grid);
+            if (r.network) {
+              var cyH = Ui.el('<div class="cy-holder"></div>');
+              c.body.appendChild(cyH);
+              var cy = Render.cytoscape(cyH, r.network, {
+                onNode: function (d) {
+                  Drill.open(d.drill, d.label + ' — 확보 ' + d.acquired + ' / 유출 ' + d.divested);
+                }
+              });
+              setTarget({ kind: 'cy', cy: cy });
+            }
+            if (r.fig_net) {
+              var nh = Ui.el('<div class="chart-holder"></div>');
+              c.body.appendChild(nh);
+              Render.plotly(nh, r.fig_net, plotlyDrill);
+              if (!r.network) setTarget({ kind: 'plotly', el: nh });
+            }
+            if (r.fig_tech) {
+              var th = Ui.el('<div class="chart-holder"></div>');
+              c.body.appendChild(th);
+              Render.plotly(th, r.fig_tech, plotlyDrill);
+            }
+            if ((r.top_pairs || []).length) {
+              var rows = r.top_pairs.map(function (p) {
+                var tr = document.createElement('tr');
+                var td0 = document.createElement('td');
+                td0.appendChild(drillCell(p.from + ' → ' + p.to, p.drill));
+                tr.appendChild(td0);
+                tr.insertAdjacentHTML('beforeend',
+                  '<td class="num">' + Ui.num(p.n, 0) + '</td>' +
+                  '<td>' + Ui.esc(p.tech) + '</td>' +
+                  '<td>' + Ui.esc(p.period) + '</td>');
+                return tr;
+              });
+              var tbl = Ui.el(simpleTable(['이전 (출원인 → 권리자)', '건수', '주요 기술분류', '출원 기간'], []));
+              rows.forEach(function (tr) { tbl.querySelector('tbody').appendChild(tr); });
+              var wrap = Ui.el('<div style="overflow-x:auto;max-height:280px;overflow-y:auto;margin-top:8px"></div>');
+              wrap.appendChild(tbl);
+              c.body.appendChild(wrap);
+            }
+          }
+        });
+      } },
       { label: '유사도·중첩도', render: function (h) {
         analysisCard({
           analysis: 'company-dna', holder: h, title: '전략 유사도 · 포트폴리오 중첩도',

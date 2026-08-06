@@ -348,6 +348,9 @@ CONCEPTS = {
                      "trial claimant", "심판 신청인"],
     },
 }
+# 기존 assignee 개념에 변형 표기 보강 (최종권리자·등록권리자 등)
+CONCEPTS["assignee"]["variants"] += ["최종권리자", "최종 권리자", "등록권리자",
+                                     "현재 소유자", "현재소유자", "current owner"]
 
 CONCEPT_KEYS = list(CONCEPTS.keys())
 
@@ -387,6 +390,7 @@ ANALYSIS_REQUIREMENTS = {
     "executive-summary":     {"required": [{"any": ANY_TECH}, {"any": ANY_DATE}, {"any": ANY_APPLICANT}], "optional": ["cites_forward", "is_active", "legal_status", "expiry_date", "is_own"]},
     "axis-cross":            {"required": [{"any": ANY_TECH}], "optional": ["tech_b_l1", "tech_b_l2", "tech_b_l3", "tech_c_l1", "tech_c_l2", "tech_c_l3", {"any": ANY_DATE}] + ANY_APPLICANT},
     "tech-year-bubble":      {"required": [{"any": ANY_TECH}, {"any": ANY_DATE}], "optional": ANY_APPLICANT},
+    "ownership":             {"required": [{"any": ANY_APPLICANT}, "assignee"], "optional": [{"any": ANY_TECH}, {"any": ANY_DATE}, "cites_forward", "is_active", "legal_status", "reg_date"]},
 }
 
 _NORM_RE = re.compile(r"[\s\(\)\[\]\{\}\-_/\\.,:;'\"·|]+")

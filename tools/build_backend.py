@@ -58,6 +58,7 @@ MODULE_ORDER = [
     "src/analyses/wips_deep.py",
     "src/analyses/executive.py",
     "src/analyses/axis_cross.py",
+    "src/analyses/ownership.py",
     "src/api.py",
 ]
 

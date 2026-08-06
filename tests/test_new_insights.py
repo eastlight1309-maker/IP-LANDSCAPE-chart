@@ -349,6 +349,39 @@ def test_executive_summary(prepared, settings):
     assert r2["kpi"]["focal_basis"] == "화면에서 선택"
 
 
+def test_ownership_analysis(settings):
+    from src.analyses.ownership import compute_ownership
+    from src.analyses.common import select_patents
+    df = make_prepared(generate_sample(n=500, seed=37))
+    r = compute_ownership(df, settings)
+    assert r["status"] == "ok"
+    k = r["kpi"]
+    assert k["n_transferred"] > 0 and 0 < k["transfer_rate"] < 1
+    # 이전 흐름 네트워크: 방향성 엣지 + 확보/유출 노드 데이터
+    assert r["network"]["edges"]
+    node = r["network"]["nodes"][0]["data"]
+    assert "acquired" in node and "divested" in node
+    # 순매수/순매도 막대 + 거래 활발 기술분류
+    assert r["fig_net"] and r["fig_tech"]
+    assert any(row["net"] != 0 for row in r["net_rows"])
+    # drill: 이전 특허 / 특정 권리자 확보 특허
+    tr_docs = select_patents(df, {"transferred": True})
+    assert len(tr_docs) == k["n_transferred"]
+    assert (tr_docs["applicant_display"] != tr_docs["owner_display"]).all()
+    top_pair = r["top_pairs"][0]
+    assert len(select_patents(df, top_pair["drill"])) == top_pair["n"]
+    # 주의 문구 (사명 변경 오탐 + 법적 판단 아님)
+    assert "사명 변경" in r["meta"]["note"] and "등록원부" in r["meta"]["note"]
+
+
+def test_ownership_disabled_without_owner(settings):
+    from src.analyses.ownership import compute_ownership
+    raw = generate_sample(n=100, seed=38).drop(columns=["현재권리자"])
+    r = compute_ownership(make_prepared(raw), settings)
+    assert r["status"] == "disabled"
+    assert "현재 권리자" in r["message"]
+
+
 def test_tech_year_bubble(prepared, settings):
     from src.analyses.basic_stats import compute_tech_year_bubble
     from src.analyses.common import select_patents

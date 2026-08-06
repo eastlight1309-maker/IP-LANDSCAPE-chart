@@ -88,7 +88,7 @@ ANALYSIS_PATHS = [
     "/api/scope-entropy", "/api/combo-upset",
     "/api/emerging-clusters", "/api/semantic-influence", "/api/similarity-network",
     "/api/wips-deep", "/api/executive-summary", "/api/axis-cross",
-    "/api/tech-year-bubble",
+    "/api/tech-year-bubble", "/api/ownership",
 ]
 
 

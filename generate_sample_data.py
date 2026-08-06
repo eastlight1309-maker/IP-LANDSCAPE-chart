@@ -186,6 +186,11 @@ def generate_sample(n=600, seed=42, sep="; ", multiclass_format="sep",
                      if rng.random() < 0.08 else "",
             "도면 수": int(rng.integers(2, 12)) + (COMPANIES.index(comp) % 3) * 6,
             "명세서 페이지 수": int(rng.integers(8, 60)),
+            # 현재권리자: 대부분 출원인과 동일, 일부 양도 (삼성전자=순매수 성향,
+            # ASE=순매도 성향 케이스)
+            "현재권리자": ("삼성전자" if (comp == "ASE" and rng.random() < 0.25) else
+                      (COMPANIES[(COMPANIES.index(comp) + 2) % len(COMPANIES)]
+                       if rng.random() < 0.06 else comp)),
             "심판 이력": (["무효심판", "거절결정불복심판"][i % 2] if has_trial else ""),
             "심판 청구인": (COMPANIES[(COMPANIES.index(comp) + 1) % len(COMPANIES)]
                       if (has_trial and i % 2 == 0) else ""),

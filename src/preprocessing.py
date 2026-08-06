@@ -589,6 +589,18 @@ def build_standard_frame(raw_df, mapping, applicant_rules=None):
          ((s in ACTIVE_LEGAL_STATUSES) if (s and s != "Unknown") else None))
         for a, s in zip(df["_is_active_bool"], df["legal_status_norm"])])
 
+    # 현재 권리자(소유자) 표준화 — 출원인과 동일한 규칙(사용자 mapping > 자동)을
+    # 적용해 사명 표기 차이가 '가짜 양도'로 잡히지 않게 한다.
+    if "assignee" in df.columns and not _mostly_numeric(df["assignee"]):
+        _rules = applicant_rules or {}
+        _omap = {str(k).strip(): v for k, v in (_rules.get("mapping") or {}).items()}
+        owner_first = df["assignee"].map(lambda v: (split_names(v) or [""])[0])
+        df["owner_display"] = owner_first.map(
+            lambda v: _omap.get(str(v).strip(),
+                                auto_standardize_name(v)) if str(v).strip() else "")
+    else:
+        df["owner_display"] = ""
+
     df = build_tech_lists(df)
     # B·C축 기술분류 리스트 (매핑된 경우에만 — 소→중→대 우선, 다중값 지원)
     for axis in ("b", "c"):

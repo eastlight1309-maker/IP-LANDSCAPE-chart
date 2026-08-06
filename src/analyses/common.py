@@ -182,6 +182,13 @@ def select_patents(df, drill):
         mask &= m
     if drill.get("applicant"):
         mask &= df["applicant_display"].astype(str) == str(drill["applicant"])
+    if drill.get("owner") and "owner_display" in df.columns:
+        mask &= df["owner_display"].astype(str) == str(drill["owner"])
+    if drill.get("transferred") is not None and "owner_display" in df.columns:
+        both = (df["applicant_display"].astype(str) != "") & \
+               (df["owner_display"].astype(str) != "")
+        diff = df["applicant_display"].astype(str) != df["owner_display"].astype(str)
+        mask &= (both & diff) if drill["transferred"] else (both & ~diff)
     if drill.get("year") not in (None, ""):
         mask &= df["_base_year"] == float(drill["year"])
     if dtype == "cell":
