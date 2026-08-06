@@ -291,7 +291,7 @@ def test_wips_deep_graceful_without_deep_fields(settings):
     from src.analyses.wips_deep import compute_wips_deep
     df_raw = generate_sample(n=200, seed=18)
     deep_cols = ["소멸일", "대리인", "우선심사 여부", "심사청구일", "거절이유통지 횟수",
-                 "심사관 인용문헌 수", "출원인 인용문헌 수", "원출원번호", "도면 수",
+                 "심사관인용 문헌번호", "자기인용 문헌번호", "원출원번호", "도면 수",
                  "명세서 페이지 수", "심판 이력", "심판 청구인", "심판전체횟수",
                  "소송전체횟수", "관할법원종류", "국가연구 과제명"]
     df = make_prepared(df_raw.drop(columns=deep_cols))
@@ -512,12 +512,32 @@ def test_axis_cross_two_axes_only(settings):
 def test_preferred_default_mappings():
     from src.column_mapping import suggest_mapping
     m = suggest_mapping(["표준화출원인", "출원인 대표명화 국문명",
-                         "인용 수", "인용 문헌수", "피인용 수", "피인용 문헌수",
-                         "해결과제", "해결과제 요약"])
+                         "인용 수", "인용 문헌 수", "피인용 수", "피인용 문헌 수",
+                         "해결과제", "해결과제 요약",
+                         "심사관인용 문헌번호", "자기인용 문헌번호"])
     assert m["applicant_std"]["column"] == "출원인 대표명화 국문명"
-    assert m["cites_backward"]["column"] == "인용 문헌수"
-    assert m["cites_forward"]["column"] == "피인용 문헌수"
+    assert m["cites_backward"]["column"] == "인용 문헌 수"
+    assert m["cites_forward"]["column"] == "피인용 문헌 수"
     assert m["problem"]["column"] == "해결과제 요약"
+    assert m["examiner_citations"]["column"] == "심사관인용 문헌번호"
+    assert m["applicant_citations"]["column"] == "자기인용 문헌번호"
+
+
+def test_citation_doc_number_lists_pass_validation_and_count():
+    """문헌번호 목록 컬럼: 값 검증 통과 + 건수로 자동 집계되어 분석에 사용."""
+    import pandas as pd
+    from src.column_mapping import suggest_mapping, validate_mapping_values
+    df = pd.DataFrame({
+        "심사관인용 문헌번호": ["KR101234567B1; KR102222333B1", "", "KR103333444A"],
+        "자기인용 문헌번호": ["KR104444555A", "", ""],
+    })
+    m = {k: v["column"] for k, v in suggest_mapping(list(df.columns)).items()}
+    valid, dropped = validate_mapping_values(df, m)
+    assert "examiner_citations" in valid and "applicant_citations" in valid
+    assert not dropped
+    from src.analyses.wips_deep import _count_like
+    counts = _count_like(df["심사관인용 문헌번호"])
+    assert counts.iloc[0] == 2 and counts.iloc[2] == 1
     # preferred 컬럼이 없으면 기존 변형으로 정상 매핑
     m2 = suggest_mapping(["표준화출원인", "피인용 수", "해결과제"])
     assert m2["applicant_std"]["column"] == "표준화출원인"

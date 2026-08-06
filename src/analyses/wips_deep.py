@@ -54,10 +54,17 @@ def _primary_tech(df):
 
 
 def _count_like(series):
-    """숫자 또는 '문헌 목록' 문자열 → 건수 시리즈."""
-    nums = parse_numeric(series)
-    if nums.notna().mean() >= 0.5:
-        return nums
+    """숫자 또는 '문헌번호 목록' 문자열 → 건수 시리즈.
+
+    "KR101234567B1; KR10..." 같은 번호 목록에서 첫 숫자를 건수로 오인하지 않도록,
+    값 전체가 순수 숫자("3", "12건")일 때만 숫자로 해석하고 그 외에는 구분자 기준
+    항목 수를 센다.
+    """
+    s = series.astype(str).str.strip()
+    nonempty = s[(s != "") & (~s.str.lower().isin(["nan", "none"]))]
+    if len(nonempty) and float(nonempty.str.fullmatch(
+            r"[+-]?\d{1,6}(\.\d+)?\s*(건|회|개)?").mean()) >= 0.5:
+        return parse_numeric(series)
     return series.map(lambda v: float(len(parse_multiclass_cell(v)))
                       if str(v).strip() not in ("", "nan", "None") else np.nan)
 

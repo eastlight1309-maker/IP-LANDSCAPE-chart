@@ -180,8 +180,13 @@ def generate_sample(n=600, seed=42, sep="; ", multiclass_format="sep",
                                 and rng.random() < 0.45) or rng.random() < 0.07) else "N",
             "심사청구일": "%d-%02d-01" % (year + int(rng.integers(0, 2)), month),
             "거절이유통지 횟수": int(rng.poisson(1.2)) + (3 if i % 41 == 0 else 0),
-            "심사관 인용문헌 수": int(rng.poisson(4 if l1 == L1[1] else 2)),
-            "출원인 인용문헌 수": int(rng.poisson(2)),
+            # WIPS 형태: 건수가 아닌 문헌번호 목록 (앱이 건수로 자동 집계)
+            "심사관인용 문헌번호": "; ".join(
+                "KR10%07dB1" % (1000000 + i * 7 + k)
+                for k in range(int(rng.poisson(4 if l1 == L1[1] else 2)))),
+            "자기인용 문헌번호": "; ".join(
+                "KR10%07dA" % (2000000 + i * 5 + k)
+                for k in range(int(rng.poisson(2)))),
             "원출원번호": ("KR10-%d-%07d" % (max(year_min, year - 1), max(0, i - 5)))
                      if rng.random() < 0.08 else "",
             "도면 수": int(rng.integers(2, 12)) + (COMPANIES.index(comp) % 3) * 6,

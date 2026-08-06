@@ -721,7 +721,7 @@ CONCEPTS = {
     },
     "cites_backward": {
         "label": "인용 수", "dtype": "정수 (선행문헌 인용 수)",
-        "preferred": ["인용 문헌수"],  # 기본 매핑
+        "preferred": ["인용 문헌수", "인용 문헌 수"],  # 기본 매핑
         "variants": ["인용 수", "인용수", "인용문헌수", "인용 문헌 수", "인용 문헌수",
                      "backward citations",
                      "citing count", "cited references", "references cited", "인용특허수",
@@ -729,7 +729,7 @@ CONCEPTS = {
     },
     "cites_forward": {
         "label": "피인용 수", "dtype": "정수 (후행문헌에 의한 피인용 수)",
-        "preferred": ["피인용 문헌수"],  # 기본 매핑
+        "preferred": ["피인용 문헌수", "피인용 문헌 수"],  # 기본 매핑
         "variants": ["피인용 수", "피인용수", "피인용횟수", "피인용 문헌 수", "피인용 문헌수",
                      "forward citations",
                      "cited by count", "citation count", "forward citation count", "피인용특허수",
@@ -897,13 +897,17 @@ CONCEPTS = {
                      "중간사건 수", "office action count", "거절이유 횟수", "oa 건수"],
     },
     "examiner_citations": {
-        "label": "심사관 인용문헌 수", "dtype": "숫자 (또는 문헌 목록)",
+        "label": "심사관 인용문헌 수", "dtype": "숫자 또는 문헌번호 목록 (건수로 자동 집계)",
+        "preferred": ["심사관인용 문헌번호"],  # 기본 매핑 (WIPS 문헌번호 목록 컬럼)
         "variants": ["심사관 인용문헌 수", "심사관 인용 수", "심사관 인용문헌", "심사관 인용",
+                     "심사관인용 문헌번호", "심사관 인용 문헌번호", "심사관인용문헌번호",
                      "examiner citation", "심사관인용", "심사관 제시 문헌"],
     },
     "applicant_citations": {
-        "label": "출원인(자발) 인용문헌 수", "dtype": "숫자 (또는 문헌 목록)",
+        "label": "출원인(자발) 인용문헌 수", "dtype": "숫자 또는 문헌번호 목록 (건수로 자동 집계)",
+        "preferred": ["자기인용 문헌번호"],  # 기본 매핑 (WIPS 문헌번호 목록 컬럼)
         "variants": ["출원인 인용문헌 수", "출원인 인용 수", "자발 인용", "출원인 인용문헌",
+                     "자기인용 문헌번호", "자기 인용 문헌번호", "자기인용문헌번호", "자기인용",
                      "applicant citation", "출원인인용", "ids 인용"],
     },
     "parent_app_number": {
@@ -1016,7 +1020,8 @@ CONCEPT_KINDS = {
     "country": "country",
     "lapse_date": "date", "exam_request_date": "date",
     "oa_count": "number", "drawings_count": "number", "spec_length": "number",
-    "examiner_citations": "number", "applicant_citations": "number",
+    # count_or_list: 건수 숫자 또는 문헌번호 목록(예: "KR101234567; KR2020...") 허용
+    "examiner_citations": "count_or_list", "applicant_citations": "count_or_list",
     "trial_count": "number", "lawsuit_count": "number",
     "expedited_exam": "bool",
 }
@@ -1048,6 +1053,8 @@ def _kind_compatible(concept, method, ncol):
         return hk == "date"
     if ck == "number":
         return hk == "number"
+    if ck == "count_or_list":  # 건수 헤더('…수')와 문헌번호 헤더('…번호') 모두 허용
+        return hk in ("number", "text")
     # text / bool / country 개념은 건수·일자 형태 헤더에 매칭 금지
     return hk == "text"
 
@@ -1179,6 +1186,11 @@ def validate_mapping_values(sample_df, mapping):
                 r"[^\d+-]{0,3}[+-]?\d+(\.\d+)?[^\d]{0,4}").mean())
             if max(num_frac, loose_frac) < 0.5:
                 reason = "값이 숫자가 아님 (숫자 비율 %.0f%%)" % (max(num_frac, loose_frac) * 100)
+        elif kind == "count_or_list":
+            # 건수 숫자 또는 문헌번호 목록(4자리 이상 숫자 포함 값) 모두 유효
+            docnum_frac = float(s.str.contains(r"\d{4,}", regex=True).mean())
+            if max(num_frac, docnum_frac) < 0.5:
+                reason = "값이 건수도 문헌번호 목록도 아님"
         elif kind == "country":
             c_frac = _fraction(s, _COUNTRY_VALUE_RE)
             short_frac = float((s.str.len() <= 8).mean())
@@ -10406,10 +10418,17 @@ def _primary_tech(df):
 
 
 def _count_like(series):
-    """숫자 또는 '문헌 목록' 문자열 → 건수 시리즈."""
-    nums = parse_numeric(series)
-    if nums.notna().mean() >= 0.5:
-        return nums
+    """숫자 또는 '문헌번호 목록' 문자열 → 건수 시리즈.
+
+    "KR101234567B1; KR10..." 같은 번호 목록에서 첫 숫자를 건수로 오인하지 않도록,
+    값 전체가 순수 숫자("3", "12건")일 때만 숫자로 해석하고 그 외에는 구분자 기준
+    항목 수를 센다.
+    """
+    s = series.astype(str).str.strip()
+    nonempty = s[(s != "") & (~s.str.lower().isin(["nan", "none"]))]
+    if len(nonempty) and float(nonempty.str.fullmatch(
+            r"[+-]?\d{1,6}(\.\d+)?\s*(건|회|개)?").mean()) >= 0.5:
+        return parse_numeric(series)
     return series.map(lambda v: float(len(parse_multiclass_cell(v)))
                       if str(v).strip() not in ("", "nan", "None") else np.nan)
 
