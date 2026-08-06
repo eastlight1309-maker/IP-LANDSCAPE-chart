@@ -291,7 +291,7 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
       opts = opts || {};
       holder.classList.add('ipls-cy');
       holder.__iplsNetwork = network;
-      var cy = cytoscape({
+      var cy = holder.__iplsCy = cytoscape({
         container: holder,
         elements: network,
         layout: { name: 'cose', animate: false, nodeRepulsion: 9000, idealEdgeLength: 90 },
@@ -334,7 +334,7 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
     function echarts_(holder, option) {
       holder.classList.add('ipls-echart');
       holder.__iplsOption = option;
-      var chart = echarts.init(holder);
+      var chart = holder.__iplsChart = echarts.init(holder);
       chart.setOption(option);
       return chart;
     }
@@ -503,6 +503,29 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
              extractChartSheets: extractChartSheets };
   })();
 
+  /* PPT 저장용: 카드의 첫 차트를 PNG data URL 로 캡처 (Plotly/Cytoscape/ECharts) */
+  function captureCardImage(cardBody) {
+    if (!cardBody) return Promise.resolve(null);
+    try {
+      var gd = cardBody.querySelector('.ipls-chart');
+      if (gd && gd.data && window.Plotly && Plotly.toImage) {
+        return Plotly.toImage(gd, { format: 'png', width: 1200, height: 700 })
+          .catch(function () { return null; });
+      }
+      var cyEl = cardBody.querySelector('.ipls-cy');
+      if (cyEl && cyEl.__iplsCy && cyEl.__iplsCy.png) {
+        return Promise.resolve(cyEl.__iplsCy.png({ full: true, scale: 2,
+          output: 'base64uri', bg: '#ffffff' }));
+      }
+      var ecEl = cardBody.querySelector('.ipls-echart');
+      if (ecEl && ecEl.__iplsChart && ecEl.__iplsChart.getDataURL) {
+        return Promise.resolve(ecEl.__iplsChart.getDataURL(
+          { type: 'png', pixelRatio: 2, backgroundColor: '#fff' }));
+      }
+    } catch (e) { /* 캡처 실패는 무시 — 텍스트만 저장 */ }
+    return Promise.resolve(null);
+  }
+
   /* LLM 전달용: 카드에 표시된 차트 데이터를 소형으로 압축 (시트 4 × 행 25 × 열 8) */
   function compactChartData(cardBody) {
     if (!cardBody) return null;
@@ -564,13 +587,17 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
             desc = ((descEl ? descEl.textContent : '') + ' ' +
                     (guideEl ? guideEl.textContent : '')).trim();
           }
-          Api.post('/api/insight', {
-            analysis: analysisName,
-            metrics: ins.metrics || {},
-            sentences: ins.sentences || [],
-            description: (desc || '').slice(0, 900),
-            chart_data: compactChartData(cardEl && cardEl.querySelector('.card-body'))
-          }, 'LLM 인사이트 생성 중…').then(function (data) {
+          var cardBody = cardEl && cardEl.querySelector('.card-body');
+          captureCardImage(cardBody).then(function (img) {
+            return Api.post('/api/insight', {
+              analysis: analysisName,
+              metrics: ins.metrics || {},
+              sentences: ins.sentences || [],
+              description: (desc || '').slice(0, 900),
+              chart_data: compactChartData(cardBody),
+              chart_image: img
+            }, 'LLM 인사이트 생성 중…');
+          }).then(function (data) {
             ul.innerHTML = '';
             (data.sentences || []).forEach(function (s) {
               var li = document.createElement('li');
@@ -649,14 +676,18 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
         waitEl.style.display = '';
         askBtn.disabled = true; sendBtn.disabled = true;
         var cardEl = panel.closest('.card');
-        Api.post('/api/insight', {
-          analysis: analysisName, chat: true, question: question || null,
-          history: history.slice(-8),
-          metrics: ins.metrics || {}, sentences: ins.sentences || [],
-          description: (description || '').slice(0, 500),
-          chart_data: compactChartData(cardEl && cardEl.querySelector('.card-body')),
-          web_search: !!(webChk && webChk.checked)
-        }, 'AI 인사이트 생성 중…').then(function (d) {
+        var cardBody = cardEl && cardEl.querySelector('.card-body');
+        captureCardImage(cardBody).then(function (img) {
+          return Api.post('/api/insight', {
+            analysis: analysisName, chat: true, question: question || null,
+            history: history.slice(-8),
+            metrics: ins.metrics || {}, sentences: ins.sentences || [],
+            description: (description || '').slice(0, 500),
+            chart_data: compactChartData(cardBody),
+            chart_image: img,
+            web_search: !!(webChk && webChk.checked)
+          }, 'AI 인사이트 생성 중…');
+        }).then(function (d) {
           addMsg('assistant', d.answer || '(응답 없음)', d.source, d.web_sources);
           if (d.web_note) {
             log.appendChild(Ui.el('<div class="chat-src" style="padding:2px 6px">' +
@@ -2740,6 +2771,12 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
           head.appendChild(delBtn);
           row.appendChild(head);
           var detail = Ui.el('<div style="display:none;margin-top:8px;border-top:1px dashed #e0e8ef;padding-top:8px"></div>');
+          if (it.has_image) {
+            head.appendChild(Ui.el('<span class="badge">📊 차트 포함</span>'));
+            var img = Ui.el('<img style="max-width:100%;max-height:340px;border:1px solid #e8eff5;border-radius:6px;margin-bottom:8px" loading="lazy">');
+            img.src = backendUrl('/api/insights-log/image?id=' + encodeURIComponent(it.id));
+            detail.appendChild(img);
+          }
           var ul = document.createElement('ul');
           ul.style.cssText = 'padding-left:18px;font-size:12.5px;line-height:1.7';
           (it.sentences || []).forEach(function (s) {

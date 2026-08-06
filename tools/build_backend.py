@@ -71,7 +71,8 @@ storage = _types.SimpleNamespace(
     load_applicant_rules=load_applicant_rules, save_applicant_rules=save_applicant_rules,
     load_projects=load_projects, save_projects=save_projects,
     load_filter_state=load_filter_state, save_filter_state=save_filter_state,
-    load_uploads=load_uploads, save_uploads=save_uploads, upload_dir=upload_dir)
+    load_uploads=load_uploads, save_uploads=save_uploads, upload_dir=upload_dir,
+    insight_image_dir=insight_image_dir)
 """
 
 HEADER = '''# -*- coding: utf-8 -*-

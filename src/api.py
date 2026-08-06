@@ -75,7 +75,8 @@ from src.uploads import (save_upload as uploads_save, list_uploads as uploads_li
                          delete_upload as uploads_delete,
                          ensure_loaded as uploads_ensure_loaded)
 from src.insight_store import (add_insight, list_insights, delete_insight,
-                               get_insights, build_pptx)
+                               get_insights, build_pptx,
+                               get_image as insight_get_image)
 from src.insights import llm_augment_insight, llm_chat, build_insight, \
     format_chart_context
 from src.viz_payload import jsonable, empty_result
@@ -690,7 +691,8 @@ def register_routes(app):
                         analysis, title=str(body.get("question") or analysis),
                         sentences=str(out["answer"]).split("\n"),
                         dataset=settings.get("dataset"), kind="chat",
-                        question=body.get("question"))
+                        question=body.get("question"),
+                        chart_image=body.get("chart_image"))
                 except Exception as e:
                     logger.warning("인사이트 저장 실패: %s", e)
             return out
@@ -703,7 +705,8 @@ def register_routes(app):
             try:
                 out["saved_id"] = add_insight(
                     analysis, title=analysis, sentences=out["sentences"],
-                    dataset=settings.get("dataset"), kind="report")
+                    dataset=settings.get("dataset"), kind="report",
+                    chart_image=body.get("chart_image"))
             except Exception as e:
                 logger.warning("인사이트 저장 실패: %s", e)
         return out
@@ -895,9 +898,18 @@ def register_routes(app):
     @app.route("/api/insights-log/delete", methods=["POST"])
     @wrap
     def api_insights_log_delete():
-        """POST {"id"} → 보관함 항목 삭제."""
+        """POST {"id"} → 보관함 항목 삭제 (차트 이미지 파일 포함)."""
         delete_insight((json_body() or {}).get("id"))
         return {"status": "ok"}
+
+    @app.route("/api/insights-log/image", methods=["GET"])
+    @wrap
+    def api_insights_log_image():
+        """GET ?id= → 항목의 차트 캡처 이미지 스트림 (보관함 미리보기용)."""
+        data, mime = insight_get_image(request.args.get("id"))
+        if data is None:
+            raise LookupError("이미지가 없습니다.")
+        return send_file(io.BytesIO(data), mimetype=mime)
 
     @app.route("/api/insights-report", methods=["POST"])
     @wrap

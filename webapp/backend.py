@@ -2521,6 +2521,16 @@ def upload_dir():
         logger.warning("upload dir create failed: %s", e)
     return base
 
+
+def insight_image_dir():
+    """인사이트 차트 이미지 저장 디렉터리 (PPT 삽입용 PNG)."""
+    base = os.path.join(upload_dir(), "insight_images")
+    try:
+        os.makedirs(base, exist_ok=True)
+    except OSError as e:
+        logger.warning("insight image dir create failed: %s", e)
+    return base
+
 # (병합 shim) src.storage 모듈 네임스페이스
 import types as _types
 storage = _types.SimpleNamespace(
@@ -2530,7 +2540,8 @@ storage = _types.SimpleNamespace(
     load_applicant_rules=load_applicant_rules, save_applicant_rules=save_applicant_rules,
     load_projects=load_projects, save_projects=save_projects,
     load_filter_state=load_filter_state, save_filter_state=save_filter_state,
-    load_uploads=load_uploads, save_uploads=save_uploads, upload_dir=upload_dir)
+    load_uploads=load_uploads, save_uploads=save_uploads, upload_dir=upload_dir,
+    insight_image_dir=insight_image_dir)
 
 
 
@@ -2927,8 +2938,11 @@ PPT 보고서:
   없으면 외부 의존성 없는 내장 OOXML 생성기(_minimal_pptx)로 생성한다 —
   표지 1장 + 인사이트당 1장(길면 이어짐 슬라이드), 텍스트 전용 16:9.
 """
+import base64
 import io
 import logging
+import os
+import re
 import time
 import uuid
 import zipfile
@@ -2940,38 +2954,100 @@ logger = logging.getLogger("ip_landscape")
 
 _MAX_ITEMS = 300
 _LINES_PER_SLIDE = 13
+_MAX_IMAGE_MB = 4
+_DATAURL_RE = re.compile(r"^data:image/(png|jpeg);base64,(.+)$", re.DOTALL)
+
+
+def _save_chart_image(insight_id, chart_image):
+    """프론트가 보낸 차트 캡처(data URL) → PNG/JPEG 파일 저장. 파일명 또는 None."""
+    m = _DATAURL_RE.match(str(chart_image or "").strip())
+    if not m:
+        return None
+    try:
+        raw = base64.b64decode(m.group(2), validate=False)
+    except Exception:
+        return None
+    if not raw or len(raw) > _MAX_IMAGE_MB * 1024 * 1024:
+        return None
+    fname = "%s.%s" % (insight_id, "png" if m.group(1) == "png" else "jpg")
+    try:
+        with open(os.path.join(storage.insight_image_dir(), fname), "wb") as fh:
+            fh.write(raw)
+        return fname
+    except OSError as e:
+        logger.warning("인사이트 이미지 저장 실패: %s", e)
+        return None
+
+
+def _image_path(entry):
+    fname = entry.get("image_file")
+    if not fname:
+        return None
+    path = os.path.join(storage.insight_image_dir(), str(fname))
+    return path if os.path.exists(path) else None
+
+
+def _remove_image(entry):
+    path = _image_path(entry)
+    if path:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
 
 
 def add_insight(analysis, title, sentences, dataset=None, kind="report",
-                question=None):
-    """LLM 인사이트 저장. 반환: 항목 id."""
+                question=None, chart_image=None):
+    """LLM 인사이트 저장 (+차트 캡처 이미지 — PPT 삽입용). 반환: 항목 id."""
     sentences = [str(s).strip() for s in (sentences or []) if str(s).strip()][:40]
     if not sentences:
         return None
+    uid = uuid.uuid4().hex[:10]
     entry = {
-        "id": uuid.uuid4().hex[:10], "kind": kind,
+        "id": uid, "kind": kind,
         "analysis": str(analysis or "")[:60],
         "title": str(title or analysis or "인사이트")[:160],
         "question": (str(question)[:200] if question else None),
         "sentences": sentences,
         "dataset": (str(dataset)[:80] if dataset else None),
         "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "image_file": _save_chart_image(uid, chart_image),
     }
     data = storage.load_store("insights")
     items = list(data.get("items") or [])
     items.insert(0, entry)
+    for evicted in items[_MAX_ITEMS:]:  # 상한 초과분의 이미지 파일 정리
+        _remove_image(evicted)
     storage.save_store("insights", {"items": items[:_MAX_ITEMS]})
     return entry["id"]
 
 
 def list_insights():
-    return list(storage.load_store("insights").get("items") or [])
+    items = list(storage.load_store("insights").get("items") or [])
+    for it in items:
+        it["has_image"] = _image_path(it) is not None
+    return items
+
+
+def get_image(insight_id):
+    """항목의 차트 이미지 (bytes, mimetype) 또는 (None, None)."""
+    for it in storage.load_store("insights").get("items") or []:
+        if str(it.get("id")) == str(insight_id):
+            path = _image_path(it)
+            if path:
+                with open(path, "rb") as fh:
+                    return fh.read(), ("image/png" if path.endswith(".png")
+                                       else "image/jpeg")
+    return None, None
 
 
 def delete_insight(insight_id):
     data = storage.load_store("insights")
-    items = [it for it in (data.get("items") or [])
-             if str(it.get("id")) != str(insight_id)]
+    items = list(data.get("items") or [])
+    for it in items:
+        if str(it.get("id")) == str(insight_id):
+            _remove_image(it)
+    items = [it for it in items if str(it.get("id")) != str(insight_id)]
     storage.save_store("insights", {"items": items})
     return True
 
@@ -2997,12 +3073,15 @@ def build_pptx(items, report_title="IP Landscape 인사이트 보고서"):
 
 
 def _to_slides(items, report_title):
-    """항목 → [(제목, [본문 줄...])]. 긴 항목은 이어짐 슬라이드로 분할."""
-    slides = [(report_title,
-               ["생성일: %s" % time.strftime("%Y-%m-%d"),
-                "포함 인사이트: %d건" % len(items),
-                "", "본 보고서의 지표는 특허 데이터 기반 통계 신호이며 "
-                "법률 자문(FTO·유효성 판단)을 대체하지 않습니다."])]
+    """항목 → [{"title","lines","image","ext"}]. 긴 항목은 이어짐 슬라이드로 분할.
+
+    차트 캡처 이미지가 있으면 첫 슬라이드에 차트(좌) + 인사이트(우)로 배치된다.
+    """
+    slides = [{"title": report_title, "image": None, "ext": None,
+               "lines": ["생성일: %s" % time.strftime("%Y-%m-%d"),
+                         "포함 인사이트: %d건" % len(items),
+                         "", "본 보고서의 지표는 특허 데이터 기반 통계 신호이며 "
+                         "법률 자문(FTO·유효성 판단)을 대체하지 않습니다."]}]
     for it in items:
         title = str(it.get("title") or it.get("analysis") or "인사이트")
         # 첫 줄이 [슬라이드 제목] 헤드라인이면 그 내용을 슬라이드 제목으로 사용
@@ -3015,10 +3094,22 @@ def _to_slides(items, report_title):
                                      (" · Q: %s" % it["question"])
                                      if it.get("question") else "")
         lines = [meta_line] + lines
+        image = None
+        ext = None
+        path = _image_path(it)
+        if path:
+            try:
+                with open(path, "rb") as fh:
+                    image = fh.read()
+                ext = "png" if path.endswith(".png") else "jpg"
+            except OSError:
+                image = None
         for start in range(0, len(lines), _LINES_PER_SLIDE):
             chunk = lines[start:start + _LINES_PER_SLIDE]
             t = title if start == 0 else title[:60] + " (계속)"
-            slides.append((t[:120], chunk))
+            slides.append({"title": t[:120], "lines": chunk,
+                           "image": image if start == 0 else None,
+                           "ext": ext if start == 0 else None})
     return slides
 
 
@@ -3029,22 +3120,29 @@ def _pptx_via_library(slides):
     prs.slide_width = Inches(13.333)
     prs.slide_height = Inches(7.5)
     blank = prs.slide_layouts[6]
-    for title, lines in slides:
+    for sl in slides:
         slide = prs.slides.add_slide(blank)
         tbox = slide.shapes.add_textbox(Inches(0.5), Inches(0.35),
                                         Inches(12.3), Inches(1.0))
         p = tbox.text_frame.paragraphs[0]
-        p.text = title
+        p.text = sl["title"]
         p.font.size = Pt(24)
         p.font.bold = True
-        body = slide.shapes.add_textbox(Inches(0.6), Inches(1.5),
-                                        Inches(12.1), Inches(5.6))
+        has_img = bool(sl.get("image"))
+        if has_img:
+            slide.shapes.add_picture(io.BytesIO(sl["image"]),
+                                     Inches(0.4), Inches(1.45),
+                                     width=Inches(7.1), height=Inches(4.14))
+            body_x, body_w, fsize = Inches(7.7), Inches(5.2), 11
+        else:
+            body_x, body_w, fsize = Inches(0.6), Inches(12.1), 14
+        body = slide.shapes.add_textbox(body_x, Inches(1.5), body_w, Inches(5.6))
         tf = body.text_frame
         tf.word_wrap = True
-        for i, line in enumerate(lines):
+        for i, line in enumerate(sl["lines"]):
             para = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
             para.text = str(line)
-            para.font.size = Pt(20 if line.startswith("[") else 14)
+            para.font.size = Pt((fsize + 4) if line.startswith("[") else fsize)
             para.font.bold = line.startswith("[")
     buf = io.BytesIO()
     prs.save(buf)
@@ -3056,6 +3154,8 @@ _CT = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
 <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
 <Default Extension="xml" ContentType="application/xml"/>
+<Default Extension="png" ContentType="image/png"/>
+<Default Extension="jpg" ContentType="image/jpeg"/>
 <Override PartName="/ppt/presentation.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml"/>
 <Override PartName="/ppt/slideMasters/slideMaster1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slideMaster+xml"/>
 <Override PartName="/ppt/slideLayouts/slideLayout1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slideLayout+xml"/>
@@ -3122,7 +3222,21 @@ _LAYOUT_RELS = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 _SLIDE_RELS = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
 <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideLayout" Target="../slideLayouts/slideLayout1.xml"/>
-</Relationships>"""
+%s</Relationships>"""
+
+_IMG_REL = ('<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/'
+            'officeDocument/2006/relationships/image" Target="../media/%s"/>')
+
+
+def _picture_xml(shape_id, x, y, w, h):
+    """차트 캡처 이미지 pic 요소 (r:embed=rId2)."""
+    return ('<p:pic><p:nvPicPr><p:cNvPr id="%d" name="chart"/>'
+            '<p:cNvPicPr/><p:nvPr/></p:nvPicPr>'
+            '<p:blipFill><a:blip r:embed="rId2"/><a:stretch><a:fillRect/>'
+            '</a:stretch></p:blipFill>'
+            '<p:spPr><a:xfrm><a:off x="%d" y="%d"/><a:ext cx="%d" cy="%d"/></a:xfrm>'
+            '<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr></p:pic>'
+            % (shape_id, x, y, w, h))
 
 
 def _textbox(shape_id, name, x, y, w, h, paragraphs):
@@ -3142,20 +3256,29 @@ def _textbox(shape_id, name, x, y, w, h, paragraphs):
             % (shape_id, name, x, y, w, h, "".join(paras)))
 
 
-def _slide_xml(title, lines):
+def _slide_xml(title, lines, has_image=False):
     title_box = _textbox(2, "title", 457200, 320040, 11277600, 914400,
                          [(title, 24, True)])
     body_paras = []
+    base_size = 11 if has_image else 14
     for line in lines:
         is_head = str(line).startswith("[")
-        body_paras.append((line, 18 if is_head else 14, is_head))
-    body_box = _textbox(3, "body", 548640, 1371600, 11094720, 5120640,
-                        body_paras or [(" ", 14, False)])
+        body_paras.append((line, (base_size + 4) if is_head else base_size, is_head))
+    if has_image:
+        # 차트(좌 7.1") + 인사이트 텍스트(우 5.2")
+        pic = _picture_xml(4, 365760, 1326000, 6492240, 3786000)
+        body_box = _textbox(3, "body", 7040880, 1326000, 4754880, 5120640,
+                            body_paras or [(" ", base_size, False)])
+        shapes = pic + body_box
+    else:
+        body_box = _textbox(3, "body", 548640, 1371600, 11094720, 5120640,
+                            body_paras or [(" ", base_size, False)])
+        shapes = body_box
     return ("""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <p:sld %s><p:cSld><p:spTree>
 <p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr>
 <p:grpSpPr/>%s%s</p:spTree></p:cSld><p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:sld>"""
-            % (_NS, title_box, body_box))
+            % (_NS, title_box, shapes))
 
 
 def _minimal_pptx(slides):
@@ -3195,9 +3318,17 @@ def _minimal_pptx(slides):
         z.writestr("ppt/slideLayouts/slideLayout1.xml", _LAYOUT)
         z.writestr("ppt/slideLayouts/_rels/slideLayout1.xml.rels", _LAYOUT_RELS)
         z.writestr("ppt/theme/theme1.xml", _THEME)
-        for i, (title, lines) in enumerate(slides):
-            z.writestr("ppt/slides/slide%d.xml" % (i + 1), _slide_xml(title, lines))
-            z.writestr("ppt/slides/_rels/slide%d.xml.rels" % (i + 1), _SLIDE_RELS)
+        for i, sl in enumerate(slides):
+            has_img = bool(sl.get("image"))
+            img_rel = ""
+            if has_img:
+                media_name = "image%d.%s" % (i + 1, sl.get("ext") or "png")
+                z.writestr("ppt/media/%s" % media_name, sl["image"])
+                img_rel = _IMG_REL % media_name
+            z.writestr("ppt/slides/slide%d.xml" % (i + 1),
+                       _slide_xml(sl["title"], sl["lines"], has_image=has_img))
+            z.writestr("ppt/slides/_rels/slide%d.xml.rels" % (i + 1),
+                       _SLIDE_RELS % img_rel)
     return buf.getvalue()
 
 
@@ -11537,6 +11668,7 @@ uploads_list = list_uploads  # [merged import alias]
 uploads_load = load_upload  # [merged import alias]
 uploads_delete = delete_upload  # [merged import alias]
 uploads_ensure_loaded = ensure_loaded  # [merged import alias]
+insight_get_image = get_image  # [merged import alias]
 
 logger = logging.getLogger("ip_landscape")
 
@@ -12118,7 +12250,8 @@ def register_routes(app):
                         analysis, title=str(body.get("question") or analysis),
                         sentences=str(out["answer"]).split("\n"),
                         dataset=settings.get("dataset"), kind="chat",
-                        question=body.get("question"))
+                        question=body.get("question"),
+                        chart_image=body.get("chart_image"))
                 except Exception as e:
                     logger.warning("인사이트 저장 실패: %s", e)
             return out
@@ -12131,7 +12264,8 @@ def register_routes(app):
             try:
                 out["saved_id"] = add_insight(
                     analysis, title=analysis, sentences=out["sentences"],
-                    dataset=settings.get("dataset"), kind="report")
+                    dataset=settings.get("dataset"), kind="report",
+                    chart_image=body.get("chart_image"))
             except Exception as e:
                 logger.warning("인사이트 저장 실패: %s", e)
         return out
@@ -12323,9 +12457,18 @@ def register_routes(app):
     @app.route("/api/insights-log/delete", methods=["POST"])
     @wrap
     def api_insights_log_delete():
-        """POST {"id"} → 보관함 항목 삭제."""
+        """POST {"id"} → 보관함 항목 삭제 (차트 이미지 파일 포함)."""
         delete_insight((json_body() or {}).get("id"))
         return {"status": "ok"}
+
+    @app.route("/api/insights-log/image", methods=["GET"])
+    @wrap
+    def api_insights_log_image():
+        """GET ?id= → 항목의 차트 캡처 이미지 스트림 (보관함 미리보기용)."""
+        data, mime = insight_get_image(request.args.get("id"))
+        if data is None:
+            raise LookupError("이미지가 없습니다.")
+        return send_file(io.BytesIO(data), mimetype=mime)
 
     @app.route("/api/insights-report", methods=["POST"])
     @wrap

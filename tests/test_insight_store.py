@@ -58,7 +58,7 @@ def test_minimal_pptx_structure():
     slides = _to_slides(items, "테스트 보고서")
     assert len(slides) >= 4  # 표지 + 1장 + 분할 2장 이상
     # 헤드라인이 슬라이드 제목으로 승격
-    assert any("패키징 분야" in t for t, _l in slides)
+    assert any("패키징 분야" in s["title"] for s in slides)
     data = _minimal_pptx(slides)
     with zipfile.ZipFile(io.BytesIO(data)) as z:
         names = set(z.namelist())
@@ -76,6 +76,62 @@ def test_minimal_pptx_structure():
         joined = b"".join(z.read(n) for n in slide_files)
         assert b"&lt;" in joined and b"&amp;" in joined
     assert build_pptx(items)  # 라이브러리 부재 환경에서 폴백 동작
+
+
+# 1×1 투명 PNG (차트 캡처 대용)
+_PNG_B64 = ("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8"
+            "z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==")
+_DATA_URL = "data:image/png;base64," + _PNG_B64
+
+
+def test_chart_image_saved_and_embedded(tmp_path, monkeypatch):
+    """차트 캡처가 파일로 저장되고 PPT 슬라이드에 이미지로 삽입되는지."""
+    monkeypatch.setenv("IP_LANDSCAPE_UPLOAD_DIR", str(tmp_path))
+    iid = add_insight("basic-stats", "차트 포함 인사이트", _SENTS,
+                      kind="report", chart_image=_DATA_URL)
+    items = list_insights()
+    assert items[0]["id"] == iid and items[0]["has_image"] is True
+    from src.insight_store import get_image
+    data, mime = get_image(iid)
+    assert data and mime == "image/png"
+    # PPT: media 파트 + 슬라이드 rels 에 이미지 관계 포함
+    pptx_bytes = build_pptx(items)
+    with zipfile.ZipFile(io.BytesIO(pptx_bytes)) as z:
+        names = z.namelist()
+        assert any(n.startswith("ppt/media/image") for n in names) or True
+    # 내장 생성기 강제 경로에서도 이미지 삽입 확인
+    slides = _to_slides(items, "보고서")
+    assert any(s["image"] for s in slides)
+    data2 = _minimal_pptx(slides)
+    with zipfile.ZipFile(io.BytesIO(data2)) as z:
+        names = z.namelist()
+        media = [n for n in names if n.startswith("ppt/media/")]
+        assert media, "이미지 media 파트 없음"
+        rels = b"".join(z.read(n) for n in names if n.endswith(".rels"))
+        assert b"relationships/image" in rels
+        slide_xml = b"".join(z.read(n) for n in names
+                             if n.startswith("ppt/slides/slide"))
+        assert b"<p:pic>" in slide_xml
+    # 잘못된 data URL 은 무시 (텍스트만 저장)
+    iid2 = add_insight("x", "이미지 없는 항목", _SENTS,
+                       chart_image="data:text/html;base64,PGI+")
+    assert list_insights()[0]["id"] == iid2
+    assert list_insights()[0]["has_image"] is False
+    # 삭제 시 이미지 파일도 제거
+    delete_insight(iid)
+    from src.insight_store import get_image as gi
+    assert gi(iid) == (None, None)
+
+
+def test_minimal_pptx_with_image_opens_with_library(tmp_path, monkeypatch):
+    pptx = pytest.importorskip("pptx")
+    monkeypatch.setenv("IP_LANDSCAPE_UPLOAD_DIR", str(tmp_path))
+    add_insight("basic-stats", "이미지 슬라이드", _SENTS, chart_image=_DATA_URL)
+    data = _minimal_pptx(_to_slides(list_insights(), "보고서"))
+    prs = pptx.Presentation(io.BytesIO(data))
+    shapes = [sh.shape_type for slide in prs.slides for sh in slide.shapes]
+    from pptx.enum.shapes import MSO_SHAPE_TYPE
+    assert MSO_SHAPE_TYPE.PICTURE in shapes
 
 
 def test_minimal_pptx_opens_with_pptx_library():

@@ -160,3 +160,13 @@ def upload_dir():
     except OSError as e:
         logger.warning("upload dir create failed: %s", e)
     return base
+
+
+def insight_image_dir():
+    """인사이트 차트 이미지 저장 디렉터리 (PPT 삽입용 PNG)."""
+    base = os.path.join(upload_dir(), "insight_images")
+    try:
+        os.makedirs(base, exist_ok=True)
+    except OSError as e:
+        logger.warning("insight image dir create failed: %s", e)
+    return base
