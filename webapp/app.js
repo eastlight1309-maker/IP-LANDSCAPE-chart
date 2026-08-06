@@ -578,6 +578,7 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
               ul.appendChild(li);
             });
             src.textContent = '자동 인사이트 (' + (data.source === 'llm' ? 'LLM' : '규칙 기반(폴백)') + ')';
+            if (data.saved_id) Ui.toast('🗂️ 인사이트 보관함에 저장되었습니다 (PPT 다운로드 가능).');
             if (data.llm_note) Ui.toast(data.llm_note, 'warn');
           }).catch(errToast);
         });
@@ -2689,6 +2690,81 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
   }
 
   /* ---------- 7. Settings ---------- */
+  /* ---------- 인사이트 보관함 ---------- */
+  Views.insights = function (content) {
+    var c = card('🗂️ LLM 인사이트 보관함',
+      '각 차트에서 "LLM 인사이트 생성" 버튼(또는 AI 챗 질문)으로 만든 인사이트가 자동 저장됩니다 ' +
+      '(최근 300건, Backend 재시작 후에도 유지). 체크한 항목(미선택 시 전체)을 PPT 보고서(.pptx)로 ' +
+      '내려받아 그대로 보고에 쓸 수 있습니다 — 슬라이드 형식([슬라이드 제목]~[유의사항])으로 생성된 ' +
+      '인사이트는 항목당 1장으로 구성됩니다.');
+    content.appendChild(c.root);
+    var toolbar = Ui.el('<div style="display:flex;gap:8px;margin-bottom:10px;align-items:center"></div>');
+    var pptBtn = Ui.el('<button class="btn small primary">선택 항목 PPT 다운로드 (미선택=전체)</button>');
+    var refreshBtn = Ui.el('<button class="btn small">새로고침</button>');
+    toolbar.appendChild(pptBtn);
+    toolbar.appendChild(refreshBtn);
+    c.body.appendChild(toolbar);
+    var listEl = Ui.el('<div></div>');
+    c.body.appendChild(listEl);
+
+    function selectedIds() {
+      return Array.from(listEl.querySelectorAll('input[type="checkbox"]:checked'))
+        .map(function (cb) { return cb.value; });
+    }
+    function render() {
+      Api.get('/api/insights-log').then(function (d) {
+        listEl.innerHTML = '';
+        var items = d.items || [];
+        if (!items.length) {
+          listEl.innerHTML = '<div class="status-empty">저장된 인사이트가 없습니다 — 각 차트에서 ' +
+            '"LLM 인사이트 생성"을 실행하면 여기에 쌓입니다 (Settings 에서 LLM 인사이트 활성화 필요).</div>';
+          return;
+        }
+        items.forEach(function (it) {
+          var row = Ui.el('<div style="border:1px solid #e8eff5;border-radius:8px;padding:10px 12px;margin-bottom:8px"></div>');
+          var head = Ui.el('<div style="display:flex;gap:8px;align-items:center"></div>');
+          var cb = Ui.el('<input type="checkbox" value="' + Ui.esc(it.id) + '">');
+          head.appendChild(cb);
+          head.appendChild(Ui.el('<span class="badge' + (it.kind === 'chat' ? '' : ' good') + '">' +
+            (it.kind === 'chat' ? '챗' : '리포트') + '</span>'));
+          var titleSpan = Ui.el('<b style="flex:1;cursor:pointer"></b>');
+          titleSpan.textContent = it.title || it.analysis;
+          head.appendChild(titleSpan);
+          head.appendChild(Ui.el('<span style="color:#93a5b4;font-size:11px;white-space:nowrap">' +
+            Ui.esc(it.analysis) + ' · ' + Ui.esc(it.created_at) +
+            (it.dataset ? ' · ' + Ui.esc(it.dataset) : '') + '</span>'));
+          var delBtn = Ui.el('<button class="btn small">삭제</button>');
+          delBtn.addEventListener('click', function () {
+            Api.post('/api/insights-log/delete', { id: it.id }).then(render).catch(errToast);
+          });
+          head.appendChild(delBtn);
+          row.appendChild(head);
+          var detail = Ui.el('<div style="display:none;margin-top:8px;border-top:1px dashed #e0e8ef;padding-top:8px"></div>');
+          var ul = document.createElement('ul');
+          ul.style.cssText = 'padding-left:18px;font-size:12.5px;line-height:1.7';
+          (it.sentences || []).forEach(function (s) {
+            var li = document.createElement('li');
+            li.textContent = s;
+            if (String(s).indexOf('[') === 0) { li.style.fontWeight = '700'; li.style.listStyle = 'none'; li.style.marginLeft = '-14px'; }
+            ul.appendChild(li);
+          });
+          detail.appendChild(ul);
+          row.appendChild(detail);
+          titleSpan.addEventListener('click', function () {
+            detail.style.display = detail.style.display === 'none' ? '' : 'none';
+          });
+          listEl.appendChild(row);
+        });
+      }).catch(errToast);
+    }
+    pptBtn.addEventListener('click', function () {
+      Api.download('/api/insights-report', { ids: selectedIds() },
+        'ip_landscape_insights.pptx').catch(errToast);
+    });
+    refreshBtn.addEventListener('click', render);
+    render();
+  };
+
   /* ---------- 사용 설명서 ---------- */
   Views.manual = function (content) {
     function section(title, bodyHtml) {
@@ -2719,6 +2795,7 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
       '<li><b>Excel</b>: 카드 우상단 Excel 버튼 — 화면에 표시된 차트의 집계 데이터를 시트별로 다운로드합니다 (원본이 아니라 차트 데이터).</li>' +
       '<li><b>PNG/SVG</b>: 보고서용 이미지 저장.</li>' +
       '<li><b>🤖 AI 인사이트</b>: "LLM 인사이트 생성" 버튼은 화면 차트의 실제 수치를 근거로 PPT 슬라이드 형식([슬라이드 제목]→[핵심 메시지]→[근거 데이터]→[시사점·제언])의 정리된 인사이트를 만듭니다. AI 패널에서는 추가 질문(챗)이 가능하고 "웹 검색 포함"을 켜면 외부 검색 결과를 참고해 답하며 출처 링크가 표시됩니다.</li>' +
+      '<li><b>🗂️ 인사이트 보관함</b>: LLM 이 생성한 인사이트는 자동 저장되어 좌측 "인사이트 보관함" 메뉴에서 계속 볼 수 있고, 원하는 항목을 골라 PPT 보고서(.pptx)로 다운로드할 수 있습니다.</li>' +
       '<li><b>비차단 로딩</b>: 계산이 오래 걸리는 분석은 우하단 배지로 진행 상태만 표시됩니다 — 기다리는 동안 다른 탭을 자유롭게 볼 수 있고, 돌아오면 캐시에서 바로 열립니다.</li>' +
       '<li><b>📖 차트 해석</b>: 각 차트 아래 회색 박스에 축 의미와 읽는 법이 항상 표시됩니다.</li></ul>');
     section('🧠 임베딩·군집·LLM 안내',

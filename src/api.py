@@ -74,6 +74,8 @@ from src.uploads import (save_upload as uploads_save, list_uploads as uploads_li
                          load_upload as uploads_load,
                          delete_upload as uploads_delete,
                          ensure_loaded as uploads_ensure_loaded)
+from src.insight_store import (add_insight, list_insights, delete_insight,
+                               get_insights, build_pptx)
 from src.insights import llm_augment_insight, llm_chat, build_insight, \
     format_chart_context
 from src.viz_payload import jsonable, empty_result
@@ -682,12 +684,28 @@ def register_routes(app):
                 out["web_sources"] = web_sources
             if web_note:
                 out["web_note"] = web_note
+            if out.get("source") == "llm" and out.get("answer"):
+                try:
+                    out["saved_id"] = add_insight(
+                        analysis, title=str(body.get("question") or analysis),
+                        sentences=str(out["answer"]).split("\n"),
+                        dataset=settings.get("dataset"), kind="chat",
+                        question=body.get("question"))
+                except Exception as e:
+                    logger.warning("인사이트 저장 실패: %s", e)
             return out
         rule = build_insight(sentences, metrics)
         out = llm_augment_insight(analysis, rule, metrics, settings,
                                   chart_context=chart_context,
                                   description=body.get("description"))
         out["status"] = "ok"
+        if out.get("source") == "llm" and out.get("sentences"):
+            try:
+                out["saved_id"] = add_insight(
+                    analysis, title=analysis, sentences=out["sentences"],
+                    dataset=settings.get("dataset"), kind="report")
+            except Exception as e:
+                logger.warning("인사이트 저장 실패: %s", e)
         return out
 
     # ---------------- 설정 ----------------
@@ -866,5 +884,38 @@ def register_routes(app):
         """POST {"id"} → 저장 작업 삭제 (메타데이터 + 서버 파일)."""
         entry = uploads_delete((json_body() or {}).get("id"))
         return {"status": "ok", "deleted": entry.get("id")}
+
+    # ---------------- LLM 인사이트 보관함 / PPT 보고서 ----------------
+    @app.route("/api/insights-log", methods=["GET"])
+    @wrap
+    def api_insights_log():
+        """GET → 저장된 LLM 인사이트 목록 (최신순, 최대 300건)."""
+        return {"status": "ok", "items": list_insights()}
+
+    @app.route("/api/insights-log/delete", methods=["POST"])
+    @wrap
+    def api_insights_log_delete():
+        """POST {"id"} → 보관함 항목 삭제."""
+        delete_insight((json_body() or {}).get("id"))
+        return {"status": "ok"}
+
+    @app.route("/api/insights-report", methods=["POST"])
+    @wrap
+    def api_insights_report():
+        """POST {"ids"?: [...], "title"?} → 선택(또는 전체) 인사이트 PPT 스트림.
+
+        python-pptx 미설치 환경에서는 내장 OOXML 생성기로 .pptx 를 만든다.
+        """
+        body = json_body()
+        items = get_insights(body.get("ids"))
+        if not items:
+            return _error(404, "내보낼 인사이트가 없습니다 — 먼저 각 차트에서 "
+                               "'LLM 인사이트 생성'을 실행하세요.")
+        title = str(body.get("title") or "IP Landscape 인사이트 보고서")[:80]
+        data = build_pptx(items, report_title=title)
+        fname = "ip_landscape_insights_%s.pptx" % time.strftime("%Y%m%d_%H%M")
+        return send_file(io.BytesIO(data), as_attachment=True, download_name=fname,
+                         mimetype="application/vnd.openxmlformats-officedocument"
+                                  ".presentationml.presentation")
 
     return app
