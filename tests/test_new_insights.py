@@ -464,6 +464,38 @@ def test_axis_cross_two_axes_only(settings):
 
 
 # ---------------------------------------------------------------------------
+# LLM Connection 마이그레이션 (구 → 신규 APIM)
+# ---------------------------------------------------------------------------
+def test_llm_connection_migration():
+    from src.config import ALLOWED_LLM_CANDIDATES, DEFAULT_LLM_ID, LEGACY_LLM_ID_MAP
+    from src.llm_client import resolve_llm_id
+    ids = {i for _l, i in ALLOWED_LLM_CANDIDATES}
+    assert ids == {
+        "azureopenai:DW_AOAI_APIM_DES1_LOW:gpt-5-mini",
+        "azureopenai:DW_AOAI_APIM_DES1_MID:gpt-5",
+        "azureopenai:DW_AOAI_APIM_DES1_LOW:gpt-5.4-mini",
+        "azureopenai:DW_AOAI_APIM_DES1_MID:gpt-5.4",
+    }
+    assert DEFAULT_LLM_ID in ids
+    # 저장된 구 Connection ID 는 신규로 자동 승계
+    assert resolve_llm_id("azureopenai:dw-aoai-chat-eastus2-cognitiv:gpt-5.4") \
+        == "azureopenai:DW_AOAI_APIM_DES1_MID:gpt-5.4"
+    assert resolve_llm_id("azureopenai:azoai_gpt5:gpt-5") \
+        == "azureopenai:DW_AOAI_APIM_DES1_MID:gpt-5"
+    assert resolve_llm_id("azureopenai:dw-aoai-response-eastus2-cognitiv:gpt-5-mini") \
+        == "azureopenai:DW_AOAI_APIM_DES1_LOW:gpt-5-mini"
+    # 이전 허용 목록의 nano/5.3-chat 도 등급 유사 모델로 승계
+    assert resolve_llm_id("azureopenai:dw-aoai-chat-eastus2-cognitiv:gpt-5.4-nano") \
+        == "azureopenai:DW_AOAI_APIM_DES1_LOW:gpt-5-mini"
+    # 미허용 임의 ID 는 기본 모델로
+    assert resolve_llm_id("azureopenai:unknown:x") == DEFAULT_LLM_ID
+    # 임베딩 Connection 도 맵에 포함
+    assert LEGACY_LLM_ID_MAP[
+        "azureopenai:azoai_embedding-3-small:text-embedding-3-small"] \
+        == "azureopenai:DW_AOAI_APIM_DES1_EMB:text-embedding-3-small"
+
+
+# ---------------------------------------------------------------------------
 # LLM 입력: 화면 차트 데이터 컨텍스트
 # ---------------------------------------------------------------------------
 def test_format_chart_context():

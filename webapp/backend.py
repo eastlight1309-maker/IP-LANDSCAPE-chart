@@ -30,13 +30,39 @@ APP_VERSION = "3.0.0"  # 1단계=1.x, 2단계=2.x, 3단계=3.x
 # 사용 허용할 LLM 목록 (고정)
 # =========================
 ALLOWED_LLM_CANDIDATES = [
-    ("gpt-5.3-chat | dw-aoai-chat-eastus2-cognitiv", "azureopenai:dw-aoai-chat-eastus2-cognitiv:gpt-5.3-chat"),
-    ("gpt-5.4-nano | dw-aoai-chat-eastus2-cognitiv", "azureopenai:dw-aoai-chat-eastus2-cognitiv:gpt-5.4-nano"),
-    ("gpt-5.4-mini | dw-aoai-chat-eastus2-cognitiv", "azureopenai:dw-aoai-chat-eastus2-cognitiv:gpt-5.4-mini"),
-    ("gpt-5.4 | dw-aoai-chat-eastus2-cognitiv", "azureopenai:dw-aoai-chat-eastus2-cognitiv:gpt-5.4"),
+    ("gpt-5-mini | DW_AOAI_APIM_DES1_LOW", "azureopenai:DW_AOAI_APIM_DES1_LOW:gpt-5-mini"),
+    ("gpt-5 | DW_AOAI_APIM_DES1_MID", "azureopenai:DW_AOAI_APIM_DES1_MID:gpt-5"),
+    ("gpt-5.4-mini | DW_AOAI_APIM_DES1_LOW", "azureopenai:DW_AOAI_APIM_DES1_LOW:gpt-5.4-mini"),
+    ("gpt-5.4 | DW_AOAI_APIM_DES1_MID", "azureopenai:DW_AOAI_APIM_DES1_MID:gpt-5.4"),
 ]
-DEFAULT_LLM_ID = "azureopenai:dw-aoai-chat-eastus2-cognitiv:gpt-5.4-nano"
+DEFAULT_LLM_ID = "azureopenai:DW_AOAI_APIM_DES1_LOW:gpt-5-mini"
 ALLOWED_LLM_IDS = frozenset(llm_id for _, llm_id in ALLOWED_LLM_CANDIDATES)
+
+# 구(舊) Connection → 신규 Connection 마이그레이션 (저장된 설정 자동 승계)
+#   azoai_* / dw-aoai-chat-eastus2-cognitiv / dw-aoai-response-eastus2-cognitiv
+#   → DW_AOAI_APIM_DES1_LOW(미니급) / _MID(상위) / _EMB(임베딩)
+_OLD_CHAT_CONNS = ("azoai_gpt-5-mini", "azoai_gpt5", "dw-aoai-chat-eastus2-cognitiv",
+                   "dw-aoai-response-eastus2-cognitiv")
+LEGACY_LLM_ID_MAP = {}
+for _conn in _OLD_CHAT_CONNS:
+    LEGACY_LLM_ID_MAP["azureopenai:%s:gpt-5-mini" % _conn] = \
+        "azureopenai:DW_AOAI_APIM_DES1_LOW:gpt-5-mini"
+    LEGACY_LLM_ID_MAP["azureopenai:%s:gpt-5" % _conn] = \
+        "azureopenai:DW_AOAI_APIM_DES1_MID:gpt-5"
+    LEGACY_LLM_ID_MAP["azureopenai:%s:gpt-5.4-mini" % _conn] = \
+        "azureopenai:DW_AOAI_APIM_DES1_LOW:gpt-5.4-mini"
+    LEGACY_LLM_ID_MAP["azureopenai:%s:gpt-5.4" % _conn] = \
+        "azureopenai:DW_AOAI_APIM_DES1_MID:gpt-5.4"
+# 이전 허용 목록에만 있던 모델 → 등급이 비슷한 신규 모델로 승계
+LEGACY_LLM_ID_MAP["azureopenai:dw-aoai-chat-eastus2-cognitiv:gpt-5.4-nano"] = \
+    "azureopenai:DW_AOAI_APIM_DES1_LOW:gpt-5-mini"
+LEGACY_LLM_ID_MAP["azureopenai:dw-aoai-chat-eastus2-cognitiv:gpt-5.3-chat"] = \
+    "azureopenai:DW_AOAI_APIM_DES1_MID:gpt-5"
+# 임베딩 Connection (LLM Mesh 임베딩 adapter 사용 시)
+LEGACY_LLM_ID_MAP["azureopenai:azoai_embedding-3-small:text-embedding-3-small"] = \
+    "azureopenai:DW_AOAI_APIM_DES1_EMB:text-embedding-3-small"
+LEGACY_LLM_ID_MAP["azureopenai:azoai_embedding-3-large:text-embedding-3-large"] = \
+    "azureopenai:DW_AOAI_APIM_DES1_EMB:text-embedding-3-large"
 
 # 임베딩 모델 (Dataiku 사내 서버에 설치된 한국어 특허 특화 SBERT — 비용 없음)
 # 사내 서버 로컬 설치 경로: 네트워크 다운로드 없이 디스크에서 직접 로드한다.
@@ -3120,6 +3146,7 @@ class LLMMeshEmbeddingAdapter(EmbeddingAdapter):
         if _dataiku_mod_available() is None:
             raise RuntimeError("dataiku 모듈 미가용 — LLM Mesh 임베딩 사용 불가")
         llm_id = str(llm_id or "").strip()
+        llm_id = LEGACY_LLM_ID_MAP.get(llm_id, llm_id)  # 구 Connection 자동 승계
         if not _re.fullmatch(r"[\w\-.:/]+", llm_id):
             raise ValueError("허용되지 않는 임베딩 LLM ID 형식")
         self.llm_id = llm_id
@@ -3241,7 +3268,15 @@ def sanitize_for_llm(text, max_chars=None):
 
 
 def resolve_llm_id(requested_id):
-    """요청된 llm_id 를 허용 목록과 대조. 허용되지 않으면 기본 모델."""
+    """요청된 llm_id 를 허용 목록과 대조. 허용되지 않으면 기본 모델.
+
+    구(舊) Connection 의 ID 는 LEGACY_LLM_ID_MAP 으로 신규 Connection 에 자동
+    승계된다 (저장된 설정 마이그레이션).
+    """
+    if requested_id in LEGACY_LLM_ID_MAP:
+        migrated = LEGACY_LLM_ID_MAP[requested_id]
+        logger.info("구 LLM Connection 자동 승계: %s → %s", requested_id, migrated)
+        requested_id = migrated
     if requested_id in ALLOWED_LLM_IDS:
         return requested_id
     if requested_id:

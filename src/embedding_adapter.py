@@ -232,9 +232,11 @@ class LLMMeshEmbeddingAdapter(EmbeddingAdapter):
 
     def __init__(self, llm_id, batch_size=64):
         import re as _re
+        from src.config import LEGACY_LLM_ID_MAP
         if _dataiku_mod_available() is None:
             raise RuntimeError("dataiku 모듈 미가용 — LLM Mesh 임베딩 사용 불가")
         llm_id = str(llm_id or "").strip()
+        llm_id = LEGACY_LLM_ID_MAP.get(llm_id, llm_id)  # 구 Connection 자동 승계
         if not _re.fullmatch(r"[\w\-.:/]+", llm_id):
             raise ValueError("허용되지 않는 임베딩 LLM ID 형식")
         self.llm_id = llm_id

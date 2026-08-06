@@ -12,7 +12,7 @@ llm_client.py — Dataiku LLM Mesh 호출 (고정 모델 목록, 인젝션 방�
 import logging
 import re
 
-from src.config import ALLOWED_LLM_IDS, DEFAULT_LLM_ID, LIMITS
+from src.config import ALLOWED_LLM_IDS, DEFAULT_LLM_ID, LIMITS, LEGACY_LLM_ID_MAP
 
 logger = logging.getLogger("ip_landscape")
 
@@ -44,7 +44,15 @@ def sanitize_for_llm(text, max_chars=None):
 
 
 def resolve_llm_id(requested_id):
-    """요청된 llm_id 를 허용 목록과 대조. 허용되지 않으면 기본 모델."""
+    """요청된 llm_id 를 허용 목록과 대조. 허용되지 않으면 기본 모델.
+
+    구(舊) Connection 의 ID 는 LEGACY_LLM_ID_MAP 으로 신규 Connection 에 자동
+    승계된다 (저장된 설정 마이그레이션).
+    """
+    if requested_id in LEGACY_LLM_ID_MAP:
+        migrated = LEGACY_LLM_ID_MAP[requested_id]
+        logger.info("구 LLM Connection 자동 승계: %s → %s", requested_id, migrated)
+        requested_id = migrated
     if requested_id in ALLOWED_LLM_IDS:
         return requested_id
     if requested_id:

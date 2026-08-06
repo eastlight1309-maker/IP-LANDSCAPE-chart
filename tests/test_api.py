@@ -140,7 +140,7 @@ def test_insight_endpoint_fallback(client):
 def test_settings_roundtrip(client):
     data = _post(client, "/api/settings",
                  {"multiclass_mode": "fractional",
-                  "llm_label": "gpt-5.4 | dw-aoai-chat-eastus2-cognitiv"}).get_json()
+                  "llm_label": "gpt-5.4 | DW_AOAI_APIM_DES1_MID"}).get_json()
     assert data["settings"]["multiclass_mode"] == "fractional"
     assert "llm_id" not in data["settings"]
     saved = storage.load_settings()
