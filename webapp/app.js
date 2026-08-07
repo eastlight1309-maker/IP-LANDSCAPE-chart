@@ -2479,7 +2479,10 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
       { label: '발명자 이동', render: function (h) {
         analysisCard({
           analysis: 'inventor-mobility', holder: h, title: '발명자 이동 네트워크',
-          help: '노드=기업, 엣지=이동 발명자 수(색=대표 기술분류). 동명이인은 공동발명자·분류·시점·국가·희소성 기반 신뢰도로 식별하며 임계값 미만은 "추정 이동"으로 기본 제외.',
+          help: '⚠ 네트워크의 노드는 발명자가 아니라 기업(출원인)입니다 — 발명자 개인의 소속 변화를 ' +
+            '집계해 "어느 회사에서 어느 회사로 인력이 이동했는가"를 요약하기 때문입니다. ' +
+            '개별 발명자 이름은 아래 "이동 발명자 목록" 표와 화살표(엣지) 클릭에서 확인할 수 있습니다. ' +
+            '동명이인은 공동발명자·분류·시점·국가·희소성 기반 신뢰도로 식별하며 임계값 미만은 "추정 이동"으로 기본 제외.',
           controls: function (c, reload) {
             var chk = Ui.el('<label style="font-size:12px"><input type="checkbox"> 추정 이동 포함</label>');
             chk.querySelector('input').addEventListener('change', function (ev) {
@@ -2488,6 +2491,10 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
             c.controls.prepend(chk);
           },
           renderOk: function (r, c, setTarget) {
+            if (r.meta && r.meta.warning) {
+              c.body.appendChild(Ui.el('<div class="disclaimer" style="border-left:3px solid #E15759;' +
+                'padding-left:8px;font-weight:600">' + Ui.esc(r.meta.warning) + '</div>'));
+            }
             var holder = Ui.el('<div class="cy-holder"></div>');
             c.body.appendChild(holder);
             var cy = Render.cytoscape(holder, r.network, {
@@ -2499,6 +2506,31 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
               }
             });
             setTarget({ kind: 'cy', cy: cy });
+            if ((r.moves || []).length) {
+              c.body.appendChild(Ui.el('<div style="font-weight:700;font-size:12.5px;margin:10px 0 4px">' +
+                '👤 이동 발명자 목록 (이름 클릭 시 특허 이력)</div>'));
+              var rows = r.moves.map(function (m) {
+                var tr = document.createElement('tr');
+                var td0 = document.createElement('td');
+                td0.appendChild(drillCell(m.inventor, m.drill));
+                tr.appendChild(td0);
+                tr.insertAdjacentHTML('beforeend',
+                  '<td>' + Ui.esc(m.from) + ' → ' + Ui.esc(m.to) + '</td>' +
+                  '<td class="num">' + m.year + '</td>' +
+                  '<td class="num">' + Ui.num(m.confidence, 2) + '</td>' +
+                  '<td>' + (m.label === '확인 이동' ? '<span class="badge good">확인 이동</span>' :
+                    '<span class="badge warn">' + Ui.esc(m.label) + '</span>') + '</td>' +
+                  '<td>' + (m.techs || []).map(function (t) {
+                    return '<span class="badge">' + Ui.esc(t) + '</span>';
+                  }).join('') + '</td>');
+                return tr;
+              });
+              var tbl = Ui.el(simpleTable(['발명자', '이동 경로', '연도', '신뢰도', '구분', '관련 기술'], []));
+              rows.forEach(function (tr) { tbl.querySelector('tbody').appendChild(tr); });
+              var wrap = Ui.el('<div style="overflow-x:auto;max-height:300px;overflow-y:auto;margin-top:4px"></div>');
+              wrap.appendChild(tbl);
+              c.body.appendChild(wrap);
+            }
             if (r.years && r.years.length > 1) {
               var slider = Ui.el('<div class="slider-row" style="margin-top:8px">' +
                 '<label>연도 필터 (이후)</label>' +

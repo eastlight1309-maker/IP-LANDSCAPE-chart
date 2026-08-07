@@ -507,6 +507,36 @@ def test_axis_cross_two_axes_only(settings):
 
 
 # ---------------------------------------------------------------------------
+# 발명자 이동: 발명자 목록 표 + 오매핑 진단
+# ---------------------------------------------------------------------------
+def test_inventor_mobility_moves_table_and_no_warning(prepared, settings):
+    from src.analyses.inventor_mobility import compute_inventor_mobility
+    r = compute_inventor_mobility(prepared, settings, include_uncertain=True)
+    assert r["status"] == "ok"
+    assert r["moves"], "이동 발명자 목록 표 필요"
+    m = r["moves"][0]
+    assert m["inventor"] and m["from"] != m["to"]
+    assert m["drill"] == {"type": "inventor", "inventor": m["inventor"]}
+    # 정상 데이터: 발명자·출원인 겹침 경고 없음
+    assert "warning" not in r["meta"]
+    assert "노드=기업" in r["meta"]["note"]
+
+
+def test_inventor_mobility_warns_on_applicant_like_inventors(settings):
+    """발명자 컬럼에 출원인 값이 들어간 오매핑 케이스 → 경고 표시."""
+    from src.analyses.inventor_mobility import compute_inventor_mobility
+    raw = generate_sample(n=200, seed=47)
+    raw["발명자"] = raw["출원인"].map(
+        lambda v: str(v).split(";")[0].strip())  # 발명자 자리에 출원인명
+    r = compute_inventor_mobility(make_prepared(raw), settings,
+                                  include_uncertain=True)
+    if r["status"] == "ok":
+        assert "warning" in r["meta"]
+        assert "출원인" in r["meta"]["warning"]
+        assert any("출원인명과 동일" in s for s in r["insight"]["sentences"])
+
+
+# ---------------------------------------------------------------------------
 # 기본 매핑 우선순위 (preferred 변형)
 # ---------------------------------------------------------------------------
 def test_preferred_default_mappings():

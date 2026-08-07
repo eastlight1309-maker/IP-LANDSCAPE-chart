@@ -153,7 +153,33 @@ def compute_inventor_mobility(df, settings, include_uncertain=False):
             "label": "%d명" % len(e["inventors"]),
         })
 
+    # 진단: 발명자 값이 출원인명과 대량으로 겹치면 '발명자' 컬럼 오매핑 신호
+    # (예: 발명자 자리에 출원인 계열 컬럼이 매핑된 경우 — 화면에 회사명이 발명자로 보임)
+    applicant_names = set(work["applicant_display"].astype(str)) \
+        | set(work.get("applicant_raw", work["applicant_display"]).astype(str))
+    inv_names = set(records_by_name.keys())
+    overlap = (len(inv_names & applicant_names) / float(len(inv_names))) \
+        if inv_names else 0.0
+    mapping_warning = None
+    if overlap >= 0.3:
+        mapping_warning = ("⚠ 발명자 값의 %s가 출원인명과 동일합니다 — '발명자' 컬럼 "
+                           "매핑이 출원인 계열 컬럼으로 잘못 잡혔을 가능성이 큽니다. "
+                           "Settings → 컬럼 매핑에서 '발명자'의 매핑 컬럼과 예시 값을 "
+                           "확인하세요." % fmt_pct(overlap))
+
+    # 이동 발명자 목록 (화면 표 — 개별 발명자를 노드가 아닌 표로 노출)
+    move_rows = sorted(used, key=lambda m: (-m["year"], -m["confidence"]))[:100]
+    moves_table = [{"inventor": m["inventor"], "from": m["from"], "to": m["to"],
+                    "year": m["year"], "confidence": m["confidence"],
+                    "label": (MESSAGES["estimated_move"] if m["uncertain"]
+                              else "확인 이동"),
+                    "techs": m["techs"][:3],
+                    "drill": {"type": "inventor", "inventor": m["inventor"]}}
+                   for m in move_rows]
+
     sentences = []
+    if mapping_warning:
+        sentences.append(mapping_warning)
     if edges:
         e0 = max(edges, key=lambda e: e["weight"])
         sentences.append("%s 기준 최대 이동 경로는 '%s → %s'(%s명, 주요 분류 %s)입니다."
@@ -164,11 +190,16 @@ def compute_inventor_mobility(df, settings, include_uncertain=False):
                      % (fmt_num(len(moves)), fmt_pct(n_uncertain / len(moves)),
                         fmt_num(n_uncertain), conf_cutoff,
                         " (그래프에 포함됨)" if include_uncertain else " (기본 그래프에서 제외)"))
-    insight = build_insight(sentences, {"n_moves": len(used), "n_uncertain": n_uncertain},
+    insight = build_insight(sentences, {"n_moves": len(used), "n_uncertain": n_uncertain,
+                                        "inventor_applicant_overlap": round(overlap, 3)},
                             small_sample=check_small_sample(len(used), settings))
     years_all = sorted(set(y for e in edges for y in e["years"]))
+    meta = {"note": "네트워크의 노드=기업(출원인), 엣지=이동 발명자 수입니다. 개별 "
+                    "발명자는 아래 이동 목록 표와 엣지 클릭에서 확인하세요. 동명이인 "
+                    "가능성이 있어 이동은 식별 신뢰도 기반 추정입니다."}
+    if mapping_warning:
+        meta["warning"] = mapping_warning
     return ok_result({"network": cytoscape_network(nodes, edges),
                       "years": years_all, "include_uncertain": bool(include_uncertain),
-                      "n_uncertain": n_uncertain},
-                     insight=insight,
-                     meta={"note": "동명이인 가능성이 있어 이동은 식별 신뢰도 기반 추정입니다."})
+                      "n_uncertain": n_uncertain, "moves": moves_table},
+                     insight=insight, meta=meta)
