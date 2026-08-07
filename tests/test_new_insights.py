@@ -384,6 +384,25 @@ def test_ownership_analysis(settings):
     assert "사명 변경" in r["meta"]["note"] and "등록원부" in r["meta"]["note"]
 
 
+def test_owner_notation_variant_not_fake_transfer(settings):
+    """표기만 다른 동일 회사('삼성SDI(주)' vs '삼성SDI')는 양도로 잡히지 않는다.
+
+    표준화 출원인 컬럼은 '(주)' 표기를 유지하고 권리자는 접미사 없이 오는
+    (WIPS 에서 흔한) 상황 — 권리자명이 출원인 표시명으로 통일되어야 한다.
+    """
+    from src.analyses.ownership import compute_ownership
+    raw = generate_sample(n=200, seed=39)
+    first = raw["출원인"].map(lambda v: str(v).split(";")[0].strip())
+    raw["출원인 대표명화 국문명"] = first + "(주)"
+    raw["현재권리자"] = first
+    df = make_prepared(raw)
+    # 표준화 출원인 값('…(주)')이 그대로 표시명이 되고, 권리자도 같은 표기로 통일
+    assert df["applicant_display"].str.endswith("(주)").all()
+    assert (df["applicant_display"] == df["owner_display"]).all()
+    r = compute_ownership(df, settings)
+    assert r["status"] == "ok" and r["kpi"]["n_transferred"] == 0
+
+
 def test_ownership_disabled_without_owner(settings):
     from src.analyses.ownership import compute_ownership
     raw = generate_sample(n=100, seed=38).drop(columns=["현재권리자"])

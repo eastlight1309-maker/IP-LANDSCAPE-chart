@@ -1856,18 +1856,6 @@ def build_standard_frame(raw_df, mapping, applicant_rules=None):
          ((s in ACTIVE_LEGAL_STATUSES) if (s and s != "Unknown") else None))
         for a, s in zip(df["_is_active_bool"], df["legal_status_norm"])])
 
-    # 현재 권리자(소유자) 표준화 — 출원인과 동일한 규칙(사용자 mapping > 자동)을
-    # 적용해 사명 표기 차이가 '가짜 양도'로 잡히지 않게 한다.
-    if "assignee" in df.columns and not _mostly_numeric(df["assignee"]):
-        _rules = applicant_rules or {}
-        _omap = {str(k).strip(): v for k, v in (_rules.get("mapping") or {}).items()}
-        owner_first = df["assignee"].map(lambda v: (split_names(v) or [""])[0])
-        df["owner_display"] = owner_first.map(
-            lambda v: _omap.get(str(v).strip(),
-                                auto_standardize_name(v)) if str(v).strip() else "")
-    else:
-        df["owner_display"] = ""
-
     df = build_tech_lists(df)
     # B·C축 기술분류 리스트 (매핑된 경우에만 — 소→중→대 우선, 다중값 지원)
     for axis in ("b", "c"):
@@ -1880,6 +1868,35 @@ def build_standard_frame(raw_df, mapping, applicant_rules=None):
                     df[target] = lists
                     break
     df = standardize_applicants(df, applicant_rules)
+
+    # 현재 권리자(소유자) 표준화 — 출원인과 동일한 규칙(사용자 mapping > 자동)을
+    # 적용하되, 표기만 다른 동일 회사(예: 출원인 '삼성SDI(주)' vs 권리자 '삼성SDI')는
+    # 출원인 표시명으로 통일해 '가짜 양도'로 잡히지 않게 한다.
+    # (출원인 표시명은 표준화 출원인 컬럼 값을 그대로 쓰지만 권리자는 자동 표준화를
+    #  거치므로, 정규화 키가 같으면 출원인 쪽 표기를 채택한다.)
+    if "assignee" in df.columns and not _mostly_numeric(df["assignee"]):
+        _rules = applicant_rules or {}
+        _omap = {str(k).strip(): v for k, v in (_rules.get("mapping") or {}).items()}
+        _ogroups = {str(k).strip(): v for k, v in (_rules.get("groups") or {}).items()}
+        _canon = {}  # 정규화 키 → 출원인 표시명 (빈도 높은 표기가 선점)
+        _disp_counts = (df["applicant_display"].astype(str)
+                        .replace("", np.nan).dropna().value_counts())
+        for _disp in _disp_counts.index:
+            _canon.setdefault(auto_standardize_name(_disp), str(_disp))
+        owner_first = df["assignee"].map(lambda v: (split_names(v) or [""])[0])
+
+        def _owner_std(v):
+            v = str(v).strip()
+            if not v or v.lower() in ("nan", "none"):
+                return ""
+            auto = auto_standardize_name(v)
+            name = _omap.get(v) or _omap.get(auto) \
+                or _canon.get(auto) or auto
+            return _ogroups.get(name, name)
+
+        df["owner_display"] = owner_first.map(_owner_std)
+    else:
+        df["owner_display"] = ""
 
     for num_col in ("cites_backward", "cites_forward", "family_size",
                     "family_country_count", "class_confidence",
