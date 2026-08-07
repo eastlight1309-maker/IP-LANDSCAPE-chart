@@ -185,10 +185,32 @@ def test_minimal_pptx_opens_with_pptx_library():
               "created_at": "2026-08-06"}]
     data = _minimal_pptx(_to_slides(items, "보고서"))
     prs = pptx.Presentation(io.BytesIO(data))
-    assert len(prs.slides) == 2
-    texts = [sh.text_frame.text for sh in prs.slides[1].shapes
+    assert len(prs.slides) == 3  # 표지 + 목차 + 인사이트
+    texts = [sh.text_frame.text for sh in prs.slides[2].shapes
              if sh.has_text_frame]
     assert any("패키징" in t for t in texts)
+
+
+def test_slides_cover_and_toc():
+    """PPT 구성: 1p=제목(표지), 2p=목차(인사이트 목록), 이후 인사이트."""
+    items = [{"title": "연도별 출원 동향 인사이트", "analysis": "basic-stats",
+              "sentences": _SENTS, "created_at": "2026-08-07"},
+             {"title": "국가별 분포 인사이트", "analysis": "basic-stats",
+              "sentences": _SENTS, "created_at": "2026-08-07"}]
+    slides = _to_slides(items, "IP 보고서")
+    assert slides[0]["title"] == "IP 보고서"
+    assert slides[1]["title"] == "목차"
+    assert slides[1]["lines"] == ["1. 연도별 출원 동향 인사이트",
+                                  "2. 국가별 분포 인사이트"]
+    # 항목 슬라이드 제목은 [슬라이드 제목] 헤드라인 승격 규칙을 따름 (기존 동작)
+    assert slides[2]["title"] not in ("목차", "IP 보고서")
+    assert "패키징" in slides[2]["title"]
+    # 항목이 많으면 목차가 이어짐 슬라이드로 분할
+    many = [{"title": "인사이트 %d" % i, "analysis": "a", "sentences": _SENTS,
+             "created_at": "2026-08-07"} for i in range(20)]
+    slides2 = _to_slides(many, "보고서")
+    toc_titles = [s["title"] for s in slides2 if s["title"].startswith("목차")]
+    assert toc_titles == ["목차", "목차 (계속)"]
 
 
 def test_insights_endpoints(client, monkeypatch):

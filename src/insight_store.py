@@ -183,13 +183,23 @@ def build_pptx(items, report_title="IP Landscape 인사이트 보고서"):
 def _to_slides(items, report_title):
     """항목 → [{"title","lines","image","ext"}]. 긴 항목은 이어짐 슬라이드로 분할.
 
-    차트 캡처 이미지가 있으면 첫 슬라이드에 차트(좌) + 인사이트(우)로 배치된다.
+    구성: ① 표지(제목) ② 목차(인사이트 목록) ③ 인사이트 슬라이드들.
+    차트 캡처 이미지가 있으면 첫 슬라이드에 차트(좌) + 인사이트(우), 카드에
+    차트가 여러 개면 나머지 차트도 "차트 k/n" 슬라이드로 모두 들어간다.
     """
     slides = [{"title": report_title, "image": None, "ext": None,
                "lines": ["생성일: %s" % time.strftime("%Y-%m-%d"),
                          "포함 인사이트: %d건" % len(items),
                          "", "본 보고서의 지표는 특허 데이터 기반 통계 신호이며 "
                          "법률 자문(FTO·유효성 판단)을 대체하지 않습니다."]}]
+    # ② 목차 — 인사이트 제목 목록 (많으면 이어짐 슬라이드로 분할)
+    toc_lines = ["%d. %s" % (i + 1,
+                             str(it.get("title") or it.get("analysis") or "인사이트")[:80])
+                 for i, it in enumerate(items)]
+    for start in range(0, len(toc_lines), _LINES_PER_SLIDE):
+        slides.append({"title": "목차" if start == 0 else "목차 (계속)",
+                       "lines": toc_lines[start:start + _LINES_PER_SLIDE],
+                       "image": None, "ext": None})
     for it in items:
         title = str(it.get("title") or it.get("analysis") or "인사이트")
         # 첫 줄이 [슬라이드 제목] 헤드라인이면 그 내용을 슬라이드 제목으로 사용

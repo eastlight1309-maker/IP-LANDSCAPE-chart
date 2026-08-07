@@ -340,15 +340,20 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
     }
 
     /* 카드 내 렌더링된 차트들의 표시 데이터를 Excel 시트 목록으로 추출 */
-    function extractChartSheets(bodyEl) {
+    function extractChartSheets(bodyEl, onlyEl) {
+      /* onlyEl 지정 시 해당 차트 요소의 시트만 추출 (차트별 인사이트 생성용) */
       var sheets = [];
+      function pick(cls) {
+        if (onlyEl) return onlyEl.classList.contains(cls) ? [onlyEl] : [];
+        return Array.prototype.slice.call(bodyEl.querySelectorAll('.' + cls));
+      }
       function axTitle(lt, ax, fb) {
         var a = lt && lt[ax];
         if (!a || !a.title) return fb;
         return (typeof a.title === 'string' ? a.title : a.title.text) || fb;
       }
       function stripHtml(s) { return String(s || '').replace(/<[^>]+>/g, ' ').split('  ')[0].trim(); }
-      bodyEl.querySelectorAll('.ipls-chart').forEach(function (gd) {
+      pick('ipls-chart').forEach(function (gd) {
         if (!gd.data || !gd.layout) return;
         var lt = gd.layout;
         var title = (lt.title && (lt.title.text || lt.title)) || ('chart' + (sheets.length + 1));
@@ -449,7 +454,7 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
         // 렌더러가 부착한 보조 시트 (예: 매트릭스 건수 — 전체 라벨 버전)
         (gd.__iplsExtraSheets || []).forEach(function (s) { sheets.push(s); });
       });
-      bodyEl.querySelectorAll('.ipls-cy').forEach(function (el) {
+      pick('ipls-cy').forEach(function (el) {
         var net = el.__iplsNetwork;
         if (!net) return;
         var nodeRows = (net.nodes || []).map(function (n) {
@@ -474,7 +479,7 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
                           '가중치=연결 강도(건수 등). 세부 의미는 "카드 설명" 행 참조.' });
         }
       });
-      bodyEl.querySelectorAll('.ipls-echart').forEach(function (el) {
+      pick('ipls-echart').forEach(function (el) {
         var opt = el.__iplsOption;
         if (!opt || !opt.series || !opt.series[0]) return;
         var xs = (opt.xAxis && opt.xAxis.data) || [];
@@ -584,38 +589,66 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
              extractChartSheets: extractChartSheets };
   })();
 
-  /* PPT 저장용: 카드의 모든 차트를 PNG data URL 로 캡처 (Plotly/Cytoscape/ECharts).
-     여러 차트가 있는 카드는 전부 캡처되어 PPT 에 모두 들어간다 (최대 6개). */
+  /* PPT 저장용: 차트 1개 → PNG data URL 캡처 (Plotly/Cytoscape/ECharts) */
+  function captureOneChart(el) {
+    try {
+      if (el.classList.contains('ipls-chart') && el.data &&
+          window.Plotly && Plotly.toImage) {
+        return Plotly.toImage(el, { format: 'png', width: 1200, height: 700 })
+          .catch(function () { return null; });
+      }
+      if (el.classList.contains('ipls-cy') && el.__iplsCy && el.__iplsCy.png) {
+        return Promise.resolve(el.__iplsCy.png({ full: true, scale: 2,
+          output: 'base64uri', bg: '#ffffff' }));
+      }
+      if (el.classList.contains('ipls-echart') && el.__iplsChart &&
+          el.__iplsChart.getDataURL) {
+        return Promise.resolve(el.__iplsChart.getDataURL(
+          { type: 'png', pixelRatio: 2, backgroundColor: '#fff' }));
+      }
+    } catch (e) { /* 캡처 실패는 무시 — 텍스트만 저장 */ }
+    return Promise.resolve(null);
+  }
+
+  /* 카드 안의 차트 요소 목록 (+제목·바로 뒤 해석 캡션) — 차트별 인사이트 생성용 */
+  function cardCharts(cardBody) {
+    var out = [];
+    if (!cardBody) return out;
+    cardBody.querySelectorAll('.ipls-chart, .ipls-cy, .ipls-echart')
+      .forEach(function (el) {
+        var title = '';
+        if (el.classList.contains('ipls-chart')) {
+          var lt = el.layout || {};
+          title = (lt.title && (lt.title.text || lt.title)) || '';
+        } else if (el.classList.contains('ipls-echart')) {
+          var opt = el.__iplsOption || {};
+          title = (opt.title && opt.title.text) || '대형 히트맵';
+        } else {
+          title = '네트워크 그래프';
+        }
+        title = String(title).replace(/<[^>]+>/g, ' ').trim();
+        // 차트 바로 뒤의 📖 해석 캡션 (있으면 LLM 설명 컨텍스트로 사용)
+        var cap = '';
+        var holder = el.closest('.chart-holder, .cy-holder, .echart-holder') || el;
+        var next = holder.nextElementSibling;
+        if (next && next.classList && next.classList.contains('chart-guide')) {
+          cap = next.textContent.replace(/[📖💡]/g, '').trim();
+        }
+        out.push({ el: el, caption: cap,
+                   title: title || ('차트 ' + (out.length + 1)) });
+      });
+    return out;
+  }
+
+  /* 카드의 모든 차트 캡처 (최대 6개) */
   function captureCardImages(cardBody, maxN) {
     if (!cardBody) return Promise.resolve([]);
-    maxN = maxN || 6;
-    var jobs = [];
-    try {
-      cardBody.querySelectorAll('.ipls-chart, .ipls-cy, .ipls-echart')
-        .forEach(function (el) {
-          if (jobs.length >= maxN) return;
-          if (el.classList.contains('ipls-chart') && el.data &&
-              window.Plotly && Plotly.toImage) {
-            jobs.push(Plotly.toImage(el, { format: 'png', width: 1200, height: 700 })
-              .catch(function () { return null; }));
-          } else if (el.classList.contains('ipls-cy') && el.__iplsCy && el.__iplsCy.png) {
-            try {
-              jobs.push(Promise.resolve(el.__iplsCy.png({ full: true, scale: 2,
-                output: 'base64uri', bg: '#ffffff' })));
-            } catch (e) { /* skip */ }
-          } else if (el.classList.contains('ipls-echart') && el.__iplsChart &&
-                     el.__iplsChart.getDataURL) {
-            try {
-              jobs.push(Promise.resolve(el.__iplsChart.getDataURL(
-                { type: 'png', pixelRatio: 2, backgroundColor: '#fff' })));
-            } catch (e) { /* skip */ }
-          }
-        });
-    } catch (e) { /* 캡처 실패는 무시 — 텍스트만 저장 */ }
-    if (!jobs.length) return Promise.resolve([]);
-    return Promise.all(jobs).then(function (imgs) {
-      return imgs.filter(function (im) { return im; });
-    });
+    var charts = cardCharts(cardBody).slice(0, maxN || 6);
+    if (!charts.length) return Promise.resolve([]);
+    return Promise.all(charts.map(function (ch) { return captureOneChart(ch.el); }))
+      .then(function (imgs) {
+        return imgs.filter(function (im) { return im; });
+      });
   }
   function captureCardImage(cardBody) {
     return captureCardImages(cardBody, 1).then(function (imgs) {
@@ -623,11 +656,12 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
     });
   }
 
-  /* LLM 전달용: 카드에 표시된 차트 데이터를 소형으로 압축 (시트 4 × 행 25 × 열 8) */
-  function compactChartData(cardBody) {
+  /* LLM 전달용: 카드에 표시된 차트 데이터를 소형으로 압축 (시트 4 × 행 25 × 열 8).
+     onlyEl 지정 시 해당 차트의 데이터만 (차트별 인사이트 생성용). */
+  function compactChartData(cardBody, onlyEl) {
     if (!cardBody) return null;
     try {
-      var sheets = Render.extractChartSheets(cardBody) || [];
+      var sheets = Render.extractChartSheets(cardBody, onlyEl) || [];
       var out = sheets.slice(0, 4).map(function (s) {
         return {
           name: String(s.name || '').slice(0, 40),
@@ -673,39 +707,92 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
         drills.appendChild(b);
       });
       if (State.config && State.config.settings && State.config.settings.llm_insights_enabled) {
-        var lb = Ui.el('<button class="btn small">LLM 인사이트 생성</button>');
+        var lb = Ui.el('<button class="btn small">LLM 인사이트 생성 (차트별)</button>');
         lb.addEventListener('click', function () {
           var cardEl = div.closest('.card');
           // 차트 의미(카드 설명+해석 가이드)를 함께 전달 → 인사이트에 차트 의미 포함
-          var desc = description;
-          if (!desc && cardEl) {
+          var cardDesc = description;
+          if (!cardDesc && cardEl) {
             var descEl = cardEl.querySelector('.card-desc');
-            var guideEl = cardEl.querySelector('.chart-guide');
-            desc = ((descEl ? descEl.textContent : '') + ' ' +
-                    (guideEl ? guideEl.textContent : '')).trim();
+            cardDesc = (descEl ? descEl.textContent : '').trim();
           }
           var cardBody = cardEl && cardEl.querySelector('.card-body');
-          captureCardImages(cardBody).then(function (imgs) {
-            return Api.post('/api/insight', {
-              analysis: analysisName,
-              metrics: ins.metrics || {},
-              sentences: ins.sentences || [],
-              description: (desc || '').slice(0, 900),
-              chart_data: compactChartData(cardBody),
-              chart_image: imgs[0] || null,
-              chart_images: imgs
-            }, 'LLM 인사이트 생성 중…');
-          }).then(function (data) {
-            ul.innerHTML = '';
+          var charts = cardCharts(cardBody).slice(0, 6);
+          lb.disabled = true;
+
+          function renderSection(title, data, single) {
+            if (!single) {
+              var h = document.createElement('li');
+              h.textContent = '📊 ' + title;
+              h.style.cssText = 'font-weight:700;list-style:none;margin:8px 0 2px -14px';
+              ul.appendChild(h);
+            }
             (data.sentences || []).forEach(function (s) {
               var li = document.createElement('li');
               li.textContent = s;
               ul.appendChild(li);
             });
-            src.textContent = '자동 인사이트 (' + (data.source === 'llm' ? 'LLM' : '규칙 기반(폴백)') + ')';
-            if (data.saved_id) Ui.toast('🗂️ 인사이트 보관함에 저장되었습니다 (PPT 다운로드 가능).');
             if (data.llm_note) Ui.toast(data.llm_note, 'warn');
-          }).catch(errToast);
+          }
+
+          function askOne(ch, idx, single) {
+            /* 차트 1개 단위: 해당 차트의 이미지·집계 데이터만 전달해 개별 해석 */
+            var desc = ((cardDesc || '') +
+              (single ? '' : ' [대상 차트] ' + ch.title) +
+              (ch.caption ? ' [차트 읽는 법] ' + ch.caption : '')).trim();
+            return captureOneChart(ch.el).then(function (img) {
+              return Api.post('/api/insight', {
+                analysis: analysisName,
+                chart_title: single ? null : ch.title,
+                metrics: ins.metrics || {},
+                sentences: ins.sentences || [],
+                description: desc.slice(0, 900),
+                chart_data: compactChartData(cardBody, ch.el),
+                chart_image: img,
+                chart_images: img ? [img] : []
+              }, 'LLM 인사이트 생성 중… (' + (idx + 1) + '/' + charts.length + ')');
+            });
+          }
+
+          if (!charts.length) {
+            // 차트 없는 카드(표 중심): 기존 방식 — 카드 전체 데이터로 1건 생성
+            captureCardImages(cardBody).then(function (imgs) {
+              return Api.post('/api/insight', {
+                analysis: analysisName, metrics: ins.metrics || {},
+                sentences: ins.sentences || [],
+                description: (cardDesc || '').slice(0, 900),
+                chart_data: compactChartData(cardBody),
+                chart_image: imgs[0] || null, chart_images: imgs
+              }, 'LLM 인사이트 생성 중…');
+            }).then(function (data) {
+              ul.innerHTML = '';
+              renderSection('', data, true);
+              src.textContent = '자동 인사이트 (' + (data.source === 'llm' ? 'LLM' : '규칙 기반(폴백)') + ')';
+              if (data.saved_id) Ui.toast('🗂️ 인사이트 보관함에 저장되었습니다.');
+            }).catch(errToast).finally(function () { lb.disabled = false; });
+            return;
+          }
+
+          // 카드의 각 차트에 대해 순차적으로 개별 인사이트 생성·저장
+          var single = charts.length === 1;
+          ul.innerHTML = '';
+          var saved = 0;
+          var chain = Promise.resolve();
+          charts.forEach(function (ch, idx) {
+            chain = chain.then(function () {
+              return askOne(ch, idx, single).then(function (data) {
+                renderSection(ch.title, data, single);
+                if (data.saved_id) saved += 1;
+              });
+            });
+          });
+          chain.then(function () {
+            src.textContent = '자동 인사이트 (LLM · 차트별 ' + charts.length + '건)';
+            if (saved) {
+              Ui.toast('🗂️ 차트별 인사이트 ' + saved + '건이 보관함에 저장되었습니다 ' +
+                '(PPT 다운로드 시 각 차트+인사이트가 모두 포함).');
+            }
+          }).catch(errToast).finally(function () { lb.disabled = false; });
         });
         drills.appendChild(lb);
       }

@@ -730,8 +730,11 @@ def register_routes(app):
         out["status"] = "ok"
         if out.get("source") == "llm" and out.get("sentences"):
             try:
+                # chart_title: 카드 내 개별 차트 단위 생성 시 보관함·PPT 제목으로 사용
                 out["saved_id"] = add_insight(
-                    analysis, title=analysis, sentences=out["sentences"],
+                    analysis,
+                    title=str(body.get("chart_title") or "").strip()[:160] or analysis,
+                    sentences=out["sentences"],
                     dataset=settings.get("dataset"), kind="report",
                     chart_image=body.get("chart_image"),
                     chart_images=body.get("chart_images"))
