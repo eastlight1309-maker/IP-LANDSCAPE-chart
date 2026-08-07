@@ -895,8 +895,23 @@ def register_routes(app):
     @app.route("/api/insights-log", methods=["GET"])
     @wrap
     def api_insights_log():
-        """GET → 저장된 LLM 인사이트 목록 (최신순, 최대 300건)."""
-        return {"status": "ok", "items": list_insights()}
+        """GET → 저장된 LLM 인사이트 목록 (최신순, 최대 300건).
+
+        각 항목에 dataset_label(업로드 작업이면 "작업명 (작업자)")을 붙이고,
+        현재 분석 중인 dataset 을 함께 반환한다 — 보관함이 '현재 작업' 항목만
+        기본 표시하고 이전 작업은 그룹별로 구분해 보여줄 수 있게.
+        """
+        items = list_insights()
+        job_labels = {}
+        for up in (storage.load_uploads().get("items") or []):
+            ds = str(up.get("dataset") or "")
+            if ds:
+                job_labels[ds] = "%s (%s)" % (up.get("job", ds), up.get("worker", "-"))
+        for it in items:
+            ds = str(it.get("dataset") or "")
+            it["dataset_label"] = job_labels.get(ds, ds or "작업 미지정")
+        return {"status": "ok", "items": items,
+                "current_dataset": _settings().get("dataset")}
 
     @app.route("/api/insights-log/delete", methods=["POST"])
     @wrap

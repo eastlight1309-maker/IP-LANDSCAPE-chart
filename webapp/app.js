@@ -2873,12 +2873,14 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
   Views.insights = function (content) {
     var c = card('🗂️ LLM 인사이트 보관함',
       '각 차트에서 "LLM 인사이트 생성" 버튼(또는 AI 챗 질문)으로 만든 인사이트가 자동 저장됩니다 ' +
-      '(최근 300건, Backend 재시작 후에도 유지). 체크한 항목(미선택 시 전체)을 PPT 보고서(.pptx)로 ' +
-      '내려받아 그대로 보고에 쓸 수 있습니다 — 슬라이드 형식([슬라이드 제목]~[유의사항])으로 생성된 ' +
-      '인사이트는 항목당 1장으로 구성됩니다.');
+      '(최근 300건, Backend 재시작 후에도 유지). 기본으로는 지금 분석 중인 작업의 인사이트만 ' +
+      '보이고, 이전 작업들은 아래 작업 선택에서 골라 따로 볼 수 있습니다. 체크한 항목(미선택 시 ' +
+      '현재 보이는 작업 전체)을 PPT 보고서(.pptx)로 내려받을 수 있습니다.');
     content.appendChild(c.root);
+    var groupBar = Ui.el('<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;align-items:center"></div>');
+    c.body.appendChild(groupBar);
     var toolbar = Ui.el('<div style="display:flex;gap:8px;margin-bottom:10px;align-items:center"></div>');
-    var pptBtn = Ui.el('<button class="btn small primary">선택 항목 PPT 다운로드 (미선택=전체)</button>');
+    var pptBtn = Ui.el('<button class="btn small primary">선택 항목 PPT 다운로드 (미선택=현재 작업 전체)</button>');
     var refreshBtn = Ui.el('<button class="btn small">새로고침</button>');
     toolbar.appendChild(pptBtn);
     toolbar.appendChild(refreshBtn);
@@ -2886,20 +2888,70 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
     var listEl = Ui.el('<div></div>');
     c.body.appendChild(listEl);
 
+    var allItems = [];
+    var currentDs = null;
+    var selectedGroup = null;   // dataset key of the group being viewed
+
+    function groupKey(it) { return it.dataset || '__none__'; }
     function selectedIds() {
       return Array.from(listEl.querySelectorAll('input[type="checkbox"]:checked'))
         .map(function (cb) { return cb.value; });
     }
-    function render() {
-      Api.get('/api/insights-log').then(function (d) {
-        listEl.innerHTML = '';
-        var items = d.items || [];
-        if (!items.length) {
-          listEl.innerHTML = '<div class="status-empty">저장된 인사이트가 없습니다 — 각 차트에서 ' +
-            '"LLM 인사이트 생성"을 실행하면 여기에 쌓입니다 (Settings 에서 LLM 인사이트 활성화 필요).</div>';
-          return;
-        }
-        items.forEach(function (it) {
+    function visibleItems() {
+      return allItems.filter(function (it) { return groupKey(it) === selectedGroup; });
+    }
+
+    function renderGroupBar() {
+      groupBar.innerHTML = '';
+      var groups = {};
+      allItems.forEach(function (it) {
+        var k = groupKey(it);
+        if (!groups[k]) groups[k] = { key: k, label: it.dataset_label || '작업 미지정', n: 0 };
+        groups[k].n += 1;
+      });
+      // 현재 작업은 저장 항목이 없어도 칩으로 표시해 위치를 알 수 있게 함
+      if (currentDs && !groups[currentDs]) {
+        groups[currentDs] = { key: currentDs, label: currentDs, n: 0 };
+      }
+      var keys = Object.keys(groups);
+      // 현재 작업 그룹을 맨 앞으로
+      keys.sort(function (a, b) {
+        if (a === currentDs) return -1;
+        if (b === currentDs) return 1;
+        return 0;
+      });
+      groupBar.appendChild(Ui.el('<span style="font-size:12px;color:#647b8d">작업:</span>'));
+      keys.forEach(function (k) {
+        var g = groups[k];
+        var isCur = k === currentDs;
+        var active = k === selectedGroup;
+        var chip = Ui.el('<button class="btn small' + (active ? ' primary' : '') + '">' +
+          (isCur ? '📌 현재 작업 — ' : '') + Ui.esc(g.label) + ' (' + g.n + ')</button>');
+        chip.addEventListener('click', function () {
+          selectedGroup = k;
+          renderGroupBar();
+          renderList();
+        });
+        groupBar.appendChild(chip);
+      });
+      if (!keys.length) {
+        groupBar.appendChild(Ui.el('<span style="color:#93a5b4;font-size:12px">저장된 작업 없음</span>'));
+      }
+    }
+
+    function renderList() {
+      listEl.innerHTML = '';
+      var items = visibleItems();
+      if (!items.length) {
+        var isCur = selectedGroup === currentDs;
+        listEl.innerHTML = '<div class="status-empty">' +
+          (isCur ? '현재 작업에서 생성된 인사이트가 없습니다 — 각 차트에서 "LLM 인사이트 생성"을 ' +
+            '실행하면 여기에 쌓입니다 (Settings 에서 LLM 인사이트 활성화 필요). 이전 작업의 ' +
+            '인사이트는 위의 작업 버튼에서 볼 수 있습니다.'
+            : '이 작업의 저장된 인사이트가 없습니다.') + '</div>';
+        return;
+      }
+      items.forEach(function (it) {
           var row = Ui.el('<div style="border:1px solid #e8eff5;border-radius:8px;padding:10px 12px;margin-bottom:8px"></div>');
           var head = Ui.el('<div style="display:flex;gap:8px;align-items:center"></div>');
           var cb = Ui.el('<input type="checkbox" value="' + Ui.esc(it.id) + '">');
@@ -2914,7 +2966,7 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
             (it.dataset ? ' · ' + Ui.esc(it.dataset) : '') + '</span>'));
           var delBtn = Ui.el('<button class="btn small">삭제</button>');
           delBtn.addEventListener('click', function () {
-            Api.post('/api/insights-log/delete', { id: it.id }).then(render).catch(errToast);
+            Api.post('/api/insights-log/delete', { id: it.id }).then(fetchItems).catch(errToast);
           });
           head.appendChild(delBtn);
           row.appendChild(head);
@@ -2939,15 +2991,33 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
             detail.style.display = detail.style.display === 'none' ? '' : 'none';
           });
           listEl.appendChild(row);
-        });
+      });
+    }
+
+    function fetchItems() {
+      Api.get('/api/insights-log').then(function (d) {
+        allItems = d.items || [];
+        currentDs = d.current_dataset || null;
+        var keys = {};
+        allItems.forEach(function (it) { keys[groupKey(it)] = true; });
+        // 기본은 현재 작업 그룹. 현재 작업에 항목이 없어도 비어있음 안내를 위해 유지.
+        if (selectedGroup === null || (!keys[selectedGroup] && selectedGroup !== currentDs)) {
+          selectedGroup = currentDs || Object.keys(keys)[0] || '__none__';
+        }
+        renderGroupBar();
+        renderList();
       }).catch(errToast);
     }
+
     pptBtn.addEventListener('click', function () {
-      Api.download('/api/insights-report', { ids: selectedIds() },
+      var ids = selectedIds();
+      if (!ids.length) ids = visibleItems().map(function (it) { return it.id; });
+      if (!ids.length) { Ui.toast('내보낼 인사이트가 없습니다.', 'error'); return; }
+      Api.download('/api/insights-report', { ids: ids },
         'ip_landscape_insights.pptx').catch(errToast);
     });
-    refreshBtn.addEventListener('click', render);
-    render();
+    refreshBtn.addEventListener('click', fetchItems);
+    fetchItems();
   };
 
   /* ---------- 사용 설명서 ---------- */

@@ -187,3 +187,19 @@ def test_insights_endpoints(client, monkeypatch):
     assert client.get("/api/insights-log").get_json()["items"] == []
     r3 = client.post("/api/insights-report", json={})
     assert r3.status_code == 404
+
+
+def test_insights_log_job_grouping(client):
+    """보관함 항목에 작업 라벨(dataset_label)과 현재 dataset 이 붙는지 검증."""
+    storage.save_uploads({"items": [
+        {"dataset": "upload__abc", "job": "2026 배터리 조사", "worker": "김특허"}]})
+    add_insight("basic-stats", "현재 작업 인사이트", _SENTS, dataset="upload__abc")
+    add_insight("basic-stats", "이전 작업 인사이트", _SENTS, dataset="old_ds")
+    add_insight("basic-stats", "작업 미지정 인사이트", _SENTS)
+    storage.save_settings({"dataset": "upload__abc"})
+    d = client.get("/api/insights-log").get_json()
+    assert d["current_dataset"] == "upload__abc"
+    labels = {it["title"]: it["dataset_label"] for it in d["items"]}
+    assert labels["현재 작업 인사이트"] == "2026 배터리 조사 (김특허)"
+    assert labels["이전 작업 인사이트"] == "old_ds"
+    assert labels["작업 미지정 인사이트"] == "작업 미지정"
