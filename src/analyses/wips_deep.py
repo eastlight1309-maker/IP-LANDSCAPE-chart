@@ -45,7 +45,7 @@ from src.preprocessing import parse_numeric, parse_bool, parse_multiclass_cell, 
     auto_standardize_name
 from src.insights import build_insight, fmt_num, fmt_pct, period_label, \
     check_small_sample
-from src.viz_payload import ok_result, empty_result, bar_chart, base_layout, \
+from src.viz_payload import RDYLGN, PURPLES, ORRD, ok_result, empty_result, bar_chart, base_layout, \
     heatmap, cytoscape_network, color_for, PALETTE
 
 
@@ -324,7 +324,7 @@ def _agent_section(df, settings):
         hover.append(row_h)
     fig = heatmap(z, [str(y) for y in years], top_comps,
                   title="기업×연도 신규 대리인 비중 (그 해 처음 쓰는 대리인의 출원 비중)",
-                  colorscale="Purples", hovertext=hover, colorbar_title="신규 비중")
+                  colorscale=PURPLES, hovertext=hover, colorbar_title="신규 비중")
     signals.sort(key=lambda s: (-s["year"], -s["share"]))
     return {"fig": fig, "signals": signals[:15],
             "n_agents": int(sub["_agent"].nunique())}, None
@@ -432,7 +432,7 @@ def _expedited_section(df, settings):
                      "hovertext": pts["hover"], "hoverinfo": "text",
                      "customdata": pts["custom"],
                      "marker": {"size": pts["size"], "color": pts["color"],
-                                "colorscale": "OrRd", "cmin": 0, "cmax": 1,
+                                "colorscale": ORRD, "cmin": 0, "cmax": 1,
                                 "colorbar": {"title": "우선심사 비율",
                                              "thickness": 12},
                                 "line": {"width": 0.5, "color": "#666"}}}],
@@ -629,7 +629,7 @@ def _disclosure_section(df, settings):
         hover.append(row_h)
     fig = heatmap(z_rows, [str(t)[:18] for t in top_techs], top_comps,
                   title="개시 충실도 — 기업×기술분류 평균 도면 수 (분류 내 z-score)",
-                  colorscale="RdYlGn", hovertext=hover, colorbar_title="z", zmid=0)
+                  colorscale=RDYLGN, hovertext=hover, colorbar_title="z", zmid=0)
     fig_scatter = None
     if "claims_count" in sub.columns and sub["claims_count"].notna().any():
         s2 = sub[sub["claims_count"].notna()]
@@ -811,9 +811,13 @@ def _gov_program_section(df, settings):
     fig_prog = bar_chart(
         [str(p)[:34] for p in top_progs.index][::-1],
         [int(v) for v in top_progs.values][::-1],
-        title="국가연구 과제별 특허 산출 — 어떤 국책과제가 특허를 만들고 있나",
+        title="국가연구 과제별 특허 산출 — 어떤 국책과제가 특허를 만들고 있나 "
+              "(막대 클릭 → 해당 과제 특허 목록·Excel 다운로드)",
         orientation="h", x_title="특허 수",
-        hovertext=[str(p) for p in top_progs.index][::-1])
+        hovertext=["%s — %d건 (클릭 시 특허 목록)" % (p, v)
+                   for p, v in top_progs.items()][::-1],
+        customdata=[{"drill": {"gov_program": str(p)}}
+                    for p in top_progs.index][::-1])
 
     # 기업별 정부과제 연계율
     fig_comp = None
@@ -886,12 +890,19 @@ _SECTIONS = (("survival", _survival_section), ("market_entry", _market_entry_sec
              ("trial", _trial_section), ("gov_program", _gov_program_section))
 
 
-def compute_wips_deep(df, settings):
-    """심층 시그널 9종 계산 (섹션별 graceful degradation)."""
+def compute_wips_deep(df, settings, only_sections=None):
+    """심층 시그널 계산 (섹션별 graceful degradation).
+
+    only_sections: 계산할 섹션 키 목록 — 지정 시 해당 섹션만 계산하고
+    인사이트 문장도 그 범위로 한정된다 (탭 분할 렌더링용). None=전체.
+    """
     if not len(df):
         return empty_result()
+    wanted = set(only_sections) if only_sections else None
     sections, skipped = {}, []
     for key, fn in _SECTIONS:
+        if wanted is not None and key not in wanted:
+            continue
         try:
             result, reason = fn(df, settings)
         except Exception as e:  # 개별 섹션 오류가 전체를 막지 않도록

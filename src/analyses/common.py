@@ -192,11 +192,20 @@ def select_patents(df, drill):
     if drill.get("year") not in (None, ""):
         mask &= df["_base_year"] == float(drill["year"])
     if dtype == "cell":
+        # PS 매트릭스는 C축(해결과제)×B축(해결수단) 기반 — 축 리스트 포함 매칭 우선,
+        # 축이 없으면 구버전 텍스트 컬럼 매칭으로 폴백
         p, s = drill.get("problem"), drill.get("solution")
-        if p and "problem" in df.columns:
-            mask &= df["problem"].astype(str).str.strip() == str(p)
-        if s and "solution" in df.columns:
-            mask &= df["solution"].astype(str).str.strip() == str(s)
+        use_axes = "_tech_c_list" in df.columns and "_tech_b_list" in df.columns
+        if p:
+            if use_axes:
+                mask &= df["_tech_c_list"].map(lambda lst: str(p) in (lst or []))
+            elif "problem" in df.columns:
+                mask &= df["problem"].astype(str).str.strip() == str(p)
+        if s:
+            if use_axes:
+                mask &= df["_tech_b_list"].map(lambda lst: str(s) in (lst or []))
+            elif "solution" in df.columns:
+                mask &= df["solution"].astype(str).str.strip() == str(s)
     if dtype == "axis_cell":  # A/B/C 분류축 교차 셀: 각 축의 값 동시 포함
         axis_cols = {"A": "_tech_list", "B": "_tech_b_list", "C": "_tech_c_list"}
         for cond in (drill.get("conds") or []):
@@ -211,6 +220,13 @@ def select_patents(df, drill):
         if drill.get("solutions") and "solution" in df.columns:
             wanted_s = set(map(str, drill["solutions"]))
             mask &= df["solution"].astype(str).str.strip().isin(wanted_s)
+    if drill.get("gov_program") and "gov_program" in df.columns:
+        mask &= df["gov_program"].astype(str).str.strip() == \
+            str(drill["gov_program"]).strip()
+    if drill.get("gov_linked") is not None and "gov_program" in df.columns:
+        prog = df["gov_program"].astype(str).str.strip()
+        linked = ~prog.str.lower().isin(["", "nan", "none", "-"])
+        mask &= linked if drill["gov_linked"] else ~linked
     if drill.get("inventor") and "_inventor_list" in df.columns:
         inv = str(drill["inventor"])
         mask &= df["_inventor_list"].map(lambda lst: inv in (lst or []))

@@ -202,11 +202,82 @@ def compute_basic_stats(df, settings):
                             if kpi["active_rate"] is not None else ""))
     insight = build_insight(sentences, metrics,
                             small_sample=check_small_sample(len(df), settings))
+
+    # 차트별 인사이트 — 각 차트 바로 아래에 분리 표시 (차트가 없으면 생략)
+    chart_insights = {}
+    if len(total_s):
+        chart_insights["annual"] = [
+            "최다 출원 연도는 %s년(%s건)이고 최근 %d년 성장률은 %s입니다."
+            % (kpi["peak_year"], fmt_num(total_s.max()), recent,
+               fmt_pct(kpi["growth"]) if kpi["growth"] is not None else "계산 불가"),
+            "최근 1~2년 하락은 미공개 출원(공개 전) 영향일 수 있어 하락으로 단정할 수 "
+            "없습니다."]
+    if fig_country is not None:
+        c_counts = df["country"].astype(str).str.strip().str.upper() \
+            .replace("", np.nan).replace("NAN", np.nan).dropna().value_counts()
+        c_top3 = float(c_counts.head(3).sum()) / float(c_counts.sum())
+        chart_insights["country"] = [
+            "출원 1위 국가는 %s(%s건, %s)이며 상위 3개국이 전체의 %s를 차지합니다 — "
+            "권리 확보가 집중된 시장입니다."
+            % (c_counts.index[0], fmt_num(c_counts.iloc[0]),
+               fmt_pct(c_counts.iloc[0] / float(c_counts.sum())), fmt_pct(c_top3))]
+    if len(app_counts):
+        cr3 = float(app_counts.head(3).sum()) / float(len(df))
+        chart_insights["applicants"] = [
+            "출원인 1위는 '%s'(%s건, 점유율 %s)이고 상위 3개사 집중도(CR3)는 %s입니다%s."
+            % (app_counts.index[0], fmt_num(app_counts.iloc[0]),
+               fmt_pct(app_counts.iloc[0] / float(len(df))), fmt_pct(cr3),
+               " — 소수 기업 주도 시장" if cr3 >= 0.5 else " — 경쟁이 분산된 시장")]
+        recent_hi = int(years_all.max()) - recent + 1
+        rec_counts = df[df["_base_year"] >= recent_hi]["applicant_display"] \
+            .replace("", np.nan).dropna().value_counts()
+        bub_sents = []
+        max_cell = None
+        for a in app_counts.head(max_rows).index:
+            s = _year_series(df, df["applicant_display"] == a)
+            if len(s) and (max_cell is None or float(s.max()) > max_cell[2]):
+                max_cell = (str(a), int(s.idxmax()), float(s.max()))
+        if max_cell:
+            bub_sents.append("가장 큰 버블(최대 집중)은 '%s'의 %d년(%s건)입니다."
+                             % (max_cell[0], max_cell[1], fmt_num(max_cell[2])))
+        if len(rec_counts):
+            bub_sents.append("최근 %d년 가장 활발한 출원인은 '%s'(%s건)입니다 — 줄이 "
+                             "이어지는 기업=꾸준한 투자, 최근 버블이 사라진 기업=투자 "
+                             "축소 신호입니다." % (recent, rec_counts.index[0],
+                                             fmt_num(rec_counts.iloc[0])))
+        if bub_sents:
+            chart_insights["applicant_year_bubble"] = bub_sents
+            chart_insights["applicant_year"] = [bub_sents[0] +
+                                                " (버블 차트와 같은 데이터의 히트맵 보기입니다.)"]
+    if fig_tech is not None:
+        t_counts = tech_flat.value_counts()
+        chart_insights["tech"] = [
+            "최다 기술분류는 '%s'(%s건, %s)로 포트폴리오가 가장 집중된 기술입니다."
+            % (t_counts.index[0], fmt_num(t_counts.iloc[0]),
+               fmt_pct(t_counts.iloc[0] / float(max(len(df), 1))))]
+        recent_hi = int(years_all.max()) - recent + 1
+        grow_best, grow_val = None, None
+        for t in t_counts.head(max_rows).index:
+            in_tech = df["_tech_list"].map(lambda lst: t in (lst or []))
+            s = _year_series(df, in_tech)
+            rec_n = float(s[s.index >= recent_hi].sum())
+            old_n = float(s[s.index < recent_hi].sum())
+            if old_n >= 3:
+                ratio = rec_n / old_n
+                if grow_val is None or ratio > grow_val:
+                    grow_best, grow_val = str(t), ratio
+        if grow_best is not None:
+            chart_insights["tech_year"] = [
+                "최근 %d년 비중이 가장 커진 분류는 '%s'(최근/이전 비율 %.2f)입니다 — "
+                "오른쪽(최근)으로 갈수록 진해지는 행이 성장 기술입니다."
+                % (recent, grow_best, grow_val)]
+
     return ok_result({
         "kpi": kpi, "annual": fig_annual, "country": fig_country,
         "applicants": fig_applicants, "applicant_year": fig_app_year,
         "applicant_year_bubble": fig_app_bubble,
         "tech": fig_tech, "tech_year": fig_tech_year,
+        "chart_insights": chart_insights,
     }, insight=insight)
 
 

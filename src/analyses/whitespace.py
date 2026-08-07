@@ -42,7 +42,7 @@ from src.metrics import robust_growth, normalize_series, weighted_geometric_mean
     cosine_sim_vec, safe_div
 from src.analyses.common import tech_year_matrix, combo_counts, diagnose_year_tech
 from src.insights import build_insight, fmt_num, fmt_pct, period_label, check_small_sample
-from src.viz_payload import ok_result, empty_result
+from src.viz_payload import RDYLGN, ok_result, empty_result
 
 
 def _keyword_growth(sub, recent_from, cols=("product", "process")):
@@ -282,7 +282,7 @@ def compute_opportunity(df, settings):
                 "customdata": [p["customdata"] for p in pts],
                 "marker": {"symbol": symbol, "size": sizes, "sizemode": "area",
                            "sizeref": 2.0 * smax / (40 ** 2), "sizemin": 5,
-                           "color": [p["color"] for p in pts], "colorscale": "RdYlGn",
+                           "color": [p["color"] for p in pts], "colorscale": RDYLGN,
                            "reversescale": True, "showscale": symbol == "circle",
                            "colorbar": {"title": "권리장벽", "thickness": 12},
                            "line": {"width": 2 if symbol != "circle" else 1,

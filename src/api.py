@@ -514,7 +514,10 @@ def register_routes(app):
                                                         threshold=b.get("threshold")),
             extra_key_fields=("threshold",)),
         "wips-deep": _analysis_route(
-            "wips-deep", lambda df, s, b: compute_wips_deep(df, s)),
+            "wips-deep",
+            lambda df, s, b: compute_wips_deep(df, s,
+                                               only_sections=b.get("sections")),
+            extra_key_fields=("sections",)),
         "executive-summary": _analysis_route(
             "executive-summary",
             lambda df, s, b: compute_executive_summary(df, s,

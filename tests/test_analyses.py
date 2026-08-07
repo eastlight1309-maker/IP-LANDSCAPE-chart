@@ -108,12 +108,14 @@ def test_problem_solution(family_df, settings):
         assert "trend" in detail and "opportunity_score" in detail
 
 
-def test_problem_solution_disabled_without_columns(settings):
-    # ② 선택 컬럼 없는 데이터 → 해당 분석만 disabled, 안내 포함
-    df = make_prepared(drop_optional_columns(generate_sample(n=80, seed=11)))
-    r = compute_problem_solution(df, settings)
+def test_problem_solution_disabled_without_bc_axes(settings):
+    # B축(해결수단)·C축(해결과제) 분류가 없으면 매트릭스를 그리지 않는다
+    raw = generate_sample(n=80, seed=11)
+    raw = raw.drop(columns=[c for c in raw.columns
+                            if c.startswith("B축") or c.startswith("C축")])
+    r = compute_problem_solution(make_prepared(raw), settings)
     assert r["status"] == "disabled"
-    assert "해결과제" in r["missing_columns"] or "해결수단" in r["missing_columns"]
+    assert "C축" in r["message"] and "B축" in r["message"]
 
 
 def test_optional_columns_missing_overview_still_ok(settings):

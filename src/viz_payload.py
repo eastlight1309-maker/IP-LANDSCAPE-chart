@@ -157,6 +157,14 @@ def bubble_chart(points, x_title, y_title, title=None, quadrants=None,
     return {"data": [trace], "layout": layout}
 
 
+# Plotly.js 에 내장되지 않은 명명 색상표(RdYlGn/Purples/OrRd/Turbo 등)를 이름으로
+# 넘기면 기본 색상표(파랑=낮음 → 빨강=높음)로 대체 렌더링되어 색 해석이 뒤집힌다.
+# (예: 개시 충실도 z=+1 이 빨강으로 보이는 문제) → 명시적 색 배열로 정의해 사용.
+RDYLGN = [[0.0, "#E15759"], [0.5, "#F1CE63"], [1.0, "#59A14F"]]  # 낮음=빨강, 높음=초록
+PURPLES = [[0.0, "#f6f2fa"], [1.0, "#59489C"]]
+ORRD = [[0.0, "#fff3e0"], [1.0, "#d7301f"]]
+
+
 def heatmap(z, x_labels, y_labels, title=None, colorscale="YlOrRd", hovertext=None,
             colorbar_title=None, zmid=None):
     """Plotly 히트맵 payload. 셀 수가 LIMITS 초과인 경우 호출부에서 ECharts 로 전환.

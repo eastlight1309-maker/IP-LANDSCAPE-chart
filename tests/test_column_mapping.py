@@ -43,11 +43,13 @@ def test_availability_matrix(mapping):
     avail = analysis_availability(mapping)
     assert avail["overview"]["available"]
     assert avail["problem-solution"]["available"]
-    # 필수 개념 제거 시 비활성 + missing 라벨 안내
-    no_ps = {k: v for k, v in mapping.items() if k not in ("problem", "solution")}
+    # 필수 개념(B·C축 분류) 제거 시 비활성 + missing 라벨 안내
+    no_ps = {k: v for k, v in mapping.items()
+             if not k.startswith("tech_b_") and not k.startswith("tech_c_")}
     avail2 = analysis_availability(no_ps)
     assert not avail2["problem-solution"]["available"]
-    assert "해결과제" in avail2["problem-solution"]["missing"]
+    assert any("B축" in m or "C축" in m
+               for m in avail2["problem-solution"]["missing"])
 
 
 def test_concept_catalog_complete():

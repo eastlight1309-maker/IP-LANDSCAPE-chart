@@ -51,7 +51,7 @@ from src.metrics import hhi, shannon_entropy, robust_growth, year_counts, \
     normalize_series, cosine_sim_vec
 from src.analyses.common import company_tech_shares
 from src.insights import build_insight, fmt_num, fmt_pct, period_label, check_small_sample
-from src.viz_payload import ok_result, empty_result, radar_chart, heatmap
+from src.viz_payload import PURPLES, ok_result, empty_result, radar_chart, heatmap
 
 DNA_METRICS = [
     ("tech_concentration", "기술 집중도(HHI)"), ("tech_diversity", "기술 다양성"),
@@ -203,7 +203,7 @@ def compute_company_dna(df, settings, companies=None):
 
     parcoords = {"data": [{
         "type": "parcoords",
-        "line": {"color": list(range(len(companies_payload))), "colorscale": "Turbo"},
+        "line": {"color": list(range(len(companies_payload))), "colorscale": "Portland"},
         "dimensions": [{"label": label, "values": [p["std"][k] for p in companies_payload],
                         "range": [0, 1]} for k, label in DNA_METRICS],
     }], "layout": {"margin": {"l": 80, "r": 60, "t": 40, "b": 30},
@@ -232,7 +232,7 @@ def compute_company_dna(df, settings, companies=None):
                              colorscale="Blues", colorbar_title="유사도")
         overlap_matrix = heatmap(ov_z, available, available,
                                  title="포트폴리오 중첩도 (활동 분류 Jaccard, 0~1 · 1=완전 중첩)",
-                                 colorscale="Purples", colorbar_title="중첩도")
+                                 colorscale=PURPLES, colorbar_title="중첩도")
         for fig_ in (sim_matrix, overlap_matrix):
             fig_["layout"]["xaxis"]["title"] = "기업"
             fig_["layout"]["yaxis"]["title"] = "기업"

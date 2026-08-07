@@ -249,9 +249,45 @@ def test_problem_solution_axis_titles(prepared, settings):
     r = compute_problem_solution(prepared, settings)
     assert r["status"] == "ok"
     lay = r["figure"]["layout"]
-    assert lay["xaxis"]["title"]["text"] == "해결수단"
-    assert lay["yaxis"]["title"]["text"] == "해결과제"
+    assert lay["xaxis"]["title"]["text"] == "해결수단 (B축 분류)"
+    assert lay["yaxis"]["title"]["text"] == "해결과제 (C축 분류)"
     assert r["figure"]["counts_z"]
+    # 행=C축 분류값, 열=B축 분류값 (텍스트 컬럼이 아닌 축 분류 기반)
+    c_vals = set(v for lst in prepared["_tech_c_list"] for v in (lst or []))
+    b_vals = set(v for lst in prepared["_tech_b_list"] for v in (lst or []))
+    assert set(r["problems"]) <= c_vals and set(r["solutions"]) <= b_vals
+
+
+def test_wips_deep_sections_param_and_gov_drill(settings):
+    """sections 파라미터 스코핑 + 국가과제 막대 클릭 드릴 + 개시충실도 색상."""
+    from src.analyses.wips_deep import compute_wips_deep
+    from src.analyses.common import select_patents
+    df = make_prepared(generate_sample(n=400, seed=21))
+    r = compute_wips_deep(df, settings, only_sections=["gov_program", "disclosure"])
+    assert r["status"] == "ok"
+    assert set(r["sections"].keys()) <= {"gov_program", "disclosure"}
+    gp = r["sections"]["gov_program"]
+    cds = gp["fig_prog"]["data"][0]["customdata"]
+    prog = cds[-1]["drill"]["gov_program"]
+    picked = select_patents(df, {"gov_program": prog})
+    assert len(picked) > 0
+    assert (picked["gov_program"].astype(str).str.strip() == prog).all()
+    # 개시 충실도: 명시적 빨강(낮음)→초록(높음) 색 배열 — Plotly.js 에 없는
+    # 'RdYlGn' 이름이 기본 파랑→빨강으로 대체되던 해석 반전 버그 방지
+    cs = r["sections"]["disclosure"]["fig"]["data"][0]["colorscale"]
+    assert cs[0][1] == "#E15759" and cs[-1][1] == "#59A14F"
+
+
+def test_basic_stats_chart_insights(prepared, settings):
+    """차트별 인사이트가 각 차트 키로 분리 제공된다."""
+    from src.analyses.basic_stats import compute_basic_stats
+    r = compute_basic_stats(prepared, settings)
+    assert r["status"] == "ok"
+    ci = r["chart_insights"]
+    assert ci.get("annual")
+    for k in ("country", "applicants", "tech"):
+        if r.get(k):
+            assert ci.get(k), "chart_insights[%s] 누락" % k
 
 
 # ---------------------------------------------------------------------------

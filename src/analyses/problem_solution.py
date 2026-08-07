@@ -5,8 +5,9 @@ analyses/problem_solution.py — 문제–해결수단 매트릭스 (1단계).
 분석 목적:
   해결과제(행) × 해결수단(열) 매트릭스로 R&D 접근 조합의 밀집/공백을 파악한다.
 
-필수 컬럼: 해결과제, 해결수단 — 없으면 분석 비활성화 + 텍스트 추출 모듈 연결
-  인터페이스 안내만 제공 (임의 추출 결과 생성 금지).
+필수 컬럼: C축 기술분류(=해결과제), B축 기술분류(=해결수단) — 두 축이 모두
+  매핑된 경우에만 매트릭스를 그린다 (임의 추출 결과 생성 금지). 의미 그룹
+  모드(compute_ps_semantic)는 해결과제·해결수단 텍스트 컬럼 기반으로 별도 동작.
 선택 컬럼: 날짜(성장률), 출원인(상위 출원인), 독립청구항(대표 청구항), 유효특허 여부
 
 계산식:
@@ -35,25 +36,41 @@ def _clean_text_series(s):
     return out.where(~out.str.lower().isin(["nan", "none", ""]), other=None)
 
 
-def compute_problem_solution(df, settings):
-    """문제–해결수단 매트릭스 계산."""
-    missing = [label for col, label in (("problem", "해결과제"), ("solution", "해결수단"))
-               if col not in df.columns]
-    if missing:
-        return disabled_result(
-            missing,
-            message=("필수 컬럼(%s)이 없어 문제–해결수단 매트릭스를 사용할 수 없습니다. "
-                     "사전 추출 결과 컬럼을 매핑하거나, 텍스트 추출 모듈(요약/청구항 → "
-                     "해결과제·해결수단)을 연결한 뒤 결과 컬럼을 매핑하세요. "
-                     "임의 추출은 수행하지 않습니다." % ", ".join(missing)))
-    if not len(df):
-        return empty_result()
+_BC_DISABLED_MSG = ("문제–해결수단 매트릭스는 C축(해결과제)과 B축(해결수단) 기술분류가 "
+                    "모두 매핑된 경우에만 그립니다. Settings → 컬럼 매핑에서 "
+                    "'기술분류 (C축)'에 해결과제 분류를, '기술분류 (B축)'에 해결수단 "
+                    "분류를 매핑하세요. (요약·청구항 텍스트에서 임의 추출하지 않습니다.)")
+
+
+def _bc_frame(df):
+    """C축(해결과제)×B축(해결수단) → (problem, solution) 스칼라 프레임.
+
+    다중값은 explode 로 조합별 1행씩 계산한다 (다중분류 duplicate 방식과 동일).
+    두 축 중 하나라도 없거나 값이 비면 None 반환.
+    """
+    if "_tech_c_list" not in df.columns or "_tech_b_list" not in df.columns:
+        return None
     work = df.copy()
+    work["problem"] = df["_tech_c_list"].map(lambda v: list(v or []) or None)
+    work["solution"] = df["_tech_b_list"].map(lambda v: list(v or []) or None)
+    work = work[work["problem"].notna() & work["solution"].notna()]
+    if not len(work):
+        return None
+    work = work.explode("problem").explode("solution")
     work["problem"] = _clean_text_series(work["problem"])
     work["solution"] = _clean_text_series(work["solution"])
     work = work[work["problem"].notna() & work["solution"].notna()]
-    if not len(work):
-        return empty_result("해결과제·해결수단 값이 있는 특허가 없습니다.")
+    return work if len(work) else None
+
+
+def compute_problem_solution(df, settings):
+    """문제–해결수단 매트릭스 계산 — C축(해결과제)×B축(해결수단) 분류 기반."""
+    if not len(df):
+        return empty_result()
+    work = _bc_frame(df)
+    if work is None:
+        return disabled_result(["기술분류 (C축)=해결과제", "기술분류 (B축)=해결수단"],
+                               message=_BC_DISABLED_MSG)
 
     max_rows = get_limit(settings, "matrix_max_rows")
     max_cols = get_limit(settings, "matrix_max_cols")
@@ -134,9 +151,9 @@ def compute_problem_solution(df, settings):
         fig["layout"]["height"] = max(460, 140 + 26 * len(top_problems))
         # 축 제목 명시 — 화면 판독 + Excel 다운로드 시 행/열 의미 식별용
         fig["layout"]["xaxis"].update({"tickfont": {"size": 10}, "tickangle": -35,
-                                       "title": {"text": "해결수단", "standoff": 6}})
+                                       "title": {"text": "해결수단 (B축 분류)", "standoff": 6}})
         fig["layout"]["yaxis"].update({"tickfont": {"size": 10},
-                                       "title": {"text": "해결과제", "standoff": 6}})
+                                       "title": {"text": "해결과제 (C축 분류)", "standoff": 6}})
         fig["layout"]["margin"] = {"l": 150, "r": 30, "t": 48, "b": 110}
 
     zeros = int(sum(1 for row in z_counts for v in row if v == 0))
@@ -175,11 +192,21 @@ def compute_problem_solution(df, settings):
 
 
 def cell_detail(df, settings, problem, solution):
-    """셀 클릭 패널 데이터: 연도별 추이·상위 출원인·대표 청구항·유효비율·인사이트."""
-    if "problem" not in df.columns or "solution" not in df.columns:
-        return disabled_result(["해결과제", "해결수단"])
-    cell = df[(df["problem"].astype(str).str.strip() == str(problem))
-              & (df["solution"].astype(str).str.strip() == str(solution))]
+    """셀 클릭 패널 데이터: 연도별 추이·상위 출원인·대표 청구항·유효비율·인사이트.
+
+    매트릭스가 C축(해결과제)×B축(해결수단) 기반이므로 셀 매칭도 축 리스트
+    포함 여부로 판단한다 (축이 없으면 구버전 텍스트 컬럼으로 폴백).
+    """
+    p, s = str(problem).strip(), str(solution).strip()
+    if "_tech_c_list" in df.columns and "_tech_b_list" in df.columns:
+        cell = df[df["_tech_c_list"].map(lambda lst: p in (lst or []))
+                  & df["_tech_b_list"].map(lambda lst: s in (lst or []))]
+    elif "problem" in df.columns and "solution" in df.columns:
+        cell = df[(df["problem"].astype(str).str.strip() == p)
+                  & (df["solution"].astype(str).str.strip() == s)]
+    else:
+        return disabled_result(["기술분류 (C축)=해결과제", "기술분류 (B축)=해결수단"],
+                               message=_BC_DISABLED_MSG)
     if not len(cell):
         return empty_result("해당 조합의 특허가 없습니다.")
     years = cell["_base_year"].dropna().astype(int)

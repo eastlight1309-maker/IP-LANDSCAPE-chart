@@ -65,7 +65,9 @@ CONCEPTS = {
     },
     "indep_claim": {
         "label": "독립청구항", "dtype": "문자열 (독립항 전문)",
-        "variants": ["독립청구항", "독립 청구항", "대표청구항", "대표 청구항", "청구항 1",
+        "preferred": ["독립청구항[KR,JP,US,CN,EP,IN]"],  # 기본 매핑 (WIPS)
+        "variants": ["독립청구항[KR,JP,US,CN,EP,IN]",
+                     "독립청구항", "독립 청구항", "대표청구항", "대표 청구항", "청구항 1",
                      "independent claim", "indep claim", "first claim", "claim 1", "청구항1",
                      "main claim", "representative claim"],
     },
@@ -130,7 +132,9 @@ CONCEPTS = {
     },
     "legal_status": {
         "label": "법적상태", "dtype": "문자열 (등록/공개/거절/소멸 등)",
-        "variants": ["법적상태", "법적 상태", "행정상태", "행정처분", "legal status", "status",
+        "preferred": ["상태정보[KR,JP,US,EP,CN,CA,AU]"],  # 기본 매핑 (WIPS)
+        "variants": ["상태정보[KR,JP,US,EP,CN,CA,AU]", "상태정보",
+                     "법적상태", "법적 상태", "행정상태", "행정처분", "legal status", "status",
                      "current status", "법률상태", "법적상태정보", "현재상태", "최종상태",
                      "최종처분", "행정처분상태"],
     },
@@ -146,16 +150,18 @@ CONCEPTS = {
     },
     "cites_backward": {
         "label": "인용 수", "dtype": "정수 (선행문헌 인용 수)",
-        "preferred": ["인용 문헌수", "인용 문헌 수"],  # 기본 매핑
-        "variants": ["인용 수", "인용수", "인용문헌수", "인용 문헌 수", "인용 문헌수",
+        "preferred": ["인용 문헌 수(B1)", "인용 문헌수", "인용 문헌 수"],  # 기본 매핑
+        "variants": ["인용 문헌 수(B1)",
+                     "인용 수", "인용수", "인용문헌수", "인용 문헌 수", "인용 문헌수",
                      "backward citations",
                      "citing count", "cited references", "references cited", "인용특허수",
                      "backward citation count", "인용횟수"],
     },
     "cites_forward": {
         "label": "피인용 수", "dtype": "정수 (후행문헌에 의한 피인용 수)",
-        "preferred": ["피인용 문헌수", "피인용 문헌 수"],  # 기본 매핑
-        "variants": ["피인용 수", "피인용수", "피인용횟수", "피인용 문헌 수", "피인용 문헌수",
+        "preferred": ["피인용 문헌 수(F1)", "피인용 문헌수", "피인용 문헌 수"],  # 기본 매핑
+        "variants": ["피인용 문헌 수(F1)",
+                     "피인용 수", "피인용수", "피인용횟수", "피인용 문헌 수", "피인용 문헌수",
                      "forward citations",
                      "cited by count", "citation count", "forward citation count", "피인용특허수",
                      "cited by"],
@@ -172,7 +178,9 @@ CONCEPTS = {
     },
     "family_countries": {
         "label": "패밀리 국가 목록", "dtype": "문자열 (국가코드 목록: KR; US; JP)",
-        "variants": ["패밀리 국가 목록", "패밀리 국가", "패밀리국가", "family countries",
+        "preferred": ["WIPS패밀리 개별국 문헌 수(출원기준)"],  # 기본 매핑 (WIPS)
+        "variants": ["WIPS패밀리 개별국 문헌 수(출원기준)", "wips패밀리 개별국 문헌 수",
+                     "패밀리 국가 목록", "패밀리 국가", "패밀리국가", "family countries",
                      "family country list", "지정국", "designated states", "패밀리 국가(전체)",
                      "protection countries", "출원국가 목록"],
     },
@@ -318,7 +326,9 @@ CONCEPTS = {
     },
     "oa_count": {
         "label": "거절이유통지(OA) 횟수", "dtype": "숫자",
-        "variants": ["거절이유통지 횟수", "oa 횟수", "oa횟수", "의견제출통지 횟수",
+        "preferred": ["거절서류발행 횟수[KR]"],  # 기본 매핑 (WIPS)
+        "variants": ["거절서류발행 횟수[KR]", "거절서류발행 횟수",
+                     "거절이유통지 횟수", "oa 횟수", "oa횟수", "의견제출통지 횟수",
                      "중간사건 수", "office action count", "거절이유 횟수", "oa 건수"],
     },
     "examiner_citations": {
@@ -405,7 +415,7 @@ ANALYSIS_REQUIREMENTS = {
     "emerging-combinations": {"required": [{"any": ANY_TECH}, {"any": ANY_DATE}], "optional": ANY_APPLICANT + ["is_active", "legal_status"]},
     "lifecycle":             {"required": [{"any": ANY_TECH}, {"any": ANY_DATE}], "optional": ANY_APPLICANT + ["is_active", "legal_status", "cites_forward"]},
     "opportunity":           {"required": [{"any": ANY_TECH}, {"any": ANY_DATE}], "optional": ANY_APPLICANT + ["legal_status", "is_active", "problem", "product", "process", "family_country_count", "expiry_date", "is_own"]},
-    "problem-solution":      {"required": ["problem", "solution"], "optional": [{"any": ANY_DATE}] + ANY_APPLICANT + ["indep_claim", "is_active", "legal_status"]},
+    "problem-solution":      {"required": [{"any": ["tech_c_l1", "tech_c_l2", "tech_c_l3"]}, {"any": ["tech_b_l1", "tech_b_l2", "tech_b_l3"]}], "optional": [{"any": ANY_DATE}] + ANY_APPLICANT + ["problem", "solution", "indep_claim", "is_active", "legal_status"]},
     "technology-transition": {"required": [{"any": ANY_TECH}, {"any": ANY_DATE}], "optional": ["family_id"] + ANY_APPLICANT},
     "trajectory":            {"required": [{"any": ANY_TECH}, {"any": ANY_DATE}, {"any": ANY_APPLICANT}], "optional": ["family_id", "is_active"]},
     "company-dna":           {"required": [{"any": ANY_TECH}, {"any": ANY_DATE}, {"any": ANY_APPLICANT}], "optional": ["family_size", "family_country_count", "cites_forward", "legal_status", "inventors", "family_id"]},

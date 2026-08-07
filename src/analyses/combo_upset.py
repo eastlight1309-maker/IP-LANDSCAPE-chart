@@ -33,7 +33,7 @@ import numpy as np
 
 from src.config import get_limit, get_threshold
 from src.insights import build_insight, fmt_num, fmt_pct, check_small_sample
-from src.viz_payload import ok_result, empty_result, base_layout
+from src.viz_payload import RDYLGN, ok_result, empty_result, base_layout
 
 
 def compute_combo_upset(df, settings):
@@ -123,7 +123,7 @@ def compute_combo_upset(df, settings):
     traces = [{
         "type": "bar", "x": xs, "y": bar_y, "name": "특허 수",
         "hovertext": hovers, "hoverinfo": "text", "customdata": customs,
-        "marker": {"color": bar_colors, "colorscale": "RdYlGn", "cmin": 0, "cmax": 1,
+        "marker": {"color": bar_colors, "colorscale": RDYLGN, "cmin": 0, "cmax": 1,
                    "colorbar": {"title": "유효특허 비율", "thickness": 12, "y": 0.8,
                                 "len": 0.45},
                    "line": {"width": bar_lines, "color": "#1a2733"}},

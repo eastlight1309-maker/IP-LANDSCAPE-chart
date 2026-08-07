@@ -41,7 +41,7 @@ from src.config import get_threshold, get_limit
 from src.metrics import robust_growth, year_counts, safe_div
 from src.preprocessing import parse_multiclass_cell
 from src.insights import build_insight, fmt_num, fmt_pct, period_label, check_small_sample
-from src.viz_payload import ok_result, empty_result, disabled_result, bar_chart, \
+from src.viz_payload import RDYLGN, ok_result, empty_result, disabled_result, bar_chart, \
     line_chart, base_layout
 
 # 국가별 GNI (조 USD, World Bank 2023 근사) — MC 가중치. 사용 시 US 로 정규화.
@@ -216,7 +216,7 @@ def compute_portfolio_index(df, settings):
         "marker": {"size": sizes, "sizemode": "area",
                    "sizeref": 2.0 * smax / (42 ** 2), "sizemin": 6,
                    "color": [r["growth"] if r["growth"] is not None else 0 for r in shown],
-                   "colorscale": "RdYlGn", "showscale": True,
+                   "colorscale": RDYLGN, "showscale": True,
                    "colorbar": {"title": "최근 성장률", "thickness": 12},
                    "line": {"width": 1, "color": "#333"}, "opacity": 0.85},
     }], "layout": base_layout(

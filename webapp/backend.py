@@ -640,7 +640,9 @@ CONCEPTS = {
     },
     "indep_claim": {
         "label": "독립청구항", "dtype": "문자열 (독립항 전문)",
-        "variants": ["독립청구항", "독립 청구항", "대표청구항", "대표 청구항", "청구항 1",
+        "preferred": ["독립청구항[KR,JP,US,CN,EP,IN]"],  # 기본 매핑 (WIPS)
+        "variants": ["독립청구항[KR,JP,US,CN,EP,IN]",
+                     "독립청구항", "독립 청구항", "대표청구항", "대표 청구항", "청구항 1",
                      "independent claim", "indep claim", "first claim", "claim 1", "청구항1",
                      "main claim", "representative claim"],
     },
@@ -705,7 +707,9 @@ CONCEPTS = {
     },
     "legal_status": {
         "label": "법적상태", "dtype": "문자열 (등록/공개/거절/소멸 등)",
-        "variants": ["법적상태", "법적 상태", "행정상태", "행정처분", "legal status", "status",
+        "preferred": ["상태정보[KR,JP,US,EP,CN,CA,AU]"],  # 기본 매핑 (WIPS)
+        "variants": ["상태정보[KR,JP,US,EP,CN,CA,AU]", "상태정보",
+                     "법적상태", "법적 상태", "행정상태", "행정처분", "legal status", "status",
                      "current status", "법률상태", "법적상태정보", "현재상태", "최종상태",
                      "최종처분", "행정처분상태"],
     },
@@ -721,16 +725,18 @@ CONCEPTS = {
     },
     "cites_backward": {
         "label": "인용 수", "dtype": "정수 (선행문헌 인용 수)",
-        "preferred": ["인용 문헌수", "인용 문헌 수"],  # 기본 매핑
-        "variants": ["인용 수", "인용수", "인용문헌수", "인용 문헌 수", "인용 문헌수",
+        "preferred": ["인용 문헌 수(B1)", "인용 문헌수", "인용 문헌 수"],  # 기본 매핑
+        "variants": ["인용 문헌 수(B1)",
+                     "인용 수", "인용수", "인용문헌수", "인용 문헌 수", "인용 문헌수",
                      "backward citations",
                      "citing count", "cited references", "references cited", "인용특허수",
                      "backward citation count", "인용횟수"],
     },
     "cites_forward": {
         "label": "피인용 수", "dtype": "정수 (후행문헌에 의한 피인용 수)",
-        "preferred": ["피인용 문헌수", "피인용 문헌 수"],  # 기본 매핑
-        "variants": ["피인용 수", "피인용수", "피인용횟수", "피인용 문헌 수", "피인용 문헌수",
+        "preferred": ["피인용 문헌 수(F1)", "피인용 문헌수", "피인용 문헌 수"],  # 기본 매핑
+        "variants": ["피인용 문헌 수(F1)",
+                     "피인용 수", "피인용수", "피인용횟수", "피인용 문헌 수", "피인용 문헌수",
                      "forward citations",
                      "cited by count", "citation count", "forward citation count", "피인용특허수",
                      "cited by"],
@@ -747,7 +753,9 @@ CONCEPTS = {
     },
     "family_countries": {
         "label": "패밀리 국가 목록", "dtype": "문자열 (국가코드 목록: KR; US; JP)",
-        "variants": ["패밀리 국가 목록", "패밀리 국가", "패밀리국가", "family countries",
+        "preferred": ["WIPS패밀리 개별국 문헌 수(출원기준)"],  # 기본 매핑 (WIPS)
+        "variants": ["WIPS패밀리 개별국 문헌 수(출원기준)", "wips패밀리 개별국 문헌 수",
+                     "패밀리 국가 목록", "패밀리 국가", "패밀리국가", "family countries",
                      "family country list", "지정국", "designated states", "패밀리 국가(전체)",
                      "protection countries", "출원국가 목록"],
     },
@@ -893,7 +901,9 @@ CONCEPTS = {
     },
     "oa_count": {
         "label": "거절이유통지(OA) 횟수", "dtype": "숫자",
-        "variants": ["거절이유통지 횟수", "oa 횟수", "oa횟수", "의견제출통지 횟수",
+        "preferred": ["거절서류발행 횟수[KR]"],  # 기본 매핑 (WIPS)
+        "variants": ["거절서류발행 횟수[KR]", "거절서류발행 횟수",
+                     "거절이유통지 횟수", "oa 횟수", "oa횟수", "의견제출통지 횟수",
                      "중간사건 수", "office action count", "거절이유 횟수", "oa 건수"],
     },
     "examiner_citations": {
@@ -980,7 +990,7 @@ ANALYSIS_REQUIREMENTS = {
     "emerging-combinations": {"required": [{"any": ANY_TECH}, {"any": ANY_DATE}], "optional": ANY_APPLICANT + ["is_active", "legal_status"]},
     "lifecycle":             {"required": [{"any": ANY_TECH}, {"any": ANY_DATE}], "optional": ANY_APPLICANT + ["is_active", "legal_status", "cites_forward"]},
     "opportunity":           {"required": [{"any": ANY_TECH}, {"any": ANY_DATE}], "optional": ANY_APPLICANT + ["legal_status", "is_active", "problem", "product", "process", "family_country_count", "expiry_date", "is_own"]},
-    "problem-solution":      {"required": ["problem", "solution"], "optional": [{"any": ANY_DATE}] + ANY_APPLICANT + ["indep_claim", "is_active", "legal_status"]},
+    "problem-solution":      {"required": [{"any": ["tech_c_l1", "tech_c_l2", "tech_c_l3"]}, {"any": ["tech_b_l1", "tech_b_l2", "tech_b_l3"]}], "optional": [{"any": ANY_DATE}] + ANY_APPLICANT + ["problem", "solution", "indep_claim", "is_active", "legal_status"]},
     "technology-transition": {"required": [{"any": ANY_TECH}, {"any": ANY_DATE}], "optional": ["family_id"] + ANY_APPLICANT},
     "trajectory":            {"required": [{"any": ANY_TECH}, {"any": ANY_DATE}, {"any": ANY_APPLICANT}], "optional": ["family_id", "is_active"]},
     "company-dna":           {"required": [{"any": ANY_TECH}, {"any": ANY_DATE}, {"any": ANY_APPLICANT}], "optional": ["family_size", "family_country_count", "cites_forward", "legal_status", "inventors", "family_id"]},
@@ -4165,6 +4175,14 @@ def bubble_chart(points, x_title, y_title, title=None, quadrants=None,
     return {"data": [trace], "layout": layout}
 
 
+# Plotly.js 에 내장되지 않은 명명 색상표(RdYlGn/Purples/OrRd/Turbo 등)를 이름으로
+# 넘기면 기본 색상표(파랑=낮음 → 빨강=높음)로 대체 렌더링되어 색 해석이 뒤집힌다.
+# (예: 개시 충실도 z=+1 이 빨강으로 보이는 문제) → 명시적 색 배열로 정의해 사용.
+RDYLGN = [[0.0, "#E15759"], [0.5, "#F1CE63"], [1.0, "#59A14F"]]  # 낮음=빨강, 높음=초록
+PURPLES = [[0.0, "#f6f2fa"], [1.0, "#59489C"]]
+ORRD = [[0.0, "#fff3e0"], [1.0, "#d7301f"]]
+
+
 def heatmap(z, x_labels, y_labels, title=None, colorscale="YlOrRd", hovertext=None,
             colorbar_title=None, zmid=None):
     """Plotly 히트맵 payload. 셀 수가 LIMITS 초과인 경우 호출부에서 ECharts 로 전환.
@@ -4731,11 +4749,20 @@ def select_patents(df, drill):
     if drill.get("year") not in (None, ""):
         mask &= df["_base_year"] == float(drill["year"])
     if dtype == "cell":
+        # PS 매트릭스는 C축(해결과제)×B축(해결수단) 기반 — 축 리스트 포함 매칭 우선,
+        # 축이 없으면 구버전 텍스트 컬럼 매칭으로 폴백
         p, s = drill.get("problem"), drill.get("solution")
-        if p and "problem" in df.columns:
-            mask &= df["problem"].astype(str).str.strip() == str(p)
-        if s and "solution" in df.columns:
-            mask &= df["solution"].astype(str).str.strip() == str(s)
+        use_axes = "_tech_c_list" in df.columns and "_tech_b_list" in df.columns
+        if p:
+            if use_axes:
+                mask &= df["_tech_c_list"].map(lambda lst: str(p) in (lst or []))
+            elif "problem" in df.columns:
+                mask &= df["problem"].astype(str).str.strip() == str(p)
+        if s:
+            if use_axes:
+                mask &= df["_tech_b_list"].map(lambda lst: str(s) in (lst or []))
+            elif "solution" in df.columns:
+                mask &= df["solution"].astype(str).str.strip() == str(s)
     if dtype == "axis_cell":  # A/B/C 분류축 교차 셀: 각 축의 값 동시 포함
         axis_cols = {"A": "_tech_list", "B": "_tech_b_list", "C": "_tech_c_list"}
         for cond in (drill.get("conds") or []):
@@ -4750,6 +4777,13 @@ def select_patents(df, drill):
         if drill.get("solutions") and "solution" in df.columns:
             wanted_s = set(map(str, drill["solutions"]))
             mask &= df["solution"].astype(str).str.strip().isin(wanted_s)
+    if drill.get("gov_program") and "gov_program" in df.columns:
+        mask &= df["gov_program"].astype(str).str.strip() == \
+            str(drill["gov_program"]).strip()
+    if drill.get("gov_linked") is not None and "gov_program" in df.columns:
+        prog = df["gov_program"].astype(str).str.strip()
+        linked = ~prog.str.lower().isin(["", "nan", "none", "-"])
+        mask &= linked if drill["gov_linked"] else ~linked
     if drill.get("inventor") and "_inventor_list" in df.columns:
         inv = str(drill["inventor"])
         mask &= df["_inventor_list"].map(lambda lst: inv in (lst or []))
@@ -5962,7 +5996,7 @@ def compute_opportunity(df, settings):
                 "customdata": [p["customdata"] for p in pts],
                 "marker": {"symbol": symbol, "size": sizes, "sizemode": "area",
                            "sizeref": 2.0 * smax / (40 ** 2), "sizemin": 5,
-                           "color": [p["color"] for p in pts], "colorscale": "RdYlGn",
+                           "color": [p["color"] for p in pts], "colorscale": RDYLGN,
                            "reversescale": True, "showscale": symbol == "circle",
                            "colorbar": {"title": "권리장벽", "thickness": 12},
                            "line": {"width": 2 if symbol != "circle" else 1,
@@ -6026,8 +6060,9 @@ analyses/problem_solution.py — 문제–해결수단 매트릭스 (1단계).
 분석 목적:
   해결과제(행) × 해결수단(열) 매트릭스로 R&D 접근 조합의 밀집/공백을 파악한다.
 
-필수 컬럼: 해결과제, 해결수단 — 없으면 분석 비활성화 + 텍스트 추출 모듈 연결
-  인터페이스 안내만 제공 (임의 추출 결과 생성 금지).
+필수 컬럼: C축 기술분류(=해결과제), B축 기술분류(=해결수단) — 두 축이 모두
+  매핑된 경우에만 매트릭스를 그린다 (임의 추출 결과 생성 금지). 의미 그룹
+  모드(compute_ps_semantic)는 해결과제·해결수단 텍스트 컬럼 기반으로 별도 동작.
 선택 컬럼: 날짜(성장률), 출원인(상위 출원인), 독립청구항(대표 청구항), 유효특허 여부
 
 계산식:
@@ -6051,25 +6086,41 @@ def _clean_text_series(s):
     return out.where(~out.str.lower().isin(["nan", "none", ""]), other=None)
 
 
-def compute_problem_solution(df, settings):
-    """문제–해결수단 매트릭스 계산."""
-    missing = [label for col, label in (("problem", "해결과제"), ("solution", "해결수단"))
-               if col not in df.columns]
-    if missing:
-        return disabled_result(
-            missing,
-            message=("필수 컬럼(%s)이 없어 문제–해결수단 매트릭스를 사용할 수 없습니다. "
-                     "사전 추출 결과 컬럼을 매핑하거나, 텍스트 추출 모듈(요약/청구항 → "
-                     "해결과제·해결수단)을 연결한 뒤 결과 컬럼을 매핑하세요. "
-                     "임의 추출은 수행하지 않습니다." % ", ".join(missing)))
-    if not len(df):
-        return empty_result()
+_BC_DISABLED_MSG = ("문제–해결수단 매트릭스는 C축(해결과제)과 B축(해결수단) 기술분류가 "
+                    "모두 매핑된 경우에만 그립니다. Settings → 컬럼 매핑에서 "
+                    "'기술분류 (C축)'에 해결과제 분류를, '기술분류 (B축)'에 해결수단 "
+                    "분류를 매핑하세요. (요약·청구항 텍스트에서 임의 추출하지 않습니다.)")
+
+
+def _bc_frame(df):
+    """C축(해결과제)×B축(해결수단) → (problem, solution) 스칼라 프레임.
+
+    다중값은 explode 로 조합별 1행씩 계산한다 (다중분류 duplicate 방식과 동일).
+    두 축 중 하나라도 없거나 값이 비면 None 반환.
+    """
+    if "_tech_c_list" not in df.columns or "_tech_b_list" not in df.columns:
+        return None
     work = df.copy()
+    work["problem"] = df["_tech_c_list"].map(lambda v: list(v or []) or None)
+    work["solution"] = df["_tech_b_list"].map(lambda v: list(v or []) or None)
+    work = work[work["problem"].notna() & work["solution"].notna()]
+    if not len(work):
+        return None
+    work = work.explode("problem").explode("solution")
     work["problem"] = _clean_text_series(work["problem"])
     work["solution"] = _clean_text_series(work["solution"])
     work = work[work["problem"].notna() & work["solution"].notna()]
-    if not len(work):
-        return empty_result("해결과제·해결수단 값이 있는 특허가 없습니다.")
+    return work if len(work) else None
+
+
+def compute_problem_solution(df, settings):
+    """문제–해결수단 매트릭스 계산 — C축(해결과제)×B축(해결수단) 분류 기반."""
+    if not len(df):
+        return empty_result()
+    work = _bc_frame(df)
+    if work is None:
+        return disabled_result(["기술분류 (C축)=해결과제", "기술분류 (B축)=해결수단"],
+                               message=_BC_DISABLED_MSG)
 
     max_rows = get_limit(settings, "matrix_max_rows")
     max_cols = get_limit(settings, "matrix_max_cols")
@@ -6150,9 +6201,9 @@ def compute_problem_solution(df, settings):
         fig["layout"]["height"] = max(460, 140 + 26 * len(top_problems))
         # 축 제목 명시 — 화면 판독 + Excel 다운로드 시 행/열 의미 식별용
         fig["layout"]["xaxis"].update({"tickfont": {"size": 10}, "tickangle": -35,
-                                       "title": {"text": "해결수단", "standoff": 6}})
+                                       "title": {"text": "해결수단 (B축 분류)", "standoff": 6}})
         fig["layout"]["yaxis"].update({"tickfont": {"size": 10},
-                                       "title": {"text": "해결과제", "standoff": 6}})
+                                       "title": {"text": "해결과제 (C축 분류)", "standoff": 6}})
         fig["layout"]["margin"] = {"l": 150, "r": 30, "t": 48, "b": 110}
 
     zeros = int(sum(1 for row in z_counts for v in row if v == 0))
@@ -6191,11 +6242,21 @@ def compute_problem_solution(df, settings):
 
 
 def cell_detail(df, settings, problem, solution):
-    """셀 클릭 패널 데이터: 연도별 추이·상위 출원인·대표 청구항·유효비율·인사이트."""
-    if "problem" not in df.columns or "solution" not in df.columns:
-        return disabled_result(["해결과제", "해결수단"])
-    cell = df[(df["problem"].astype(str).str.strip() == str(problem))
-              & (df["solution"].astype(str).str.strip() == str(solution))]
+    """셀 클릭 패널 데이터: 연도별 추이·상위 출원인·대표 청구항·유효비율·인사이트.
+
+    매트릭스가 C축(해결과제)×B축(해결수단) 기반이므로 셀 매칭도 축 리스트
+    포함 여부로 판단한다 (축이 없으면 구버전 텍스트 컬럼으로 폴백).
+    """
+    p, s = str(problem).strip(), str(solution).strip()
+    if "_tech_c_list" in df.columns and "_tech_b_list" in df.columns:
+        cell = df[df["_tech_c_list"].map(lambda lst: p in (lst or []))
+                  & df["_tech_b_list"].map(lambda lst: s in (lst or []))]
+    elif "problem" in df.columns and "solution" in df.columns:
+        cell = df[(df["problem"].astype(str).str.strip() == p)
+                  & (df["solution"].astype(str).str.strip() == s)]
+    else:
+        return disabled_result(["기술분류 (C축)=해결과제", "기술분류 (B축)=해결수단"],
+                               message=_BC_DISABLED_MSG)
     if not len(cell):
         return empty_result("해당 조합의 특허가 없습니다.")
     years = cell["_base_year"].dropna().astype(int)
@@ -6948,7 +7009,7 @@ def compute_company_dna(df, settings, companies=None):
 
     parcoords = {"data": [{
         "type": "parcoords",
-        "line": {"color": list(range(len(companies_payload))), "colorscale": "Turbo"},
+        "line": {"color": list(range(len(companies_payload))), "colorscale": "Portland"},
         "dimensions": [{"label": label, "values": [p["std"][k] for p in companies_payload],
                         "range": [0, 1]} for k, label in DNA_METRICS],
     }], "layout": {"margin": {"l": 80, "r": 60, "t": 40, "b": 30},
@@ -6977,7 +7038,7 @@ def compute_company_dna(df, settings, companies=None):
                              colorscale="Blues", colorbar_title="유사도")
         overlap_matrix = heatmap(ov_z, available, available,
                                  title="포트폴리오 중첩도 (활동 분류 Jaccard, 0~1 · 1=완전 중첩)",
-                                 colorscale="Purples", colorbar_title="중첩도")
+                                 colorscale=PURPLES, colorbar_title="중첩도")
         for fig_ in (sim_matrix, overlap_matrix):
             fig_["layout"]["xaxis"]["title"] = "기업"
             fig_["layout"]["yaxis"]["title"] = "기업"
@@ -8238,11 +8299,82 @@ def compute_basic_stats(df, settings):
                             if kpi["active_rate"] is not None else ""))
     insight = build_insight(sentences, metrics,
                             small_sample=check_small_sample(len(df), settings))
+
+    # 차트별 인사이트 — 각 차트 바로 아래에 분리 표시 (차트가 없으면 생략)
+    chart_insights = {}
+    if len(total_s):
+        chart_insights["annual"] = [
+            "최다 출원 연도는 %s년(%s건)이고 최근 %d년 성장률은 %s입니다."
+            % (kpi["peak_year"], fmt_num(total_s.max()), recent,
+               fmt_pct(kpi["growth"]) if kpi["growth"] is not None else "계산 불가"),
+            "최근 1~2년 하락은 미공개 출원(공개 전) 영향일 수 있어 하락으로 단정할 수 "
+            "없습니다."]
+    if fig_country is not None:
+        c_counts = df["country"].astype(str).str.strip().str.upper() \
+            .replace("", np.nan).replace("NAN", np.nan).dropna().value_counts()
+        c_top3 = float(c_counts.head(3).sum()) / float(c_counts.sum())
+        chart_insights["country"] = [
+            "출원 1위 국가는 %s(%s건, %s)이며 상위 3개국이 전체의 %s를 차지합니다 — "
+            "권리 확보가 집중된 시장입니다."
+            % (c_counts.index[0], fmt_num(c_counts.iloc[0]),
+               fmt_pct(c_counts.iloc[0] / float(c_counts.sum())), fmt_pct(c_top3))]
+    if len(app_counts):
+        cr3 = float(app_counts.head(3).sum()) / float(len(df))
+        chart_insights["applicants"] = [
+            "출원인 1위는 '%s'(%s건, 점유율 %s)이고 상위 3개사 집중도(CR3)는 %s입니다%s."
+            % (app_counts.index[0], fmt_num(app_counts.iloc[0]),
+               fmt_pct(app_counts.iloc[0] / float(len(df))), fmt_pct(cr3),
+               " — 소수 기업 주도 시장" if cr3 >= 0.5 else " — 경쟁이 분산된 시장")]
+        recent_hi = int(years_all.max()) - recent + 1
+        rec_counts = df[df["_base_year"] >= recent_hi]["applicant_display"] \
+            .replace("", np.nan).dropna().value_counts()
+        bub_sents = []
+        max_cell = None
+        for a in app_counts.head(max_rows).index:
+            s = _year_series(df, df["applicant_display"] == a)
+            if len(s) and (max_cell is None or float(s.max()) > max_cell[2]):
+                max_cell = (str(a), int(s.idxmax()), float(s.max()))
+        if max_cell:
+            bub_sents.append("가장 큰 버블(최대 집중)은 '%s'의 %d년(%s건)입니다."
+                             % (max_cell[0], max_cell[1], fmt_num(max_cell[2])))
+        if len(rec_counts):
+            bub_sents.append("최근 %d년 가장 활발한 출원인은 '%s'(%s건)입니다 — 줄이 "
+                             "이어지는 기업=꾸준한 투자, 최근 버블이 사라진 기업=투자 "
+                             "축소 신호입니다." % (recent, rec_counts.index[0],
+                                             fmt_num(rec_counts.iloc[0])))
+        if bub_sents:
+            chart_insights["applicant_year_bubble"] = bub_sents
+            chart_insights["applicant_year"] = [bub_sents[0] +
+                                                " (버블 차트와 같은 데이터의 히트맵 보기입니다.)"]
+    if fig_tech is not None:
+        t_counts = tech_flat.value_counts()
+        chart_insights["tech"] = [
+            "최다 기술분류는 '%s'(%s건, %s)로 포트폴리오가 가장 집중된 기술입니다."
+            % (t_counts.index[0], fmt_num(t_counts.iloc[0]),
+               fmt_pct(t_counts.iloc[0] / float(max(len(df), 1))))]
+        recent_hi = int(years_all.max()) - recent + 1
+        grow_best, grow_val = None, None
+        for t in t_counts.head(max_rows).index:
+            in_tech = df["_tech_list"].map(lambda lst: t in (lst or []))
+            s = _year_series(df, in_tech)
+            rec_n = float(s[s.index >= recent_hi].sum())
+            old_n = float(s[s.index < recent_hi].sum())
+            if old_n >= 3:
+                ratio = rec_n / old_n
+                if grow_val is None or ratio > grow_val:
+                    grow_best, grow_val = str(t), ratio
+        if grow_best is not None:
+            chart_insights["tech_year"] = [
+                "최근 %d년 비중이 가장 커진 분류는 '%s'(최근/이전 비율 %.2f)입니다 — "
+                "오른쪽(최근)으로 갈수록 진해지는 행이 성장 기술입니다."
+                % (recent, grow_best, grow_val)]
+
     return ok_result({
         "kpi": kpi, "annual": fig_annual, "country": fig_country,
         "applicants": fig_applicants, "applicant_year": fig_app_year,
         "applicant_year_bubble": fig_app_bubble,
         "tech": fig_tech, "tech_year": fig_tech_year,
+        "chart_insights": chart_insights,
     }, insight=insight)
 
 
@@ -8578,7 +8710,7 @@ def compute_portfolio_index(df, settings):
         "marker": {"size": sizes, "sizemode": "area",
                    "sizeref": 2.0 * smax / (42 ** 2), "sizemin": 6,
                    "color": [r["growth"] if r["growth"] is not None else 0 for r in shown],
-                   "colorscale": "RdYlGn", "showscale": True,
+                   "colorscale": RDYLGN, "showscale": True,
                    "colorbar": {"title": "최근 성장률", "thickness": 12},
                    "line": {"width": 1, "color": "#333"}, "opacity": 0.85},
     }], "layout": base_layout(
@@ -9612,7 +9744,7 @@ def compute_combo_upset(df, settings):
     traces = [{
         "type": "bar", "x": xs, "y": bar_y, "name": "특허 수",
         "hovertext": hovers, "hoverinfo": "text", "customdata": customs,
-        "marker": {"color": bar_colors, "colorscale": "RdYlGn", "cmin": 0, "cmax": 1,
+        "marker": {"color": bar_colors, "colorscale": RDYLGN, "cmin": 0, "cmax": 1,
                    "colorbar": {"title": "유효특허 비율", "thickness": 12, "y": 0.8,
                                 "len": 0.45},
                    "line": {"width": bar_lines, "color": "#1a2733"}},
@@ -10736,7 +10868,7 @@ def _agent_section(df, settings):
         hover.append(row_h)
     fig = heatmap(z, [str(y) for y in years], top_comps,
                   title="기업×연도 신규 대리인 비중 (그 해 처음 쓰는 대리인의 출원 비중)",
-                  colorscale="Purples", hovertext=hover, colorbar_title="신규 비중")
+                  colorscale=PURPLES, hovertext=hover, colorbar_title="신규 비중")
     signals.sort(key=lambda s: (-s["year"], -s["share"]))
     return {"fig": fig, "signals": signals[:15],
             "n_agents": int(sub["_agent"].nunique())}, None
@@ -10844,7 +10976,7 @@ def _expedited_section(df, settings):
                      "hovertext": pts["hover"], "hoverinfo": "text",
                      "customdata": pts["custom"],
                      "marker": {"size": pts["size"], "color": pts["color"],
-                                "colorscale": "OrRd", "cmin": 0, "cmax": 1,
+                                "colorscale": ORRD, "cmin": 0, "cmax": 1,
                                 "colorbar": {"title": "우선심사 비율",
                                              "thickness": 12},
                                 "line": {"width": 0.5, "color": "#666"}}}],
@@ -11041,7 +11173,7 @@ def _disclosure_section(df, settings):
         hover.append(row_h)
     fig = heatmap(z_rows, [str(t)[:18] for t in top_techs], top_comps,
                   title="개시 충실도 — 기업×기술분류 평균 도면 수 (분류 내 z-score)",
-                  colorscale="RdYlGn", hovertext=hover, colorbar_title="z", zmid=0)
+                  colorscale=RDYLGN, hovertext=hover, colorbar_title="z", zmid=0)
     fig_scatter = None
     if "claims_count" in sub.columns and sub["claims_count"].notna().any():
         s2 = sub[sub["claims_count"].notna()]
@@ -11223,9 +11355,13 @@ def _gov_program_section(df, settings):
     fig_prog = bar_chart(
         [str(p)[:34] for p in top_progs.index][::-1],
         [int(v) for v in top_progs.values][::-1],
-        title="국가연구 과제별 특허 산출 — 어떤 국책과제가 특허를 만들고 있나",
+        title="국가연구 과제별 특허 산출 — 어떤 국책과제가 특허를 만들고 있나 "
+              "(막대 클릭 → 해당 과제 특허 목록·Excel 다운로드)",
         orientation="h", x_title="특허 수",
-        hovertext=[str(p) for p in top_progs.index][::-1])
+        hovertext=["%s — %d건 (클릭 시 특허 목록)" % (p, v)
+                   for p, v in top_progs.items()][::-1],
+        customdata=[{"drill": {"gov_program": str(p)}}
+                    for p in top_progs.index][::-1])
 
     # 기업별 정부과제 연계율
     fig_comp = None
@@ -11298,12 +11434,19 @@ _SECTIONS = (("survival", _survival_section), ("market_entry", _market_entry_sec
              ("trial", _trial_section), ("gov_program", _gov_program_section))
 
 
-def compute_wips_deep(df, settings):
-    """심층 시그널 9종 계산 (섹션별 graceful degradation)."""
+def compute_wips_deep(df, settings, only_sections=None):
+    """심층 시그널 계산 (섹션별 graceful degradation).
+
+    only_sections: 계산할 섹션 키 목록 — 지정 시 해당 섹션만 계산하고
+    인사이트 문장도 그 범위로 한정된다 (탭 분할 렌더링용). None=전체.
+    """
     if not len(df):
         return empty_result()
+    wanted = set(only_sections) if only_sections else None
     sections, skipped = {}, []
     for key, fn in _SECTIONS:
+        if wanted is not None and key not in wanted:
+            continue
         try:
             result, reason = fn(df, settings)
         except Exception as e:  # 개별 섹션 오류가 전체를 막지 않도록
@@ -12616,7 +12759,10 @@ def register_routes(app):
                                                         threshold=b.get("threshold")),
             extra_key_fields=("threshold",)),
         "wips-deep": _analysis_route(
-            "wips-deep", lambda df, s, b: compute_wips_deep(df, s)),
+            "wips-deep",
+            lambda df, s, b: compute_wips_deep(df, s,
+                                               only_sections=b.get("sections")),
+            extra_key_fields=("sections",)),
         "executive-summary": _analysis_route(
             "executive-summary",
             lambda df, s, b: compute_executive_summary(df, s,
