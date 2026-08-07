@@ -3052,6 +3052,7 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
       '<li><b>🤖 AI 인사이트</b>: "LLM 인사이트 생성" 버튼은 화면 차트의 실제 수치를 근거로 PPT 슬라이드 형식([슬라이드 제목]→[핵심 메시지]→[근거 데이터]→[시사점·제언])의 정리된 인사이트를 만듭니다. AI 패널에서는 추가 질문(챗)이 가능하고 "웹 검색 포함"을 켜면 외부 검색 결과를 참고해 답하며 출처 링크가 표시됩니다.</li>' +
       '<li><b>🗂️ 인사이트 보관함</b>: LLM 이 생성한 인사이트는 자동 저장되어 좌측 "인사이트 보관함" 메뉴에서 계속 볼 수 있고, 원하는 항목을 골라 PPT 보고서(.pptx)로 다운로드할 수 있습니다.</li>' +
       '<li><b>💾 분석 스냅샷</b>: Settings 의 "분석 스냅샷" 카드(또는 상단 헤더 저장 버튼)로 현재 분석 상태(Dataset·필터·분석 단위·보던 화면)를 이름 붙여 저장하고, 목록이나 헤더 드롭다운에서 선택해 그대로 복원할 수 있습니다. 데이터가 그대로면 결과는 서버 캐시에서 즉시 열립니다.</li>' +
+      '<li><b>👤 내 작업만 보기</b>: 업로드 작업 목록과 분석 스냅샷 목록에서 작업자 이름/팀명을 입력하면 내가 한 작업만 날짜별로 묶여 표시되고, 그중에서 선택해 불러올 수 있습니다. 입력한 이름은 브라우저에 기억되어 다음 방문 때 자동 적용되며, "전체 보기"를 켜면 다른 사람 작업도 볼 수 있습니다.</li>' +
       '<li><b>비차단 로딩</b>: 계산이 오래 걸리는 분석은 우하단 배지로 진행 상태만 표시됩니다 — 기다리는 동안 다른 탭을 자유롭게 볼 수 있고, 돌아오면 캐시에서 바로 열립니다.</li>' +
       '<li><b>📖 차트 해석</b>: 각 차트 아래 회색 박스에 축 의미와 읽는 법이 항상 표시됩니다.</li></ul>');
     section('🧠 임베딩·군집·LLM 안내',
@@ -3080,7 +3081,8 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
     var cu = card('📤 엑셀 업로드 (작업 저장소)',
       'WIPS Excel(xlsx/xls/csv)을 앱에서 직접 올려 바로 분석합니다. 작업자 이름과 작업명은 필수이며, ' +
       '업로드한 파일은 서버 저장소에 보관되어 아래 목록에서 언제든 다시 불러올 수 있습니다 ' +
-      '(Backend 재시작 후에도 유지). 파일 60MB · 60,000행 이하, 첫 시트만 사용합니다.');
+      '(Backend 재시작 후에도 유지). 파일 60MB · 60,000행 이하, 첫 시트만 사용합니다. ' +
+      '아래 "내 작업 보기"에 이름/팀명을 입력하면 내가 올린 작업만 날짜별로 표시됩니다.');
     grid.appendChild(cu.root);
     var upForm = Ui.el('<div>' +
       '<div class="settings-row"><label>작업자 이름 *</label>' +
@@ -3093,8 +3095,17 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
     cu.body.appendChild(upForm);
     var upBtn = Ui.el('<button class="btn small primary">업로드 → 저장하고 분석 시작</button>');
     cu.body.appendChild(upBtn);
-    var listWrap = Ui.el('<div style="margin-top:12px"></div>');
+    var upFilt = Ui.el('<div class="settings-row" style="margin-top:12px">' +
+      '<label>내 작업 보기</label>' +
+      '<input type="text" id="up-filter" maxlength="60" ' +
+      'placeholder="작업자 이름/팀명 입력 → 내 작업만 날짜별 표시" style="flex:1">' +
+      '<label style="display:flex;align-items:center;gap:4px;font-size:12px;white-space:nowrap;cursor:pointer">' +
+      '<input type="checkbox" id="up-showall">전체 보기</label></div>');
+    cu.body.appendChild(upFilt);
+    var listWrap = Ui.el('<div style="margin-top:8px"></div>');
     cu.body.appendChild(listWrap);
+    upForm.querySelector('#up-worker').value = getWorkerName();
+    upFilt.querySelector('#up-filter').value = getWorkerName();
 
     function useDataset(name) {
       return Api.post('/api/settings', { dataset: name }).then(function (resp) {
@@ -3104,18 +3115,44 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
       }).catch(errToast);
     }
 
-    function renderUploads() {
-      Api.get('/api/uploads').then(function (d) {
-        listWrap.innerHTML = '';
-        var items = d.items || [];
-        listWrap.appendChild(Ui.el('<div style="font-weight:700;font-size:12.5px;margin-bottom:4px">' +
-          '💾 저장된 업로드 작업 (' + items.length + ')</div>'));
-        if (!items.length) {
-          listWrap.appendChild(Ui.el('<div class="status-empty">저장된 작업이 없습니다.</div>'));
-          return;
+    var upItems = [];
+    function renderUploadList() {
+      listWrap.innerHTML = '';
+      var q = upFilt.querySelector('#up-filter').value.trim();
+      var showAll = upFilt.querySelector('#up-showall').checked;
+      var filtered = (showAll || !q) ? upItems
+        : upItems.filter(function (it) { return workerMatches(it.worker, q); });
+      var head = (showAll || !q)
+        ? '💾 저장된 업로드 작업 — 전체 ' + upItems.length + '건'
+        : '💾 "' + Ui.esc(q) + '" 작업 ' + filtered.length + '건 / 전체 ' + upItems.length + '건';
+      listWrap.appendChild(Ui.el('<div style="font-weight:700;font-size:12.5px;margin-bottom:4px">' +
+        head + '</div>'));
+      if (!filtered.length) {
+        listWrap.appendChild(Ui.el('<div class="status-empty">' +
+          (upItems.length && q && !showAll
+            ? '"' + Ui.esc(q) + '" 작업자/팀의 저장된 작업이 없습니다. ' +
+              '"전체 보기"를 켜면 다른 작업자의 작업도 볼 수 있습니다.'
+            : '저장된 작업이 없습니다.') + '</div>'));
+        return;
+      }
+      var sorted = filtered.slice().sort(function (a, b) {
+        return String(b.uploaded_at || '').localeCompare(String(a.uploaded_at || ''));
+      });
+      var lastDate = null;
+      var rows = [];
+      sorted.forEach(function (it) {
+        var dstr = String(it.uploaded_at || '').slice(0, 10) || '날짜 미상';
+        if (dstr !== lastDate) {
+          lastDate = dstr;
+          var nDay = sorted.filter(function (x) {
+            return (String(x.uploaded_at || '').slice(0, 10) || '날짜 미상') === dstr;
+          }).length;
+          var sep = document.createElement('tr');
+          sep.innerHTML = '<td colspan="6" style="background:#eef5fa;font-weight:700;' +
+            'font-size:11.5px;color:#4a6274">📅 ' + Ui.esc(dstr) + ' (' + nDay + '건)</td>';
+          rows.push(sep);
         }
-        var rows = items.map(function (it) {
-          var tr = document.createElement('tr');
+        var tr = document.createElement('tr');
           tr.insertAdjacentHTML('beforeend',
             '<td><b>' + Ui.esc(it.job) + '</b><br><span style="color:#93a5b4;font-size:10.5px">' +
             Ui.esc(it.orig_filename) + '</span></td>' +
@@ -3144,21 +3181,33 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
           });
           tdAct.appendChild(delBtn);
           tr.appendChild(tdAct);
-          return tr;
+          rows.push(tr);
         });
-        var tbl = Ui.el(simpleTable(['작업명 / 파일', '작업자', '업로드 시각', '행수', '상태', ''], []));
-        rows.forEach(function (tr) { tbl.querySelector('tbody').appendChild(tr); });
-        var wrap = Ui.el('<div style="overflow-x:auto;max-height:280px;overflow-y:auto"></div>');
-        wrap.appendChild(tbl);
-        listWrap.appendChild(wrap);
+      var tbl = Ui.el(simpleTable(['작업명 / 파일', '작업자', '업로드 시각', '행수', '상태', ''], []));
+      rows.forEach(function (tr) { tbl.querySelector('tbody').appendChild(tr); });
+      var wrap = Ui.el('<div style="overflow-x:auto;max-height:280px;overflow-y:auto"></div>');
+      wrap.appendChild(tbl);
+      listWrap.appendChild(wrap);
+    }
+    function renderUploads() {
+      Api.get('/api/uploads').then(function (d) {
+        upItems = d.items || [];
+        renderUploadList();
       }).catch(errToast);
     }
+    upFilt.querySelector('#up-filter').addEventListener('input', function (ev) {
+      setWorkerName(ev.target.value);
+      renderUploadList();
+    });
+    upFilt.querySelector('#up-showall').addEventListener('change', renderUploadList);
     upBtn.addEventListener('click', function () {
       var worker = document.getElementById('up-worker').value.trim();
       var job = document.getElementById('up-job').value.trim();
       var fileEl = document.getElementById('up-file');
       if (!worker || !job) { Ui.toast('작업자 이름과 작업명을 반드시 입력하세요.', 'error'); return; }
       if (!fileEl.files || !fileEl.files[0]) { Ui.toast('엑셀 파일을 선택하세요.', 'error'); return; }
+      setWorkerName(worker);
+      upFilt.querySelector('#up-filter').value = worker;
       var fd = new FormData();
       fd.append('file', fileEl.files[0]);
       fd.append('worker', worker);
@@ -3177,7 +3226,8 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
     var cs = card('💾 분석 스냅샷 — 기존 분석 결과 불러오기',
       '현재 분석 상태(Dataset·필터·분석 단위·보고 있던 화면)를 이름을 붙여 저장하고, 목록에서 ' +
       '선택해 그대로 복원합니다. 데이터가 바뀌지 않았다면 분석 결과는 서버 캐시에서 즉시 열립니다. ' +
-      '상단 헤더의 "저장된 분석…" 드롭다운에서도 바로 불러올 수 있습니다.');
+      '저장 시 위 "내 작업 보기"에 입력한 작업자/팀명이 함께 기록되어, 내가 저장한 스냅샷만 ' +
+      '날짜별로 골라볼 수 있습니다. 상단 헤더의 "저장된 분석…" 드롭다운에서도 바로 불러올 수 있습니다.');
     grid.appendChild(cs.root);
     var snapForm = Ui.el('<div class="settings-row">' +
       '<input type="text" id="snap-name" maxlength="60" placeholder="스냅샷 이름 *" style="flex:1">' +
@@ -3185,50 +3235,97 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
     cs.body.appendChild(snapForm);
     var snapSave = Ui.el('<button class="btn small primary">현재 분석 상태 저장</button>');
     cs.body.appendChild(snapSave);
-    var snapList = Ui.el('<div style="margin-top:10px"></div>');
+    var snapFilt = Ui.el('<div class="settings-row" style="margin-top:10px">' +
+      '<label>내 스냅샷 보기</label>' +
+      '<input type="text" id="snap-filter" maxlength="60" ' +
+      'placeholder="작업자 이름/팀명 입력 → 내 스냅샷만 날짜별 표시" style="flex:1">' +
+      '<label style="display:flex;align-items:center;gap:4px;font-size:12px;white-space:nowrap;cursor:pointer">' +
+      '<input type="checkbox" id="snap-showall">전체 보기</label></div>');
+    cs.body.appendChild(snapFilt);
+    var snapList = Ui.el('<div style="margin-top:8px"></div>');
     cs.body.appendChild(snapList);
+    snapFilt.querySelector('#snap-filter').value = getWorkerName();
+
+    var snapItems = [];
+    function renderSnapList() {
+      snapList.innerHTML = '';
+      var q = snapFilt.querySelector('#snap-filter').value.trim();
+      var showAll = snapFilt.querySelector('#snap-showall').checked;
+      if (!snapItems.length) {
+        snapList.innerHTML = '<div class="status-empty">저장된 분석 스냅샷이 없습니다.</div>';
+        return;
+      }
+      var filtered = (showAll || !q) ? snapItems
+        : snapItems.filter(function (p) { return workerMatches(p.worker, q); });
+      if (!filtered.length) {
+        var nOld = snapItems.filter(function (p) { return !String(p.worker || '').trim(); }).length;
+        snapList.innerHTML = '<div class="status-empty">"' + Ui.esc(q) +
+          '" 작업자/팀의 스냅샷이 없습니다.' +
+          (nOld ? ' 작업자 미지정(예전에 저장된) 스냅샷 ' + nOld +
+            '건은 "전체 보기"에서 확인할 수 있습니다.' : '') + '</div>';
+        return;
+      }
+      var sorted = filtered.slice().sort(function (a, b) {
+        return String(b.saved_at || '').localeCompare(String(a.saved_at || ''));
+      });
+      var rows = [];
+      var lastDate = null;
+      sorted.forEach(function (p) {
+        var dstr = String(p.saved_at || '').slice(0, 10) || '날짜 미상';
+        if (dstr !== lastDate) {
+          lastDate = dstr;
+          var nDay = sorted.filter(function (x) {
+            return (String(x.saved_at || '').slice(0, 10) || '날짜 미상') === dstr;
+          }).length;
+          var sep = document.createElement('tr');
+          sep.innerHTML = '<td colspan="5" style="background:#eef5fa;font-weight:700;' +
+            'font-size:11.5px;color:#4a6274">📅 ' + Ui.esc(dstr) + ' (' + nDay + '건)</td>';
+          rows.push(sep);
+        }
+        var tr = document.createElement('tr');
+        var td0 = document.createElement('td');
+        var b = Ui.el('<span class="clickable"><b>' + Ui.esc(p.name) + '</b></span>');
+        b.addEventListener('click', function () { loadSnapshot(p.name).catch(errToast); });
+        td0.appendChild(b);
+        tr.appendChild(td0);
+        tr.insertAdjacentHTML('beforeend',
+          '<td>' + Ui.esc(p.worker || '-') + '</td>' +
+          '<td style="white-space:nowrap">' + Ui.esc(p.saved_at || '') + '</td>' +
+          '<td>' + Ui.esc(p.note || '') + '</td>');
+        var tdAct = document.createElement('td');
+        tdAct.style.whiteSpace = 'nowrap';
+        var loadBtn = Ui.el('<button class="btn small">불러오기</button>');
+        loadBtn.addEventListener('click', function () { loadSnapshot(p.name).catch(errToast); });
+        tdAct.appendChild(loadBtn);
+        var delBtn = Ui.el('<button class="btn small" style="margin-left:4px">삭제</button>');
+        delBtn.addEventListener('click', function () {
+          if (!window.confirm("스냅샷 '" + p.name + "' 을(를) 삭제할까요?")) return;
+          Api.post('/api/project/load', { name: p.name, delete: true }).then(function () {
+            Ui.toast('삭제되었습니다.');
+            renderSnapshots(); refreshProjects();
+          }).catch(errToast);
+        });
+        tdAct.appendChild(delBtn);
+        tr.appendChild(tdAct);
+        rows.push(tr);
+      });
+      var tbl = Ui.el(simpleTable(['이름', '작업자', '저장 시각', '메모', ''], []));
+      rows.forEach(function (tr) { tbl.querySelector('tbody').appendChild(tr); });
+      var wrap = Ui.el('<div style="overflow-x:auto;max-height:260px;overflow-y:auto"></div>');
+      wrap.appendChild(tbl);
+      snapList.appendChild(wrap);
+    }
     function renderSnapshots() {
       Api.post('/api/project/load', {}).then(function (d) {
-        snapList.innerHTML = '';
-        var items = d.projects || [];
-        if (!items.length) {
-          snapList.innerHTML = '<div class="status-empty">저장된 분석 스냅샷이 없습니다.</div>';
-          return;
-        }
-        var rows = items.map(function (p) {
-          var tr = document.createElement('tr');
-          var td0 = document.createElement('td');
-          var b = Ui.el('<span class="clickable"><b>' + Ui.esc(p.name) + '</b></span>');
-          b.addEventListener('click', function () { loadSnapshot(p.name).catch(errToast); });
-          td0.appendChild(b);
-          tr.appendChild(td0);
-          tr.insertAdjacentHTML('beforeend',
-            '<td style="white-space:nowrap">' + Ui.esc(p.saved_at || '') + '</td>' +
-            '<td>' + Ui.esc(p.note || '') + '</td>');
-          var tdAct = document.createElement('td');
-          tdAct.style.whiteSpace = 'nowrap';
-          var loadBtn = Ui.el('<button class="btn small">불러오기</button>');
-          loadBtn.addEventListener('click', function () { loadSnapshot(p.name).catch(errToast); });
-          tdAct.appendChild(loadBtn);
-          var delBtn = Ui.el('<button class="btn small" style="margin-left:4px">삭제</button>');
-          delBtn.addEventListener('click', function () {
-            if (!window.confirm("스냅샷 '" + p.name + "' 을(를) 삭제할까요?")) return;
-            Api.post('/api/project/load', { name: p.name, delete: true }).then(function () {
-              Ui.toast('삭제되었습니다.');
-              renderSnapshots(); refreshProjects();
-            }).catch(errToast);
-          });
-          tdAct.appendChild(delBtn);
-          tr.appendChild(tdAct);
-          return tr;
-        });
-        var tbl = Ui.el(simpleTable(['이름', '저장 시각', '메모', ''], []));
-        rows.forEach(function (tr) { tbl.querySelector('tbody').appendChild(tr); });
-        var wrap = Ui.el('<div style="overflow-x:auto;max-height:260px;overflow-y:auto"></div>');
-        wrap.appendChild(tbl);
-        snapList.appendChild(wrap);
+        snapItems = d.projects || [];
+        renderSnapList();
       }).catch(errToast);
     }
+    snapFilt.querySelector('#snap-filter').addEventListener('input', function (ev) {
+      setWorkerName(ev.target.value);
+      renderSnapList();
+    });
+    snapFilt.querySelector('#snap-showall').addEventListener('change', renderSnapList);
     snapSave.addEventListener('click', function () {
       var name = document.getElementById('snap-name').value.trim();
       if (!name) { Ui.toast('스냅샷 이름을 입력하세요.', 'error'); return; }
@@ -3557,12 +3654,31 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
     renderApplicantManager(holder, false);
   };
 
+  /* ------------------------------------------- 작업자/팀명 (내 작업 필터) */
+  /* Dataiku Webapp 은 별도 로그인 개념이 없으므로, 사용자가 입력한 작업자/팀명을
+     브라우저(localStorage)에 기억해 '내 작업만 보기'의 기준으로 쓴다. */
+  function getWorkerName() {
+    try { return (localStorage.getItem('ipls_worker') || '').trim(); } catch (e) { return ''; }
+  }
+  function setWorkerName(v) {
+    try { localStorage.setItem('ipls_worker', String(v || '').trim()); } catch (e) { }
+  }
+  function workerMatches(itemWorker, query) {
+    var w = String(itemWorker || '').trim().toLowerCase();
+    var q = String(query || '').trim().toLowerCase();
+    if (!q) return true;
+    if (!w) return false;
+    return w.indexOf(q) !== -1 || q.indexOf(w) !== -1;
+  }
+
   /* ------------------------------------------- 분석 스냅샷 (프로젝트) */
   function saveSnapshot(name, note) {
-    /* 현재 분석 상태 전체 저장: Dataset + 필터 + 분석 단위/다중분류 + 보던 화면 */
+    /* 현재 분석 상태 전체 저장: Dataset + 필터 + 분석 단위/다중분류 + 보던 화면.
+       작업자/팀명을 함께 기록해 목록에서 내 것만 골라볼 수 있게 한다. */
     var s = (State.config && State.config.settings) || {};
     return Api.post('/api/project/save', {
       name: name, filters: Filters.collect(), note: note || '',
+      worker: getWorkerName(),
       settings: { dataset: s.dataset || null, view: State.view,
                   analysis_unit: s.analysis_unit, multiclass_mode: s.multiclass_mode }
     }).then(function () {

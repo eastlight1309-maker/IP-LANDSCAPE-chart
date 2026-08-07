@@ -183,12 +183,14 @@ def test_snapshot_roundtrip_with_settings_and_note(client):
     """분석 스냅샷: Dataset·화면·분석 단위·메모까지 저장·복원되는지."""
     _post(client, "/api/project/save",
           {"name": "스냅샷A", "filters": {"year_from": 2019, "countries": ["KR"]},
-           "note": "상반기 검토용",
+           "note": "상반기 검토용", "worker": "반도체팀 홍길동",
            "settings": {"dataset": DATASET, "view": "whitespace",
                         "analysis_unit": "document", "multiclass_mode": "duplicate"}})
     lst = _post(client, "/api/project/load", {}).get_json()["projects"]
     entry = next(p for p in lst if p["name"] == "스냅샷A")
     assert entry["note"] == "상반기 검토용"
+    # 작업자/팀명이 목록에 포함 → '내 작업만 보기' 필터에 사용
+    assert entry["worker"] == "반도체팀 홍길동"
     got = _post(client, "/api/project/load", {"name": "스냅샷A"}).get_json()["project"]
     assert got["settings"]["dataset"] == DATASET
     assert got["settings"]["view"] == "whitespace"

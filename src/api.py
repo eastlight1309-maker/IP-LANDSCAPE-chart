@@ -810,7 +810,11 @@ def register_routes(app):
     @app.route("/api/project/save", methods=["POST"])
     @wrap
     def api_project_save():
-        """POST {"name","filters","settings"?,"note"?} → 프로젝트 상태 저장."""
+        """POST {"name","filters","settings"?,"note"?,"worker"?} → 상태 저장.
+
+        worker(작업자/팀명)를 함께 저장해 목록에서 '내 작업만 보기' 필터에
+        사용한다 (선택 값 — 빈 문자열이면 '작업자 미지정'으로 분류).
+        """
         body = json_body()
         name = str(body.get("name") or "").strip()
         if not name:
@@ -819,6 +823,7 @@ def register_routes(app):
         projects[name] = {"filters": body.get("filters") or {},
                           "settings": body.get("settings") or {},
                           "note": str(body.get("note") or "")[:500],
+                          "worker": str(body.get("worker") or "").strip()[:60],
                           "saved_at": time.strftime("%Y-%m-%d %H:%M:%S")}
         storage.save_projects(projects)
         return {"status": "ok", "projects": sorted(projects.keys())}
@@ -833,7 +838,9 @@ def register_routes(app):
         if not name:
             return {"status": "ok",
                     "projects": [{"name": k, "saved_at": v.get("saved_at"),
-                                  "note": v.get("note")} for k, v in projects.items()]}
+                                  "note": v.get("note"),
+                                  "worker": v.get("worker", "")}
+                                 for k, v in projects.items()]}
         if name not in projects:
             raise LookupError("프로젝트를 찾을 수 없습니다: %s" % name)
         if body.get("delete"):
