@@ -441,6 +441,30 @@ def test_export_chart_endpoint(client):
     assert bad.status_code == 400
 
 
+def test_export_chart_readme_sheet(client):
+    """설명 시트: desc 등 부가 필드 무시 + 열 너비·줄바꿈 스타일 적용."""
+    long_txt = "행=기업, 열=기술분류, 색=분류 내 평균 도면 수 z-score. " * 5
+    resp = _post(client, "/api/export-chart", {
+        "filename": "chart",
+        "sheets": [
+            {"name": "설명", "columns": ["항목", "내용"],
+             "rows": [["분석 카드", "개시 충실도"], ["차트 해석", long_txt]]},
+            {"name": "개시 충실도", "columns": ["기업", "z"],
+             "rows": [["삼성전자", 1.2]],
+             "desc": "차트 제목: 개시 충실도 | X축: 기술분류"},
+        ]})
+    assert resp.status_code == 200
+    import openpyxl
+    wb = openpyxl.load_workbook(io.BytesIO(resp.data))
+    assert wb.sheetnames[0] == "설명"
+    ws = wb["설명"]
+    assert ws.cell(2, 1).value == "분석 카드"
+    assert ws.cell(3, 2).value == long_txt
+    # 설명 시트: 내용 열이 넓고 줄바꿈 스타일 적용
+    assert ws.column_dimensions["B"].width > 40
+    assert ws.cell(3, 2).alignment.wrap_text is True
+
+
 def test_portfolio_index_official_methodology(client):
     """PAI 공개 방법론: GNI 가중 MC, 연도×분야 TR, 지표 정의표."""
     data = _post(client, "/api/portfolio-index", {"filters": {}}).get_json()

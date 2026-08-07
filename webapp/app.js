@@ -353,12 +353,49 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
         var lt = gd.layout;
         var title = (lt.title && (lt.title.text || lt.title)) || ('chart' + (sheets.length + 1));
         var columns = null, rows = [];
+        // 시트 의미 설명(설명 시트용): 차트 제목 + 축·색 의미
+        var xTd = stripHtml(axTitle(lt, 'xaxis', ''));
+        var yTd = stripHtml(axTitle(lt, 'yaxis', ''));
+        var colorTd = '';
+        (gd.data || []).forEach(function (tr) {
+          var cb = (tr.colorbar && tr.colorbar.title) ||
+            (tr.marker && tr.marker.colorbar && tr.marker.colorbar.title);
+          if (cb && !colorTd) colorTd = typeof cb === 'string' ? cb : (cb.text || '');
+        });
+        var descParts = ['차트 제목: ' + String(title)];
+        if (xTd) descParts.push('X축: ' + xTd);
+        if (yTd) descParts.push('Y축: ' + yTd);
+        if (colorTd) descParts.push('색상: ' + colorTd);
+        var seriesNames = (gd.data || []).map(function (tr) { return tr.name; })
+          .filter(function (n) { return n; });
+        if (seriesNames.length > 1) descParts.push('시리즈: ' + seriesNames.join(', '));
+        var sheetDesc = descParts.join(' | ');
         (gd.data || []).forEach(function (tr) {
           if (tr.type === 'bar') {
-            var cats = tr.orientation === 'h' ? tr.y : tr.x;
-            var vals = tr.orientation === 'h' ? tr.x : tr.y;
-            columns = ['항목', axTitle(lt, tr.orientation === 'h' ? 'xaxis' : 'yaxis', '값')];
-            (cats || []).forEach(function (cat, i) { rows.push([cat, vals[i]]); });
+            var h = tr.orientation === 'h';
+            var cats = h ? tr.y : tr.x;
+            var vals = h ? tr.x : tr.y;
+            // 컬럼명에 실제 축 의미 사용 (예: '기술분류', '이전 특허 수')
+            var catT = stripHtml(axTitle(lt, h ? 'yaxis' : 'xaxis', '')) || '항목';
+            var valT = stripHtml(axTitle(lt, h ? 'xaxis' : 'yaxis', '')) || '값';
+            if (!columns) columns = [catT, stripHtml(tr.name || '') || valT];
+            else if (tr.name && columns.indexOf(stripHtml(tr.name)) < 0) {
+              columns.push(stripHtml(tr.name));
+            }
+            if (columns.length <= 2) {
+              (cats || []).forEach(function (cat, i) { rows.push([cat, vals[i]]); });
+            } else {
+              // 다중 시리즈 막대: 항목별 행 병합
+              (cats || []).forEach(function (cat, i) {
+                var found = null;
+                for (var ri = 0; ri < rows.length; ri++) {
+                  if (rows[ri][0] === cat) { found = rows[ri]; break; }
+                }
+                if (!found) { found = [cat]; rows.push(found); }
+                while (found.length < columns.length - 1) found.push(null);
+                found[columns.length - 1] = vals[i];
+              });
+            }
           } else if (tr.type === 'heatmap' || tr.type === 'contour') {
             if (tr.type === 'contour') return;  // 밀도 그리드는 제외
             // 첫 셀에 행/열 축의 의미를 명시 (예: "해결과제(행) \ 해결수단(열)")
@@ -406,7 +443,8 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
           }
         });
         if (columns && rows.length) {
-          sheets.push({ name: String(title).slice(0, 28), columns: columns, rows: rows });
+          sheets.push({ name: String(title).slice(0, 28), columns: columns, rows: rows,
+                        desc: sheetDesc });
         }
         // 렌더러가 부착한 보조 시트 (예: 매트릭스 건수 — 전체 라벨 버전)
         (gd.__iplsExtraSheets || []).forEach(function (s) { sheets.push(s); });
@@ -420,7 +458,9 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
         });
         if (nodeRows.length) {
           sheets.push({ name: '네트워크 노드', columns: ['노드', '건수', '그룹', '성장률'],
-                        rows: nodeRows });
+                        rows: nodeRows,
+                        desc: '화면 네트워크 그래프의 원(노드) 목록 — 노드·엣지의 의미는 ' +
+                          '이 파일의 "카드 설명"과 "차트 해석" 행을 참조하세요.' });
         }
         var edgeRows = (net.edges || []).map(function (e) {
           var d = e.data || {};
@@ -429,7 +469,9 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
         if (edgeRows.length) {
           sheets.push({ name: '네트워크 엣지',
                         columns: ['Source', 'Target', '가중치', 'Jaccard', 'Lift', '평균시차', '라벨'],
-                        rows: edgeRows });
+                        rows: edgeRows,
+                        desc: '네트워크의 연결선(엣지) 목록 — Source→Target 방향, ' +
+                          '가중치=연결 강도(건수 등). 세부 의미는 "카드 설명" 행 참조.' });
         }
       });
       bodyEl.querySelectorAll('.ipls-echart').forEach(function (el) {
@@ -442,7 +484,9 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
         });
         if (rows.length) {
           sheets.push({ name: (opt.title && opt.title.text || '히트맵').slice(0, 28),
-                        columns: ['행', '열', '값'], rows: rows });
+                        columns: ['행', '열', '값'], rows: rows,
+                        desc: '대형 히트맵의 셀 목록 (행 라벨 / 열 라벨 / 셀 값). ' +
+                          '차트 제목: ' + ((opt.title && opt.title.text) || '히트맵') });
         }
       });
       return sheets;
@@ -478,14 +522,51 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
       return wrap;
     }
 
+    function buildReadmeSheet(bodyEl, sheets) {
+      /* 첫 시트 "설명": 이 파일의 데이터가 무엇이고 차트를 어떻게 읽는지 —
+         카드 제목·설명, 시트별 축/색 의미, 화면의 차트 해석 캡션·주석을 모두 수록. */
+      var rows = [];
+      var cardEl = bodyEl && bodyEl.closest ? bodyEl.closest('.card') : null;
+      var tEl = cardEl && cardEl.querySelector('.card-title');
+      if (tEl) rows.push(['분석 카드', tEl.textContent.trim()]);
+      var dEl = cardEl && cardEl.querySelector('.card-desc');
+      if (dEl) rows.push(['카드 설명', dEl.textContent.trim()]);
+      rows.push(['파일 구성', '시트 1개 = 화면 차트 1개의 집계 데이터입니다. 아래에 각 ' +
+        '시트의 축·색 의미와 차트 읽는 법이 정리되어 있습니다. 개별 특허 원본 목록은 ' +
+        '화면에서 차트 요소를 클릭(드릴다운)한 뒤 목록의 Excel 버튼으로 받을 수 있습니다.']);
+      sheets.forEach(function (s) {
+        if (s.desc) rows.push(['시트 「' + s.name + '」', s.desc]);
+      });
+      if (bodyEl) {
+        bodyEl.querySelectorAll('.chart-guide').forEach(function (g) {
+          var txt = g.textContent.replace(/[📖💡]/g, '').trim();
+          var label = /^이 차트의 인사이트/.test(txt) ? '차트 인사이트' : '차트 해석';
+          txt = txt.replace(/^(차트 해석|해석|이 차트의 인사이트)/, '').trim();
+          if (txt) rows.push([label, txt]);
+        });
+        bodyEl.querySelectorAll('.disclaimer').forEach(function (g) {
+          var txt = g.textContent.trim();
+          if (txt) rows.push(['참고', txt]);
+        });
+        var insEl = bodyEl.querySelector('.insight-box ul');
+        if (insEl && insEl.textContent.trim()) {
+          rows.push(['자동 인사이트', Array.prototype.map.call(
+            insEl.querySelectorAll('li'),
+            function (li) { return '• ' + li.textContent.trim(); }).join('\n')]);
+        }
+      }
+      return { name: '설명', columns: ['항목', '내용'], rows: rows };
+    }
+
     function excelButton(filename, getBody, fallbackDrill) {
       /* 카드에 표시된 차트의 집계 데이터를 Excel(시트당 1개 차트)로 내보낸다.
-         카드에 차트가 없으면(목록형 카드) 필터된 특허 목록으로 폴백. */
-      var b = Ui.el('<button class="btn small" title="이 카드의 차트 데이터를 Excel 로 다운로드">Excel</button>');
+         첫 시트 "설명"에 데이터·차트 의미를 수록. 차트가 없으면 특허 목록 폴백. */
+      var b = Ui.el('<button class="btn small" title="이 카드의 차트 데이터를 Excel 로 다운로드 (설명 시트 포함)">Excel</button>');
       b.addEventListener('click', function () {
         var body = getBody ? getBody() : null;
         var sheets = body ? extractChartSheets(body) : [];
         if (sheets.length) {
+          sheets.unshift(buildReadmeSheet(body, sheets));
           Api.download('/api/export-chart',
             { filename: (filename || 'chart') + '_data', sheets: sheets },
             (filename || 'chart') + '_data.xlsx').catch(errToast);

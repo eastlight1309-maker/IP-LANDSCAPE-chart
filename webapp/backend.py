@@ -12928,6 +12928,26 @@ def register_routes(app):
                 used_names.add(name)
                 pd.DataFrame(rows, columns=cols).to_excel(writer, index=False,
                                                           sheet_name=name)
+                # 가독성: 열 너비 자동 조정 (+설명 시트는 줄바꿈 허용)
+                try:
+                    from openpyxl.utils import get_column_letter
+                    from openpyxl.styles import Alignment
+                    ws = writer.sheets[name]
+                    is_readme = name == "설명"
+                    for ci, col in enumerate(cols, start=1):
+                        lens = [len(str(col))] + [
+                            len(str(r[ci - 1])) for r in rows[:200]
+                            if len(r) >= ci and r[ci - 1] is not None]
+                        width = max(10, min(90 if is_readme else 40,
+                                            max(lens) + 2))
+                        ws.column_dimensions[get_column_letter(ci)].width = width
+                    if is_readme:
+                        wrap = Alignment(wrap_text=True, vertical="top")
+                        for row_cells in ws.iter_rows(min_row=2):
+                            for cell in row_cells:
+                                cell.alignment = wrap
+                except Exception:  # 스타일 실패는 데이터 자체에 영향 없음
+                    pass
                 wrote = True
             if not wrote:
                 return _error(400, "내보낼 차트 데이터가 없습니다.")
