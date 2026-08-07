@@ -3048,7 +3048,10 @@ _MAX_IMAGE_MB = 4
 _DATAURL_RE = re.compile(r"^data:image/(png|jpeg);base64,(.+)$", re.DOTALL)
 
 
-def _save_chart_image(insight_id, chart_image):
+_MAX_IMAGES = 6  # 카드 하나에서 캡처·저장하는 차트 수 상한
+
+
+def _save_chart_image(insight_id, chart_image, idx=0):
     """프론트가 보낸 차트 캡처(data URL) → PNG/JPEG 파일 저장. 파일명 또는 None."""
     m = _DATAURL_RE.match(str(chart_image or "").strip())
     if not m:
@@ -3059,7 +3062,9 @@ def _save_chart_image(insight_id, chart_image):
         return None
     if not raw or len(raw) > _MAX_IMAGE_MB * 1024 * 1024:
         return None
-    fname = "%s.%s" % (insight_id, "png" if m.group(1) == "png" else "jpg")
+    ext = "png" if m.group(1) == "png" else "jpg"
+    fname = ("%s.%s" % (insight_id, ext) if idx == 0
+             else "%s_%d.%s" % (insight_id, idx, ext))
     try:
         with open(os.path.join(storage.insight_image_dir(), fname), "wb") as fh:
             fh.write(raw)
@@ -3069,17 +3074,26 @@ def _save_chart_image(insight_id, chart_image):
         return None
 
 
+def _image_paths(entry):
+    """항목의 차트 이미지 파일 경로 목록 (존재하는 것만, 저장 순서 유지)."""
+    fnames = entry.get("image_files")
+    if not fnames:
+        fnames = [entry.get("image_file")] if entry.get("image_file") else []
+    out = []
+    for fname in fnames:
+        path = os.path.join(storage.insight_image_dir(), str(fname))
+        if os.path.exists(path):
+            out.append(path)
+    return out
+
+
 def _image_path(entry):
-    fname = entry.get("image_file")
-    if not fname:
-        return None
-    path = os.path.join(storage.insight_image_dir(), str(fname))
-    return path if os.path.exists(path) else None
+    paths = _image_paths(entry)
+    return paths[0] if paths else None
 
 
 def _remove_image(entry):
-    path = _image_path(entry)
-    if path:
+    for path in _image_paths(entry):
         try:
             os.remove(path)
         except OSError:
@@ -3087,12 +3101,23 @@ def _remove_image(entry):
 
 
 def add_insight(analysis, title, sentences, dataset=None, kind="report",
-                question=None, chart_image=None):
-    """LLM 인사이트 저장 (+차트 캡처 이미지 — PPT 삽입용). 반환: 항목 id."""
+                question=None, chart_image=None, chart_images=None):
+    """LLM 인사이트 저장 (+차트 캡처 이미지들 — PPT 삽입용). 반환: 항목 id.
+
+    chart_images: 카드의 모든 차트 캡처(data URL 목록) — PPT 에 전부 들어간다.
+    chart_image: 구버전 단일 캡처 (chart_images 미지정 시 사용).
+    """
     sentences = [str(s).strip() for s in (sentences or []) if str(s).strip()][:40]
     if not sentences:
         return None
     uid = uuid.uuid4().hex[:10]
+    images_in = [img for img in (chart_images or []) if img] or \
+        ([chart_image] if chart_image else [])
+    image_files = []
+    for i, img in enumerate(images_in[:_MAX_IMAGES]):
+        fname = _save_chart_image(uid, img, idx=len(image_files))
+        if fname:
+            image_files.append(fname)
     entry = {
         "id": uid, "kind": kind,
         "analysis": str(analysis or "")[:60],
@@ -3101,7 +3126,8 @@ def add_insight(analysis, title, sentences, dataset=None, kind="report",
         "sentences": sentences,
         "dataset": (str(dataset)[:80] if dataset else None),
         "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
-        "image_file": _save_chart_image(uid, chart_image),
+        "image_file": image_files[0] if image_files else None,
+        "image_files": image_files,
     }
     data = storage.load_store("insights")
     items = list(data.get("items") or [])
@@ -3115,16 +3141,23 @@ def add_insight(analysis, title, sentences, dataset=None, kind="report",
 def list_insights():
     items = list(storage.load_store("insights").get("items") or [])
     for it in items:
-        it["has_image"] = _image_path(it) is not None
+        paths = _image_paths(it)
+        it["has_image"] = bool(paths)
+        it["n_images"] = len(paths)
     return items
 
 
-def get_image(insight_id):
-    """항목의 차트 이미지 (bytes, mimetype) 또는 (None, None)."""
+def get_image(insight_id, idx=0):
+    """항목의 idx 번째 차트 이미지 (bytes, mimetype) 또는 (None, None)."""
     for it in storage.load_store("insights").get("items") or []:
         if str(it.get("id")) == str(insight_id):
-            path = _image_path(it)
-            if path:
+            paths = _image_paths(it)
+            try:
+                idx = int(idx or 0)
+            except (TypeError, ValueError):
+                idx = 0
+            if 0 <= idx < len(paths):
+                path = paths[idx]
                 with open(path, "rb") as fh:
                     return fh.read(), ("image/png" if path.endswith(".png")
                                        else "image/jpeg")
@@ -3184,22 +3217,27 @@ def _to_slides(items, report_title):
                                      (" · Q: %s" % it["question"])
                                      if it.get("question") else "")
         lines = [meta_line] + lines
-        image = None
-        ext = None
-        path = _image_path(it)
-        if path:
+        images = []
+        for path in _image_paths(it):
             try:
                 with open(path, "rb") as fh:
-                    image = fh.read()
-                ext = "png" if path.endswith(".png") else "jpg"
+                    images.append((fh.read(),
+                                   "png" if path.endswith(".png") else "jpg"))
             except OSError:
-                image = None
+                continue
+        first_img, first_ext = images[0] if images else (None, None)
         for start in range(0, len(lines), _LINES_PER_SLIDE):
             chunk = lines[start:start + _LINES_PER_SLIDE]
             t = title if start == 0 else title[:60] + " (계속)"
             slides.append({"title": t[:120], "lines": chunk,
-                           "image": image if start == 0 else None,
-                           "ext": ext if start == 0 else None})
+                           "image": first_img if start == 0 else None,
+                           "ext": first_ext if start == 0 else None})
+        # 카드에 차트가 여러 개면 나머지 차트도 큰 그림 슬라이드로 모두 포함
+        for k, (img, ext) in enumerate(images[1:], start=2):
+            slides.append({"title": ("%s — 차트 %d/%d" % (title[:100], k,
+                                                        len(images)))[:120],
+                           "lines": [], "image": img, "ext": ext,
+                           "image_full": True})
     return slides
 
 
@@ -3220,6 +3258,12 @@ def _pptx_via_library(slides):
         p.font.size = Pt(_title_size(sl["title"]))
         p.font.bold = True
         has_img = bool(sl.get("image"))
+        if has_img and sl.get("image_full"):
+            # 추가 차트 슬라이드: 그림을 크게 중앙 배치 (텍스트 없음)
+            slide.shapes.add_picture(io.BytesIO(sl["image"]),
+                                     Inches(1.82), Inches(1.5),
+                                     width=Inches(9.7), height=Inches(5.66))
+            continue
         if has_img:
             slide.shapes.add_picture(io.BytesIO(sl["image"]),
                                      Inches(0.4), Inches(1.55),
@@ -3372,10 +3416,18 @@ def _textbox(shape_id, name, x, y, w, h, paragraphs):
             % (shape_id, name, x, y, w, h, "".join(paras)))
 
 
-def _slide_xml(title, lines, has_image=False):
+def _slide_xml(title, lines, has_image=False, image_full=False):
     # 제목: 길이 비례 축소 + 2줄 여유 박스 (화면 밖 이탈 방지)
     title_box = _textbox(2, "title", 457200, 274320, 11277600, 1005840,
                          [(title, _title_size(title), True)])
+    if has_image and image_full:
+        # 추가 차트 슬라이드: 그림을 크게 중앙 배치 (12:7 비율 유지)
+        pic = _picture_xml(4, 1667510, 1417320, 8856980, 5166240)
+        return ("""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<p:sld %s><p:cSld><p:spTree>
+<p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr>
+<p:grpSpPr/>%s%s</p:spTree></p:cSld><p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:sld>"""
+                % (_NS, title_box, pic))
     body_paras = []
     base_size = 12 if has_image else 13
     for i, line in enumerate(lines):
@@ -3450,7 +3502,8 @@ def _minimal_pptx(slides):
                 z.writestr("ppt/media/%s" % media_name, sl["image"])
                 img_rel = _IMG_REL % media_name
             z.writestr("ppt/slides/slide%d.xml" % (i + 1),
-                       _slide_xml(sl["title"], sl["lines"], has_image=has_img))
+                       _slide_xml(sl["title"], sl["lines"], has_image=has_img,
+                                  image_full=bool(sl.get("image_full"))))
             z.writestr("ppt/slides/_rels/slide%d.xml.rels" % (i + 1),
                        _SLIDE_RELS % img_rel)
     return buf.getvalue()
@@ -4181,15 +4234,23 @@ def bubble_chart(points, x_title, y_title, title=None, quadrants=None,
 RDYLGN = [[0.0, "#E15759"], [0.5, "#F1CE63"], [1.0, "#59A14F"]]  # 낮음=빨강, 높음=초록
 PURPLES = [[0.0, "#f6f2fa"], [1.0, "#59489C"]]
 ORRD = [[0.0, "#fff3e0"], [1.0, "#d7301f"]]
+# Plotly.js 내장 YlOrRd/YlGnBu/Blues 는 python 쪽과 반대로 0=진함→1=연함으로
+# 정의되어 있어 "값이 클수록 진하다"는 해석이 뒤집힌다 → 연함→진함 배열로 고정.
+BLUES = [[0.0, "#f0f6fc"], [0.5, "#7fafd4"], [1.0, "#1b5e93"]]
+YLORRD = [[0.0, "#fff8e1"], [0.5, "#fdae61"], [1.0, "#c0392b"]]
+YLGNBU = [[0.0, "#f7fcf0"], [0.5, "#66c2a4"], [1.0, "#0868ac"]]
+BLUE_RED = [[0.0, "#2166ac"], [0.5, "#f7f7f7"], [1.0, "#b2182c"]]  # 낮음=파랑, 높음=빨강
 
 
-def heatmap(z, x_labels, y_labels, title=None, colorscale="YlOrRd", hovertext=None,
+def heatmap(z, x_labels, y_labels, title=None, colorscale=None, hovertext=None,
             colorbar_title=None, zmid=None):
     """Plotly 히트맵 payload. 셀 수가 LIMITS 초과인 경우 호출부에서 ECharts 로 전환.
 
     가독성 규칙: 행(y) 수에 비례해 세로 길이를 늘리고(행당 최소 26px),
     양 축 모두 dtick=1 로 라벨 생략 없이 전부 표시한다 (라벨 많으면 글자만 축소).
     """
+    if colorscale is None:
+        colorscale = YLORRD
     trace = {"type": "heatmap", "z": z, "x": x_labels, "y": y_labels,
              "colorscale": colorscale, "colorbar": {"thickness": 12}}
     if colorbar_title:
@@ -6195,7 +6256,7 @@ def compute_problem_solution(df, settings):
     else:
         fig = heatmap(growth_z, sol_labels, prob_labels,
                       title="문제–해결수단 매트릭스 (색=최근 성장률, hover=건수·장벽)",
-                      colorscale="RdYlGn", hovertext=hover, colorbar_title="성장률", zmid=0)
+                      colorscale=RDYLGN, hovertext=hover, colorbar_title="성장률", zmid=0)
         fig["counts_z"] = z_counts
         # 플롯 영역 확보: 행 수 비례 높이 + 라벨 폰트·여백 제한
         fig["layout"]["height"] = max(460, 140 + 26 * len(top_problems))
@@ -6402,7 +6463,7 @@ def compute_ps_semantic(df, settings):
               for j, sg_ in enumerate(s_show)] for i, pg_ in enumerate(p_show)]
     fig = heatmap(z, [g["label"] for g in s_show], [g["label"] for g in p_show],
                   title="문제–해결수단 의미 그룹 매트릭스 (임베딩 유사 문구 통합, 셀=건수)",
-                  colorscale="YlGnBu", hovertext=hover, colorbar_title="건수")
+                  colorscale=YLGNBU, hovertext=hover, colorbar_title="건수")
     fig["layout"]["xaxis"]["title"] = {"text": "해결수단 그룹", "standoff": 6}
     fig["layout"]["yaxis"]["title"] = {"text": "해결과제 그룹", "standoff": 6}
     fig["data"][0]["customdata"] = [
@@ -7004,7 +7065,7 @@ def compute_company_dna(df, settings, companies=None):
                      p["raw"][k] if p["raw"][k] is not None else "-")
                   for k, label in DNA_METRICS] for p in companies_payload]
         fig = heatmap(z, labels, [p["company"] for p in companies_payload],
-                      title="기술 DNA 히트맵 (표준화)", colorscale="Blues", hovertext=hover)
+                      title="기술 DNA 히트맵 (표준화)", colorscale=BLUES, hovertext=hover)
         chart_kind = "heatmap"
 
     parcoords = {"data": [{
@@ -7035,7 +7096,7 @@ def compute_company_dna(df, settings, companies=None):
             ov_z.append(ov_row)
         sim_matrix = heatmap(sim_z, available, available,
                              title="전략 유사도 (기술 구성비 코사인, 0~1 · 1=구성 동일)",
-                             colorscale="Blues", colorbar_title="유사도")
+                             colorscale=BLUES, colorbar_title="유사도")
         overlap_matrix = heatmap(ov_z, available, available,
                                  title="포트폴리오 중첩도 (활동 분류 Jaccard, 0~1 · 1=완전 중첩)",
                                  colorscale=PURPLES, colorbar_title="중첩도")
@@ -7380,7 +7441,7 @@ def compute_claim_density(df, settings, tech=None):
         p["custom"].append({"drill": {"type": "ids", "ids": [str(ids[i])]}})
 
     traces = [{"type": "contour", "x": xs.tolist(), "y": ys.tolist(),
-               "z": zz.tolist(), "colorscale": "YlOrRd", "opacity": 0.45,
+               "z": zz.tolist(), "colorscale": YLORRD, "opacity": 0.45,
                "showscale": True, "colorbar": {"title": "청구항 밀도", "thickness": 12},
                "contours": {"showlines": False}, "hoverinfo": "skip", "name": "밀도"}]
     for app_group, p in points_by_app.items():
@@ -7957,9 +8018,8 @@ def compute_classification_quality(df, settings):
     else:
         fig_confusion = heatmap(z, techs, techs,
                                 title="Classification Confusion Map (빨강=모호, 파랑=분리 명확)",
-                                colorscale="RdBu", hovertext=hover,
+                                colorscale=BLUE_RED, hovertext=hover,
                                 colorbar_title="유사도/중복", zmid=0.5)
-        fig_confusion["data"][0]["reversescale"] = True
 
     # 실루엣 (단일 분류 문헌만, 표본 상한)
     silhouette = None
@@ -8196,7 +8256,7 @@ def compute_basic_stats(df, settings):
             hover.append(["%s — %d년: %s건" % (a, y, fmt_num(v))
                           for y, v in zip(years_range, row)])
         fig_app_year = heatmap(z, [str(y) for y in years_range], matrix_apps,
-                               title="출원인 × 연도 활동 매트릭스", colorscale="Blues",
+                               title="출원인 × 연도 활동 매트릭스", colorscale=BLUES,
                                hovertext=hover, colorbar_title="건수")
 
     # ③-b 출원인 × 출원연도 버블 (크기=출원건수)
@@ -8229,7 +8289,7 @@ def compute_basic_stats(df, settings):
             "hovertext": pts["hover"], "hoverinfo": "text",
             "customdata": pts["custom"],
             "marker": {"size": pts["size"], "color": pts["color"],
-                       "colorscale": "Blues", "cmin": 0,
+                       "colorscale": BLUES, "cmin": 0,
                        "colorbar": {"title": "출원건수", "thickness": 12},
                        "line": {"width": 0.6, "color": "#5b7a8a"}}}],
             "layout": base_layout(
@@ -8264,7 +8324,7 @@ def compute_basic_stats(df, settings):
             hover2.append(["%s — %d년: %s건" % (t, y, fmt_num(v))
                            for y, v in zip(years_range, row)])
         fig_tech_year = heatmap(z2, [str(y) for y in years_range], matrix_techs,
-                                title="기술분류 × 연도 동향", colorscale="YlGnBu",
+                                title="기술분류 × 연도 동향", colorscale=YLGNBU,
                                 hovertext=hover2, colorbar_title="건수")
 
     # ⑦ KPI
@@ -8447,7 +8507,7 @@ def compute_tech_year_bubble(df, settings, companies=None):
                                   "연도": int(y), "건수": int(n)}})
         marker = {"size": sizes, "line": {"width": 0.6, "color": "#5b7a8a"}}
         if n_g == 1:
-            marker.update({"color": colors, "colorscale": "Blues", "cmin": 0,
+            marker.update({"color": colors, "colorscale": BLUES, "cmin": 0,
                            "colorbar": {"title": "출원건수", "thickness": 12}})
         else:
             marker.update({"color": color_for(name, color_reg), "opacity": 0.85})
@@ -8741,7 +8801,7 @@ def compute_portfolio_index(df, settings):
         "marker": {"size": fam_sizes, "sizemode": "area",
                    "sizeref": 2.0 * fmax / (46 ** 2), "sizemin": 9,
                    "color": [r["avg_mc"] for r in shown],
-                   "colorscale": "Blues", "showscale": True,
+                   "colorscale": BLUES, "showscale": True,
                    "colorbar": {"title": "평균 MC", "thickness": 12},
                    "line": {"width": 1, "color": "#33506a"}, "opacity": 0.88},
     }], "layout": base_layout(
@@ -10158,7 +10218,7 @@ def compute_emerging_clusters(df, settings):
             "size": [max(14.0, min(56.0, 10 + 2.2 * np.sqrt(c["n"]))) for c in clusters],
             "color": [c["new_applicant_ratio"] if c["new_applicant_ratio"] is not None
                       else 0.0 for c in clusters],
-            "colorscale": "YlGnBu", "cmin": 0, "cmax": 1,
+            "colorscale": YLGNBU, "cmin": 0, "cmax": 1,
             "colorbar": {"title": "신규 출원인 비율", "thickness": 12},
             "line": {"width": [2.5 if c["is_new_cluster"] else 0.6 for c in clusters],
                      "color": "#E15759"}}}],
@@ -10788,7 +10848,7 @@ def _market_entry_section(df, settings):
         hover.append(row_h)
     fig = heatmap(z, top_ctrys, top_comps,
                   title="기업×국가 평균 진입 시차 (개월, 낮을수록 우선 베팅 시장)",
-                  colorscale="YlOrRd", hovertext=hover, colorbar_title="개월")
+                  colorscale=YLORRD, hovertext=hover, colorbar_title="개월")
 
     # 1순위 진입국 + 최근 변화 (패밀리별 최소 시차 행 = 첫 진입 문헌)
     first_rows = []
@@ -11946,7 +12006,7 @@ def compute_axis_cross(df, settings):
         fig = heatmap(z, [str(v) for v in cols_v], [str(v) for v in rows_v],
                       title="%s × %s 교차 매트릭스 (셀=특허 수)"
                             % (axes[a_key]["label"], axes[b_key]["label"]),
-                      colorscale="YlGnBu", hovertext=hover, colorbar_title="건수")
+                      colorscale=YLGNBU, hovertext=hover, colorbar_title="건수")
         fig["layout"]["xaxis"]["title"] = {"text": axes[b_key]["label"], "standoff": 6}
         fig["layout"]["yaxis"]["title"] = {"text": axes[a_key]["label"], "standoff": 6}
         fig["data"][0]["customdata"] = [
@@ -12943,7 +13003,8 @@ def register_routes(app):
                         sentences=str(out["answer"]).split("\n"),
                         dataset=settings.get("dataset"), kind="chat",
                         question=body.get("question"),
-                        chart_image=body.get("chart_image"))
+                        chart_image=body.get("chart_image"),
+                        chart_images=body.get("chart_images"))
                 except Exception as e:
                     logger.warning("인사이트 저장 실패: %s", e)
             return out
@@ -12957,7 +13018,8 @@ def register_routes(app):
                 out["saved_id"] = add_insight(
                     analysis, title=analysis, sentences=out["sentences"],
                     dataset=settings.get("dataset"), kind="report",
-                    chart_image=body.get("chart_image"))
+                    chart_image=body.get("chart_image"),
+                    chart_images=body.get("chart_images"))
             except Exception as e:
                 logger.warning("인사이트 저장 실패: %s", e)
         return out
@@ -13179,7 +13241,8 @@ def register_routes(app):
     @wrap
     def api_insights_log_image():
         """GET ?id= → 항목의 차트 캡처 이미지 스트림 (보관함 미리보기용)."""
-        data, mime = insight_get_image(request.args.get("id"))
+        data, mime = insight_get_image(request.args.get("id"),
+                                       request.args.get("i", 0))
         if data is None:
             raise LookupError("이미지가 없습니다.")
         return send_file(io.BytesIO(data), mimetype=mime)

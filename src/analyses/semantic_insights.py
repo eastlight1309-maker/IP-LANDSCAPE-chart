@@ -38,7 +38,7 @@ from src.embedding_adapter import get_adapter
 from src.analyses.claim_density import _tfidf_vectors
 from src.analyses.scope_entropy import doc_terms
 from src.insights import build_insight, fmt_num, fmt_pct, check_small_sample
-from src.viz_payload import ok_result, empty_result, base_layout, color_for, \
+from src.viz_payload import YLGNBU, ok_result, empty_result, base_layout, color_for, \
     cytoscape_network, PALETTE
 
 
@@ -307,7 +307,7 @@ def compute_emerging_clusters(df, settings):
             "size": [max(14.0, min(56.0, 10 + 2.2 * np.sqrt(c["n"]))) for c in clusters],
             "color": [c["new_applicant_ratio"] if c["new_applicant_ratio"] is not None
                       else 0.0 for c in clusters],
-            "colorscale": "YlGnBu", "cmin": 0, "cmax": 1,
+            "colorscale": YLGNBU, "cmin": 0, "cmax": 1,
             "colorbar": {"title": "신규 출원인 비율", "thickness": 12},
             "line": {"width": [2.5 if c["is_new_cluster"] else 0.6 for c in clusters],
                      "color": "#E15759"}}}],

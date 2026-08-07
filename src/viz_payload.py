@@ -163,15 +163,23 @@ def bubble_chart(points, x_title, y_title, title=None, quadrants=None,
 RDYLGN = [[0.0, "#E15759"], [0.5, "#F1CE63"], [1.0, "#59A14F"]]  # 낮음=빨강, 높음=초록
 PURPLES = [[0.0, "#f6f2fa"], [1.0, "#59489C"]]
 ORRD = [[0.0, "#fff3e0"], [1.0, "#d7301f"]]
+# Plotly.js 내장 YlOrRd/YlGnBu/Blues 는 python 쪽과 반대로 0=진함→1=연함으로
+# 정의되어 있어 "값이 클수록 진하다"는 해석이 뒤집힌다 → 연함→진함 배열로 고정.
+BLUES = [[0.0, "#f0f6fc"], [0.5, "#7fafd4"], [1.0, "#1b5e93"]]
+YLORRD = [[0.0, "#fff8e1"], [0.5, "#fdae61"], [1.0, "#c0392b"]]
+YLGNBU = [[0.0, "#f7fcf0"], [0.5, "#66c2a4"], [1.0, "#0868ac"]]
+BLUE_RED = [[0.0, "#2166ac"], [0.5, "#f7f7f7"], [1.0, "#b2182c"]]  # 낮음=파랑, 높음=빨강
 
 
-def heatmap(z, x_labels, y_labels, title=None, colorscale="YlOrRd", hovertext=None,
+def heatmap(z, x_labels, y_labels, title=None, colorscale=None, hovertext=None,
             colorbar_title=None, zmid=None):
     """Plotly 히트맵 payload. 셀 수가 LIMITS 초과인 경우 호출부에서 ECharts 로 전환.
 
     가독성 규칙: 행(y) 수에 비례해 세로 길이를 늘리고(행당 최소 26px),
     양 축 모두 dtick=1 로 라벨 생략 없이 전부 표시한다 (라벨 많으면 글자만 축소).
     """
+    if colorscale is None:
+        colorscale = YLORRD
     trace = {"type": "heatmap", "z": z, "x": x_labels, "y": y_labels,
              "colorscale": colorscale, "colorbar": {"thickness": 12}}
     if colorbar_title:

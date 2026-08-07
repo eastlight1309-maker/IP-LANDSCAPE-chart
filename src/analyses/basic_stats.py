@@ -28,7 +28,7 @@ import pandas as pd
 from src.config import get_threshold, get_limit
 from src.metrics import robust_growth, year_counts
 from src.insights import build_insight, fmt_num, fmt_pct, period_label, check_small_sample
-from src.viz_payload import ok_result, empty_result, line_chart, bar_chart, heatmap, \
+from src.viz_payload import BLUES, YLGNBU, ok_result, empty_result, line_chart, bar_chart, heatmap, \
     base_layout
 from src.analyses.common import diagnose_year_tech
 
@@ -99,7 +99,7 @@ def compute_basic_stats(df, settings):
             hover.append(["%s — %d년: %s건" % (a, y, fmt_num(v))
                           for y, v in zip(years_range, row)])
         fig_app_year = heatmap(z, [str(y) for y in years_range], matrix_apps,
-                               title="출원인 × 연도 활동 매트릭스", colorscale="Blues",
+                               title="출원인 × 연도 활동 매트릭스", colorscale=BLUES,
                                hovertext=hover, colorbar_title="건수")
 
     # ③-b 출원인 × 출원연도 버블 (크기=출원건수)
@@ -132,7 +132,7 @@ def compute_basic_stats(df, settings):
             "hovertext": pts["hover"], "hoverinfo": "text",
             "customdata": pts["custom"],
             "marker": {"size": pts["size"], "color": pts["color"],
-                       "colorscale": "Blues", "cmin": 0,
+                       "colorscale": BLUES, "cmin": 0,
                        "colorbar": {"title": "출원건수", "thickness": 12},
                        "line": {"width": 0.6, "color": "#5b7a8a"}}}],
             "layout": base_layout(
@@ -167,7 +167,7 @@ def compute_basic_stats(df, settings):
             hover2.append(["%s — %d년: %s건" % (t, y, fmt_num(v))
                            for y, v in zip(years_range, row)])
         fig_tech_year = heatmap(z2, [str(y) for y in years_range], matrix_techs,
-                                title="기술분류 × 연도 동향", colorscale="YlGnBu",
+                                title="기술분류 × 연도 동향", colorscale=YLGNBU,
                                 hovertext=hover2, colorbar_title="건수")
 
     # ⑦ KPI
@@ -351,7 +351,7 @@ def compute_tech_year_bubble(df, settings, companies=None):
                                   "연도": int(y), "건수": int(n)}})
         marker = {"size": sizes, "line": {"width": 0.6, "color": "#5b7a8a"}}
         if n_g == 1:
-            marker.update({"color": colors, "colorscale": "Blues", "cmin": 0,
+            marker.update({"color": colors, "colorscale": BLUES, "cmin": 0,
                            "colorbar": {"title": "출원건수", "thickness": 12}})
         else:
             marker.update({"color": color_for(name, color_reg), "opacity": 0.85})

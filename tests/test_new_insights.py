@@ -288,6 +288,10 @@ def test_basic_stats_chart_insights(prepared, settings):
     for k in ("country", "applicants", "tech"):
         if r.get(k):
             assert ci.get(k), "chart_insights[%s] 누락" % k
+    # 활동 매트릭스 색: 연함(낮음)→진함(높음) 명시 배열 — Plotly.js 내장 'Blues'가
+    # 0=진함→1=연함으로 정의되어 해석이 뒤집히던 문제 방지
+    cs = r["applicant_year"]["data"][0]["colorscale"]
+    assert cs[0][1] == "#f0f6fc" and cs[-1][1] == "#1b5e93"
 
 
 # ---------------------------------------------------------------------------

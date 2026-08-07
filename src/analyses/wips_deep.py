@@ -45,7 +45,7 @@ from src.preprocessing import parse_numeric, parse_bool, parse_multiclass_cell, 
     auto_standardize_name
 from src.insights import build_insight, fmt_num, fmt_pct, period_label, \
     check_small_sample
-from src.viz_payload import RDYLGN, PURPLES, ORRD, ok_result, empty_result, bar_chart, base_layout, \
+from src.viz_payload import YLORRD, RDYLGN, PURPLES, ORRD, ok_result, empty_result, bar_chart, base_layout, \
     heatmap, cytoscape_network, color_for, PALETTE
 
 
@@ -244,7 +244,7 @@ def _market_entry_section(df, settings):
         hover.append(row_h)
     fig = heatmap(z, top_ctrys, top_comps,
                   title="기업×국가 평균 진입 시차 (개월, 낮을수록 우선 베팅 시장)",
-                  colorscale="YlOrRd", hovertext=hover, colorbar_title="개월")
+                  colorscale=YLORRD, hovertext=hover, colorbar_title="개월")
 
     # 1순위 진입국 + 최근 변화 (패밀리별 최소 시차 행 = 첫 진입 문헌)
     first_rows = []

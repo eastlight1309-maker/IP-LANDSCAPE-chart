@@ -41,7 +41,7 @@ from src.config import get_threshold, get_limit
 from src.metrics import robust_growth, year_counts, safe_div
 from src.preprocessing import parse_multiclass_cell
 from src.insights import build_insight, fmt_num, fmt_pct, period_label, check_small_sample
-from src.viz_payload import RDYLGN, ok_result, empty_result, disabled_result, bar_chart, \
+from src.viz_payload import BLUES, RDYLGN, ok_result, empty_result, disabled_result, bar_chart, \
     line_chart, base_layout
 
 # 국가별 GNI (조 USD, World Bank 2023 근사) — MC 가중치. 사용 시 US 로 정규화.
@@ -247,7 +247,7 @@ def compute_portfolio_index(df, settings):
         "marker": {"size": fam_sizes, "sizemode": "area",
                    "sizeref": 2.0 * fmax / (46 ** 2), "sizemin": 9,
                    "color": [r["avg_mc"] for r in shown],
-                   "colorscale": "Blues", "showscale": True,
+                   "colorscale": BLUES, "showscale": True,
                    "colorbar": {"title": "평균 MC", "thickness": 12},
                    "line": {"width": 1, "color": "#33506a"}, "opacity": 0.88},
     }], "layout": base_layout(

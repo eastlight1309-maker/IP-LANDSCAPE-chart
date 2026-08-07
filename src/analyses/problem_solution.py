@@ -27,8 +27,8 @@ import pandas as pd
 from src.config import get_threshold, get_limit
 from src.metrics import robust_growth, year_counts, normalize_series
 from src.insights import build_insight, fmt_num, fmt_pct, period_label, check_small_sample
-from src.viz_payload import ok_result, empty_result, disabled_result, heatmap, \
-    echarts_heatmap
+from src.viz_payload import YLGNBU, RDYLGN, ok_result, empty_result, disabled_result, \
+    heatmap, echarts_heatmap
 
 
 def _clean_text_series(s):
@@ -145,7 +145,7 @@ def compute_problem_solution(df, settings):
     else:
         fig = heatmap(growth_z, sol_labels, prob_labels,
                       title="문제–해결수단 매트릭스 (색=최근 성장률, hover=건수·장벽)",
-                      colorscale="RdYlGn", hovertext=hover, colorbar_title="성장률", zmid=0)
+                      colorscale=RDYLGN, hovertext=hover, colorbar_title="성장률", zmid=0)
         fig["counts_z"] = z_counts
         # 플롯 영역 확보: 행 수 비례 높이 + 라벨 폰트·여백 제한
         fig["layout"]["height"] = max(460, 140 + 26 * len(top_problems))
@@ -354,7 +354,7 @@ def compute_ps_semantic(df, settings):
               for j, sg_ in enumerate(s_show)] for i, pg_ in enumerate(p_show)]
     fig = heatmap(z, [g["label"] for g in s_show], [g["label"] for g in p_show],
                   title="문제–해결수단 의미 그룹 매트릭스 (임베딩 유사 문구 통합, 셀=건수)",
-                  colorscale="YlGnBu", hovertext=hover, colorbar_title="건수")
+                  colorscale=YLGNBU, hovertext=hover, colorbar_title="건수")
     fig["layout"]["xaxis"]["title"] = {"text": "해결수단 그룹", "standoff": 6}
     fig["layout"]["yaxis"]["title"] = {"text": "해결과제 그룹", "standoff": 6}
     fig["data"][0]["customdata"] = [

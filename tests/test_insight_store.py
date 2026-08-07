@@ -123,6 +123,37 @@ def test_chart_image_saved_and_embedded(tmp_path, monkeypatch):
     assert gi(iid) == (None, None)
 
 
+def test_multiple_chart_images_all_in_pptx(tmp_path, monkeypatch):
+    """카드에 차트가 여러 개면 전부 저장되고 PPT 에 모두 들어간다."""
+    monkeypatch.setenv("IP_LANDSCAPE_UPLOAD_DIR", str(tmp_path))
+    iid = add_insight("wips-deep", "차트 3개 인사이트", _SENTS,
+                      chart_images=[_DATA_URL, _DATA_URL, _DATA_URL])
+    it = list_insights()[0]
+    assert it["id"] == iid and it["n_images"] == 3
+    from src.insight_store import get_image
+    for i in range(3):
+        data, mime = get_image(iid, i)
+        assert data and mime == "image/png", "이미지 %d 누락" % i
+    assert get_image(iid, 3) == (None, None)
+    slides = _to_slides([it], "보고서")
+    with_img = [s for s in slides if s.get("image")]
+    assert len(with_img) == 3  # 첫 슬라이드 1 + 추가 차트 슬라이드 2
+    assert sum(1 for s in slides if s.get("image_full")) == 2
+    assert any("차트 2/3" in s["title"] for s in slides)
+    data2 = _minimal_pptx(slides)
+    with zipfile.ZipFile(io.BytesIO(data2)) as z:
+        media = [n for n in z.namelist() if n.startswith("ppt/media/")]
+        assert len(media) == 3
+    pptx = pytest.importorskip("pptx")
+    prs = pptx.Presentation(io.BytesIO(data2))
+    from pptx.enum.shapes import MSO_SHAPE_TYPE
+    n_pics = sum(1 for slide in prs.slides for sh in slide.shapes
+                 if sh.shape_type == MSO_SHAPE_TYPE.PICTURE)
+    assert n_pics == 3
+    delete_insight(iid)
+    assert get_image(iid, 0) == (None, None)
+
+
 def test_minimal_pptx_with_image_opens_with_library(tmp_path, monkeypatch):
     pptx = pytest.importorskip("pptx")
     monkeypatch.setenv("IP_LANDSCAPE_UPLOAD_DIR", str(tmp_path))

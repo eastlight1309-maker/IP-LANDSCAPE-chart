@@ -34,7 +34,7 @@ from src.config import get_threshold, get_limit
 from src.gpu_utils import run_umap, run_hdbscan, cosine_similarity_matrix
 from src.embedding_adapter import get_adapter
 from src.insights import build_insight, fmt_num, fmt_pct, check_small_sample
-from src.viz_payload import ok_result, empty_result, disabled_result, base_layout, \
+from src.viz_payload import YLORRD, ok_result, empty_result, disabled_result, base_layout, \
     color_for, PALETTE
 
 
@@ -173,7 +173,7 @@ def compute_claim_density(df, settings, tech=None):
         p["custom"].append({"drill": {"type": "ids", "ids": [str(ids[i])]}})
 
     traces = [{"type": "contour", "x": xs.tolist(), "y": ys.tolist(),
-               "z": zz.tolist(), "colorscale": "YlOrRd", "opacity": 0.45,
+               "z": zz.tolist(), "colorscale": YLORRD, "opacity": 0.45,
                "showscale": True, "colorbar": {"title": "청구항 밀도", "thickness": 12},
                "contours": {"showlines": False}, "hoverinfo": "skip", "name": "밀도"}]
     for app_group, p in points_by_app.items():

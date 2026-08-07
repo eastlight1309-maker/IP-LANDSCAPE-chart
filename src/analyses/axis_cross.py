@@ -26,7 +26,7 @@ import numpy as np
 
 from src.config import get_limit
 from src.insights import build_insight, fmt_num, fmt_pct, check_small_sample
-from src.viz_payload import ok_result, empty_result, heatmap, base_layout
+from src.viz_payload import YLGNBU, ok_result, empty_result, heatmap, base_layout
 
 _AXIS_COLS = (("A", "_tech_list", "A축(기술)"), ("B", "_tech_b_list", "B축"),
               ("C", "_tech_c_list", "C축"))
@@ -80,7 +80,7 @@ def compute_axis_cross(df, settings):
         fig = heatmap(z, [str(v) for v in cols_v], [str(v) for v in rows_v],
                       title="%s × %s 교차 매트릭스 (셀=특허 수)"
                             % (axes[a_key]["label"], axes[b_key]["label"]),
-                      colorscale="YlGnBu", hovertext=hover, colorbar_title="건수")
+                      colorscale=YLGNBU, hovertext=hover, colorbar_title="건수")
         fig["layout"]["xaxis"]["title"] = {"text": axes[b_key]["label"], "standoff": 6}
         fig["layout"]["yaxis"]["title"] = {"text": axes[a_key]["label"], "standoff": 6}
         fig["data"][0]["customdata"] = [

@@ -33,7 +33,10 @@ _MAX_IMAGE_MB = 4
 _DATAURL_RE = re.compile(r"^data:image/(png|jpeg);base64,(.+)$", re.DOTALL)
 
 
-def _save_chart_image(insight_id, chart_image):
+_MAX_IMAGES = 6  # 카드 하나에서 캡처·저장하는 차트 수 상한
+
+
+def _save_chart_image(insight_id, chart_image, idx=0):
     """프론트가 보낸 차트 캡처(data URL) → PNG/JPEG 파일 저장. 파일명 또는 None."""
     m = _DATAURL_RE.match(str(chart_image or "").strip())
     if not m:
@@ -44,7 +47,9 @@ def _save_chart_image(insight_id, chart_image):
         return None
     if not raw or len(raw) > _MAX_IMAGE_MB * 1024 * 1024:
         return None
-    fname = "%s.%s" % (insight_id, "png" if m.group(1) == "png" else "jpg")
+    ext = "png" if m.group(1) == "png" else "jpg"
+    fname = ("%s.%s" % (insight_id, ext) if idx == 0
+             else "%s_%d.%s" % (insight_id, idx, ext))
     try:
         with open(os.path.join(storage.insight_image_dir(), fname), "wb") as fh:
             fh.write(raw)
@@ -54,17 +59,26 @@ def _save_chart_image(insight_id, chart_image):
         return None
 
 
+def _image_paths(entry):
+    """항목의 차트 이미지 파일 경로 목록 (존재하는 것만, 저장 순서 유지)."""
+    fnames = entry.get("image_files")
+    if not fnames:
+        fnames = [entry.get("image_file")] if entry.get("image_file") else []
+    out = []
+    for fname in fnames:
+        path = os.path.join(storage.insight_image_dir(), str(fname))
+        if os.path.exists(path):
+            out.append(path)
+    return out
+
+
 def _image_path(entry):
-    fname = entry.get("image_file")
-    if not fname:
-        return None
-    path = os.path.join(storage.insight_image_dir(), str(fname))
-    return path if os.path.exists(path) else None
+    paths = _image_paths(entry)
+    return paths[0] if paths else None
 
 
 def _remove_image(entry):
-    path = _image_path(entry)
-    if path:
+    for path in _image_paths(entry):
         try:
             os.remove(path)
         except OSError:
@@ -72,12 +86,23 @@ def _remove_image(entry):
 
 
 def add_insight(analysis, title, sentences, dataset=None, kind="report",
-                question=None, chart_image=None):
-    """LLM 인사이트 저장 (+차트 캡처 이미지 — PPT 삽입용). 반환: 항목 id."""
+                question=None, chart_image=None, chart_images=None):
+    """LLM 인사이트 저장 (+차트 캡처 이미지들 — PPT 삽입용). 반환: 항목 id.
+
+    chart_images: 카드의 모든 차트 캡처(data URL 목록) — PPT 에 전부 들어간다.
+    chart_image: 구버전 단일 캡처 (chart_images 미지정 시 사용).
+    """
     sentences = [str(s).strip() for s in (sentences or []) if str(s).strip()][:40]
     if not sentences:
         return None
     uid = uuid.uuid4().hex[:10]
+    images_in = [img for img in (chart_images or []) if img] or \
+        ([chart_image] if chart_image else [])
+    image_files = []
+    for i, img in enumerate(images_in[:_MAX_IMAGES]):
+        fname = _save_chart_image(uid, img, idx=len(image_files))
+        if fname:
+            image_files.append(fname)
     entry = {
         "id": uid, "kind": kind,
         "analysis": str(analysis or "")[:60],
@@ -86,7 +111,8 @@ def add_insight(analysis, title, sentences, dataset=None, kind="report",
         "sentences": sentences,
         "dataset": (str(dataset)[:80] if dataset else None),
         "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
-        "image_file": _save_chart_image(uid, chart_image),
+        "image_file": image_files[0] if image_files else None,
+        "image_files": image_files,
     }
     data = storage.load_store("insights")
     items = list(data.get("items") or [])
@@ -100,16 +126,23 @@ def add_insight(analysis, title, sentences, dataset=None, kind="report",
 def list_insights():
     items = list(storage.load_store("insights").get("items") or [])
     for it in items:
-        it["has_image"] = _image_path(it) is not None
+        paths = _image_paths(it)
+        it["has_image"] = bool(paths)
+        it["n_images"] = len(paths)
     return items
 
 
-def get_image(insight_id):
-    """항목의 차트 이미지 (bytes, mimetype) 또는 (None, None)."""
+def get_image(insight_id, idx=0):
+    """항목의 idx 번째 차트 이미지 (bytes, mimetype) 또는 (None, None)."""
     for it in storage.load_store("insights").get("items") or []:
         if str(it.get("id")) == str(insight_id):
-            path = _image_path(it)
-            if path:
+            paths = _image_paths(it)
+            try:
+                idx = int(idx or 0)
+            except (TypeError, ValueError):
+                idx = 0
+            if 0 <= idx < len(paths):
+                path = paths[idx]
                 with open(path, "rb") as fh:
                     return fh.read(), ("image/png" if path.endswith(".png")
                                        else "image/jpeg")
@@ -169,22 +202,27 @@ def _to_slides(items, report_title):
                                      (" · Q: %s" % it["question"])
                                      if it.get("question") else "")
         lines = [meta_line] + lines
-        image = None
-        ext = None
-        path = _image_path(it)
-        if path:
+        images = []
+        for path in _image_paths(it):
             try:
                 with open(path, "rb") as fh:
-                    image = fh.read()
-                ext = "png" if path.endswith(".png") else "jpg"
+                    images.append((fh.read(),
+                                   "png" if path.endswith(".png") else "jpg"))
             except OSError:
-                image = None
+                continue
+        first_img, first_ext = images[0] if images else (None, None)
         for start in range(0, len(lines), _LINES_PER_SLIDE):
             chunk = lines[start:start + _LINES_PER_SLIDE]
             t = title if start == 0 else title[:60] + " (계속)"
             slides.append({"title": t[:120], "lines": chunk,
-                           "image": image if start == 0 else None,
-                           "ext": ext if start == 0 else None})
+                           "image": first_img if start == 0 else None,
+                           "ext": first_ext if start == 0 else None})
+        # 카드에 차트가 여러 개면 나머지 차트도 큰 그림 슬라이드로 모두 포함
+        for k, (img, ext) in enumerate(images[1:], start=2):
+            slides.append({"title": ("%s — 차트 %d/%d" % (title[:100], k,
+                                                        len(images)))[:120],
+                           "lines": [], "image": img, "ext": ext,
+                           "image_full": True})
     return slides
 
 
@@ -205,6 +243,12 @@ def _pptx_via_library(slides):
         p.font.size = Pt(_title_size(sl["title"]))
         p.font.bold = True
         has_img = bool(sl.get("image"))
+        if has_img and sl.get("image_full"):
+            # 추가 차트 슬라이드: 그림을 크게 중앙 배치 (텍스트 없음)
+            slide.shapes.add_picture(io.BytesIO(sl["image"]),
+                                     Inches(1.82), Inches(1.5),
+                                     width=Inches(9.7), height=Inches(5.66))
+            continue
         if has_img:
             slide.shapes.add_picture(io.BytesIO(sl["image"]),
                                      Inches(0.4), Inches(1.55),
@@ -357,10 +401,18 @@ def _textbox(shape_id, name, x, y, w, h, paragraphs):
             % (shape_id, name, x, y, w, h, "".join(paras)))
 
 
-def _slide_xml(title, lines, has_image=False):
+def _slide_xml(title, lines, has_image=False, image_full=False):
     # 제목: 길이 비례 축소 + 2줄 여유 박스 (화면 밖 이탈 방지)
     title_box = _textbox(2, "title", 457200, 274320, 11277600, 1005840,
                          [(title, _title_size(title), True)])
+    if has_image and image_full:
+        # 추가 차트 슬라이드: 그림을 크게 중앙 배치 (12:7 비율 유지)
+        pic = _picture_xml(4, 1667510, 1417320, 8856980, 5166240)
+        return ("""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<p:sld %s><p:cSld><p:spTree>
+<p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr>
+<p:grpSpPr/>%s%s</p:spTree></p:cSld><p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:sld>"""
+                % (_NS, title_box, pic))
     body_paras = []
     base_size = 12 if has_image else 13
     for i, line in enumerate(lines):
@@ -435,7 +487,8 @@ def _minimal_pptx(slides):
                 z.writestr("ppt/media/%s" % media_name, sl["image"])
                 img_rel = _IMG_REL % media_name
             z.writestr("ppt/slides/slide%d.xml" % (i + 1),
-                       _slide_xml(sl["title"], sl["lines"], has_image=has_img))
+                       _slide_xml(sl["title"], sl["lines"], has_image=has_img,
+                                  image_full=bool(sl.get("image_full"))))
             z.writestr("ppt/slides/_rels/slide%d.xml.rels" % (i + 1),
                        _SLIDE_RELS % img_rel)
     return buf.getvalue()

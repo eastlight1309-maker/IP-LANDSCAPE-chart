@@ -40,7 +40,7 @@ import pandas as pd
 from src.config import get_threshold, get_limit
 from src.gpu_utils import cosine_similarity_matrix
 from src.insights import build_insight, fmt_num, fmt_pct, check_small_sample
-from src.viz_payload import ok_result, empty_result, heatmap, bar_chart, echarts_heatmap
+from src.viz_payload import BLUE_RED, ok_result, empty_result, heatmap, bar_chart, echarts_heatmap
 
 _TOKEN_RE = re.compile(r"[A-Za-z가-힣一-龥ぁ-んァ-ン0-9]{2,}")
 _STOP = frozenset(["및", "또는", "위한", "있는", "하는", "the", "and", "for", "with",
@@ -124,9 +124,8 @@ def compute_classification_quality(df, settings):
     else:
         fig_confusion = heatmap(z, techs, techs,
                                 title="Classification Confusion Map (빨강=모호, 파랑=분리 명확)",
-                                colorscale="RdBu", hovertext=hover,
+                                colorscale=BLUE_RED, hovertext=hover,
                                 colorbar_title="유사도/중복", zmid=0.5)
-        fig_confusion["data"][0]["reversescale"] = True
 
     # 실루엣 (단일 분류 문헌만, 표본 상한)
     silhouette = None

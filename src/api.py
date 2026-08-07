@@ -698,7 +698,8 @@ def register_routes(app):
                         sentences=str(out["answer"]).split("\n"),
                         dataset=settings.get("dataset"), kind="chat",
                         question=body.get("question"),
-                        chart_image=body.get("chart_image"))
+                        chart_image=body.get("chart_image"),
+                        chart_images=body.get("chart_images"))
                 except Exception as e:
                     logger.warning("인사이트 저장 실패: %s", e)
             return out
@@ -712,7 +713,8 @@ def register_routes(app):
                 out["saved_id"] = add_insight(
                     analysis, title=analysis, sentences=out["sentences"],
                     dataset=settings.get("dataset"), kind="report",
-                    chart_image=body.get("chart_image"))
+                    chart_image=body.get("chart_image"),
+                    chart_images=body.get("chart_images"))
             except Exception as e:
                 logger.warning("인사이트 저장 실패: %s", e)
         return out
@@ -934,7 +936,8 @@ def register_routes(app):
     @wrap
     def api_insights_log_image():
         """GET ?id= → 항목의 차트 캡처 이미지 스트림 (보관함 미리보기용)."""
-        data, mime = insight_get_image(request.args.get("id"))
+        data, mime = insight_get_image(request.args.get("id"),
+                                       request.args.get("i", 0))
         if data is None:
             raise LookupError("이미지가 없습니다.")
         return send_file(io.BytesIO(data), mimetype=mime)
