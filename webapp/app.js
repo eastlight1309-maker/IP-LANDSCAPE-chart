@@ -16,6 +16,39 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
   var backendUrl = (typeof getWebAppBackendUrl === 'function')
     ? getWebAppBackendUrl : function (p) { return p; };
 
+  /* ---------------------------------------------------- 인증 (앱 수준) */
+  var Auth = {
+    token: function () {
+      try { return localStorage.getItem('ipls_token') || ''; } catch (e) { return ''; }
+    },
+    user: function () {
+      try { return localStorage.getItem('ipls_user') || ''; } catch (e) { return ''; }
+    },
+    isAdmin: function () {
+      try { return localStorage.getItem('ipls_admin') === '1'; } catch (e) { return false; }
+    },
+    save: function (token, user) {
+      try {
+        localStorage.setItem('ipls_token', token);
+        localStorage.setItem('ipls_user', user.name || '');
+        localStorage.setItem('ipls_admin', user.is_admin ? '1' : '0');
+      } catch (e) { /* localStorage 미가용 환경 */ }
+    },
+    clear: function () {
+      try {
+        localStorage.removeItem('ipls_token');
+        localStorage.removeItem('ipls_user');
+        localStorage.removeItem('ipls_admin');
+      } catch (e) { }
+    },
+    headers: function (extra) {
+      var h = extra || {};
+      var t = Auth.token();
+      if (t) h['X-IPLS-Auth'] = t;
+      return h;
+    }
+  };
+
   var State = {
     config: null,          // /api/config 응답
     filters: {},           // 현재 필터
@@ -44,25 +77,28 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
     return {
       get: function (path) {
         spin(true);
-        return fetch(backendUrl(path)).then(handle)
+        return fetch(backendUrl(path), { headers: Auth.headers() }).then(handle)
           .finally(function () { spin(false); });
       },
       post: function (path, body, spinText) {
         spin(true, spinText);
         return fetch(backendUrl(path), {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          method: 'POST',
+          headers: Auth.headers({ 'Content-Type': 'application/json' }),
           body: JSON.stringify(body || {})
         }).then(handle).finally(function () { spin(false); });
       },
       upload: function (path, formData, spinText) {
         spin(true, spinText || '업로드 중…');
-        return fetch(backendUrl(path), { method: 'POST', body: formData })
+        return fetch(backendUrl(path), { method: 'POST', body: formData,
+                                         headers: Auth.headers() })
           .then(handle).finally(function () { spin(false); });
       },
       download: function (path, body, filename) {
         spin(true, '파일 생성 중…');
         return fetch(backendUrl(path), {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          method: 'POST',
+          headers: Auth.headers({ 'Content-Type': 'application/json' }),
           body: JSON.stringify(body || {})
         }).then(function (resp) {
           if (!resp.ok) { return resp.json().then(function (d) { throw new Error(d.message || '다운로드 실패'); }); }
@@ -3543,6 +3579,11 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
       '<li><b>임베딩 대상</b>: 청구항 분석(밀집도·청구구조 다양성)=독립청구항 / 주제 분석(신흥 탐지·의미 영향력·중첩 네트워크)=명칭+요약(부족 시 독립청구항) / 문제–해결수단 의미 그룹=과제·수단 문구.</li>' +
       '<li><b>군집화</b>: 밀집도=HDBSCAN(자동), 신흥 탐지=KMeans(k 자동), 의미 그룹=계층 군집(거리 임계값 ps_group_distance 로 조정). 모든 시드는 고정되어 같은 데이터에서 같은 결과가 나옵니다.</li>' +
       '<li><b>LLM</b>: 허용 목록의 사내 모델만 사용하고, 특허 원문이 아닌 화면 집계값·요약 통계만 전달합니다.</li></ul>');
+    section('🔐 로그인·권한',
+      '<ul style="padding-left:18px;line-height:1.9">' +
+      '<li><b>로그인</b>: ID=팀명/이름, 비밀번호=사원번호. 처음 로그인하면 자동 등록되고, <b>첫 번째 등록 사용자가 관리자</b>가 됩니다. 사원번호는 해시로만 저장됩니다.</li>' +
+      '<li><b>권한</b>: 일반 사용자는 <b>본인이 올린 업로드 작업·스냅샷·인사이트만</b> 보이고 삭제할 수 있습니다. 관리자는 전체를 보고 Settings 의 "사용자 관리"에서 관리자 지정/해제·사용자 삭제를 할 수 있습니다. 로그인 도입 전에 만들어진(소유자 없는) 항목은 모두에게 보입니다.</li>' +
+      '<li><b>보안 성격</b>: 이 로그인은 작업 구분용 편의 접근 관리입니다 — 사원번호는 추측 가능성이 있는 약한 비밀번호이며, 강한 접근 통제가 필요하면 Dataiku 프로젝트 권한을 사용하세요.</li></ul>');
     section('❓ 자주 묻는 문제',
       '<table class="ipls-table"><thead><tr><th>증상</th><th>확인 사항</th></tr></thead><tbody>' +
       '<tr><td>분석이 "비활성화"로 표시됨</td><td>Settings → 컬럼 매핑에서 안내된 필수 컬럼을 매핑하세요. \'등록일[KR,JP,…]\' 처럼 국가목록이 붙은 WIPS 헤더와 \'(B1)\' 류 코드는 자동 인식됩니다. 매핑했는데도 안 되면 메시지의 [매핑 진단]과 "예시 값"으로 실제 값 형식을 확인하세요.</td></tr>' +
@@ -3863,6 +3904,55 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
         }).catch(errToast);
     });
     renderSnapshots();
+
+    /* 사용자 관리 (관리자 전용) */
+    if (Auth.isAdmin()) {
+      var cua = card('👥 사용자 관리 (관리자)',
+        '등록된 접속자 목록입니다. 관리자는 모든 사용자의 작업·스냅샷·인사이트를 볼 수 있고, ' +
+        '일반 사용자는 본인 것만 봅니다. 사용자를 삭제해도 그가 올린 데이터는 남습니다 ' +
+        '(소유자 표시만 유지). 마지막 관리자는 해제/삭제할 수 없습니다.');
+      grid.appendChild(cua.root);
+      var uaList = Ui.el('<div></div>');
+      cua.body.appendChild(uaList);
+      function renderUsers() {
+        Api.get('/api/auth/users').then(function (d) {
+          uaList.innerHTML = '';
+          var rows = (d.users || []).map(function (u) {
+            var tr = document.createElement('tr');
+            tr.insertAdjacentHTML('beforeend',
+              '<td><b>' + Ui.esc(u.name) + '</b>' +
+              (u.name === Auth.user() ? ' <span class="badge">나</span>' : '') + '</td>' +
+              '<td>' + (u.is_admin ? '<span class="badge good">관리자</span>' : '일반') + '</td>' +
+              '<td style="white-space:nowrap">' + Ui.esc(u.created_at || '') + '</td>' +
+              '<td style="white-space:nowrap">' + Ui.esc(u.last_login || '') + '</td>');
+            var td = document.createElement('td');
+            td.style.whiteSpace = 'nowrap';
+            var admBtn = Ui.el('<button class="btn small">' +
+              (u.is_admin ? '관리자 해제' : '관리자 지정') + '</button>');
+            admBtn.addEventListener('click', function () {
+              Api.post('/api/auth/users', { name: u.name, set_admin: !u.is_admin })
+                .then(renderUsers).catch(errToast);
+            });
+            td.appendChild(admBtn);
+            var delBtn = Ui.el('<button class="btn small" style="margin-left:4px">삭제</button>');
+            delBtn.addEventListener('click', function () {
+              if (!window.confirm("사용자 '" + u.name + "' 을(를) 삭제할까요? (데이터는 유지)")) return;
+              Api.post('/api/auth/users', { name: u.name, delete: true })
+                .then(renderUsers).catch(errToast);
+            });
+            td.appendChild(delBtn);
+            tr.appendChild(td);
+            return tr;
+          });
+          var tbl = Ui.el(simpleTable(['사용자', '권한', '등록일', '최근 로그인', ''], []));
+          rows.forEach(function (tr) { tbl.querySelector('tbody').appendChild(tr); });
+          var wrap = Ui.el('<div style="overflow-x:auto;max-height:260px;overflow-y:auto"></div>');
+          wrap.appendChild(tbl);
+          uaList.appendChild(wrap);
+        }).catch(errToast);
+      }
+      renderUsers();
+    }
 
     /* Dataset & 분석 옵션 */
     var c1 = card('Dataset · 분석 옵션');
@@ -4294,5 +4384,79 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
         '<div class="status-error">Backend 연결에 실패했습니다: ' + Ui.esc(e.message) + '</div>';
     });
   }
-  boot(false);
+  /* ------------------------------------------------- 로그인 게이트 */
+  function showLogin() {
+    var ov = Ui.el('<div id="ipls-login" style="position:fixed;inset:0;background:rgba(24,38,50,.55);' +
+      'z-index:9999;display:flex;align-items:center;justify-content:center"></div>');
+    var box = Ui.el('<div style="background:#fff;border-radius:12px;padding:28px 30px;' +
+      'width:360px;box-shadow:0 12px 40px rgba(0,0,0,.25)">' +
+      '<div style="font-size:17px;font-weight:800;margin-bottom:4px">🔐 IP Landscape 로그인</div>' +
+      '<div style="font-size:12px;color:#647b8d;margin-bottom:14px">처음이면 자동으로 등록됩니다. ' +
+      'ID는 팀명/이름, 비밀번호는 사원번호입니다.</div>' +
+      '<div class="settings-row"><label style="width:80px">팀명/이름</label>' +
+      '<input type="text" id="login-name" maxlength="60" placeholder="예: IP팀/홍길동" style="flex:1"></div>' +
+      '<div class="settings-row"><label style="width:80px">사원번호</label>' +
+      '<input type="password" id="login-pw" maxlength="30" placeholder="사원번호" style="flex:1"></div>' +
+      '<button class="btn primary" id="login-btn" style="width:100%;margin-top:10px">로그인</button>' +
+      '<div id="login-err" style="color:#E15759;font-size:12px;margin-top:8px"></div>' +
+      '<div style="font-size:10.5px;color:#93a5b4;margin-top:10px">본 로그인은 작업 구분용 편의 ' +
+      '접근 관리입니다 — 관리자 외에는 본인이 올린 데이터만 보입니다. 강한 보안이 필요한 ' +
+      '접근 통제는 Dataiku 프로젝트 권한을 사용하세요.</div></div>');
+    ov.appendChild(box);
+    document.body.appendChild(ov);
+    function doLogin() {
+      var name = box.querySelector('#login-name').value.trim();
+      var pw = box.querySelector('#login-pw').value.trim();
+      if (!name || !pw) {
+        box.querySelector('#login-err').textContent = '팀명/이름과 사원번호를 입력하세요.';
+        return;
+      }
+      Api.post('/api/auth/login', { name: name, emp_no: pw }, '로그인 중…')
+        .then(function (d) {
+          Auth.save(d.token, d.user || {});
+          setWorkerName(name);
+          ov.remove();
+          renderUserChip();
+          boot(false);
+        }).catch(function (e) {
+          box.querySelector('#login-err').textContent = e.message;
+        });
+    }
+    box.querySelector('#login-btn').addEventListener('click', doLogin);
+    box.querySelector('#login-pw').addEventListener('keydown', function (ev) {
+      if (ev.key === 'Enter') doLogin();
+    });
+    box.querySelector('#login-name').value = Auth.user() || getWorkerName();
+  }
+
+  function renderUserChip() {
+    var bar = document.getElementById('ipls-topbar');
+    if (!bar || !Auth.user()) return;
+    var old = document.getElementById('ipls-userchip');
+    if (old) old.remove();
+    var chip = Ui.el('<span id="ipls-userchip" style="display:inline-flex;align-items:center;' +
+      'gap:6px;margin-left:auto;font-size:12px;color:#46607a">👤 <b>' + Ui.esc(Auth.user()) +
+      '</b>' + (Auth.isAdmin() ? ' <span class="badge good">관리자</span>' : '') +
+      '<button class="btn small" id="ipls-logout">로그아웃</button></span>');
+    bar.appendChild(chip);
+    chip.querySelector('#ipls-logout').addEventListener('click', function () {
+      Auth.clear();
+      location.reload();
+    });
+  }
+
+  if (Auth.token()) {
+    Api.get('/api/auth/me').then(function (d) {
+      if (d.user) {
+        Auth.save(Auth.token(), d.user);   // is_admin 등 최신화
+        renderUserChip();
+        boot(false);
+      } else {
+        Auth.clear();
+        showLogin();
+      }
+    }).catch(function () { renderUserChip(); boot(false); });
+  } else {
+    showLogin();
+  }
 })();

@@ -62,7 +62,7 @@ def _parse_table(raw_bytes, ext):
     return df
 
 
-def save_upload(raw_bytes, orig_filename, worker, job):
+def save_upload(raw_bytes, orig_filename, worker, job, owner=None):
     """엑셀 업로드 저장 + 즉시 분석 가능 등록. 반환: 메타데이터 entry.
 
     실패 시 ValueError(사용자 안내 메시지).
@@ -96,6 +96,7 @@ def save_upload(raw_bytes, orig_filename, worker, job):
 
     entry = {
         "id": uid, "worker": worker, "job": job,
+        "owner": (str(owner).strip()[:60] if owner else None),
         "orig_filename": orig[:120], "stored_name": stored_name,
         "dataset": dataset_name,
         "uploaded_at": time.strftime("%Y-%m-%d %H:%M:%S"),

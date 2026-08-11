@@ -86,7 +86,8 @@ def _remove_image(entry):
 
 
 def add_insight(analysis, title, sentences, dataset=None, kind="report",
-                question=None, chart_image=None, chart_images=None):
+                question=None, chart_image=None, chart_images=None,
+                owner=None):
     """LLM 인사이트 저장 (+차트 캡처 이미지들 — PPT 삽입용). 반환: 항목 id.
 
     chart_images: 카드의 모든 차트 캡처(data URL 목록) — PPT 에 전부 들어간다.
@@ -111,6 +112,7 @@ def add_insight(analysis, title, sentences, dataset=None, kind="report",
         "sentences": sentences,
         "dataset": (str(dataset)[:80] if dataset else None),
         "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "owner": (str(owner).strip()[:60] if owner else None),
         "image_file": image_files[0] if image_files else None,
         "image_files": image_files,
     }

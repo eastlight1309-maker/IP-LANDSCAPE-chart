@@ -70,6 +70,11 @@ from src.preprocessing import apply_filters, filter_options, auto_standardize_na
 from src.data_access import (list_datasets, validate_dataset_name, get_dataset_columns,
                              get_prepared, inject_dataset, load_sample_dataframe)
 from src import storage
+from src.auth import (login as auth_login, verify_token as auth_verify_token,
+                      is_admin as auth_is_admin, list_users as auth_list_users,
+                      set_admin as auth_set_admin, delete_user as auth_delete_user,
+                      public_user as auth_public_user, find_user as auth_find_user,
+                      can_see as auth_can_see, can_delete as auth_can_delete)
 from src.uploads import (save_upload as uploads_save, list_uploads as uploads_list,
                          load_upload as uploads_load,
                          delete_upload as uploads_delete,
@@ -173,6 +178,27 @@ def _make_demo_dataframe(n=400, seed=7):
     return pd.DataFrame(rows)
 
 
+def _req_user():
+    """요청 헤더의 로그인 토큰 → 사용자 이름 또는 None (앱 수준 접근 관리)."""
+    from flask import request as _rq
+    try:
+        return auth_verify_token(_rq.headers.get("X-IPLS-Auth"))
+    except Exception:
+        return None
+
+
+def _guard_dataset_owner(name):
+    """업로드 dataset 이 다른 사용자 소유면 접근 차단 (관리자 예외)."""
+    for up in (storage.load_uploads().get("items") or []):
+        if str(up.get("dataset")) == str(name):
+            owner = up.get("owner")
+            if owner and not auth_can_see(owner, _req_user()):
+                raise LookupError("이 작업은 '%s' 사용자의 데이터입니다. 본인 계정으로 "
+                                  "로그인했는지 확인하세요 (관리자는 전체 열람 가능)."
+                                  % owner)
+            return
+
+
 def _resolve_dataset(body):
     """요청/설정에서 dataset 결정. demo_mode 면 데모 데이터 주입.
 
@@ -193,6 +219,7 @@ def _resolve_dataset(body):
     valid = validate_dataset_name(name)
     if valid is None:
         raise LookupError("허용되지 않은 Dataset 입니다: %s" % name)
+    _guard_dataset_owner(valid)
     return valid, settings
 
 
@@ -725,7 +752,8 @@ def register_routes(app):
                         dataset=settings.get("dataset"), kind="chat",
                         question=body.get("question"),
                         chart_image=body.get("chart_image"),
-                        chart_images=body.get("chart_images"))
+                        chart_images=body.get("chart_images"),
+                        owner=_req_user())
                 except Exception as e:
                     logger.warning("인사이트 저장 실패: %s", e)
             return out
@@ -743,7 +771,8 @@ def register_routes(app):
                     sentences=out["sentences"],
                     dataset=settings.get("dataset"), kind="report",
                     chart_image=body.get("chart_image"),
-                    chart_images=body.get("chart_images"))
+                    chart_images=body.get("chart_images"),
+                    owner=_req_user())
             except Exception as e:
                 logger.warning("인사이트 저장 실패: %s", e)
         return out
@@ -858,6 +887,7 @@ def register_routes(app):
                           "settings": body.get("settings") or {},
                           "note": str(body.get("note") or "")[:500],
                           "worker": str(body.get("worker") or "").strip()[:60],
+                          "owner": _req_user(),
                           "saved_at": time.strftime("%Y-%m-%d %H:%M:%S")}
         storage.save_projects(projects)
         return {"status": "ok", "projects": sorted(projects.keys())}
@@ -869,15 +899,23 @@ def register_routes(app):
         body = json_body()
         projects = storage.load_projects()
         name = body.get("name")
+        me = _req_user()
         if not name:
             return {"status": "ok",
                     "projects": [{"name": k, "saved_at": v.get("saved_at"),
                                   "note": v.get("note"),
-                                  "worker": v.get("worker", "")}
-                                 for k, v in projects.items()]}
+                                  "worker": v.get("worker", ""),
+                                  "owner": v.get("owner")}
+                                 for k, v in projects.items()
+                                 if auth_can_see(v.get("owner"), me)]}
         if name not in projects:
             raise LookupError("프로젝트를 찾을 수 없습니다: %s" % name)
+        if not auth_can_see(projects[name].get("owner"), me):
+            return _error(403, "'%s' 사용자의 스냅샷입니다 — 본인 것만 볼 수 있습니다."
+                          % projects[name].get("owner"))
         if body.get("delete"):
+            if not auth_can_delete(projects[name].get("owner"), me):
+                return _error(403, "본인이 저장한 스냅샷만 삭제할 수 있습니다 (관리자 예외).")
             projects.pop(name)
             storage.save_projects(projects)
             return {"status": "ok", "deleted": name}
@@ -889,6 +927,56 @@ def register_routes(app):
         """POST {"filters":{...}} → 마지막 필터 상태 저장 (재방문 시 복원)."""
         storage.save_filter_state((json_body() or {}).get("filters") or {})
         return {"status": "ok"}
+
+    # ---------------- 접속자 관리 (앱 수준 편의 접근 제어) ----------------
+    @app.route("/api/auth/login", methods=["POST"])
+    @wrap
+    def api_auth_login():
+        """POST {"name":팀명/이름, "emp_no":사원번호} → {token, user}.
+
+        미등록 이름은 자동 등록(첫 사용자=관리자). 사원번호는 salt+SHA-256
+        해시로만 저장. ⚠ 편의성 접근 관리 계층 — 완전한 보안 경계가 아님.
+        """
+        body = json_body()
+        try:
+            user, token = auth_login(body.get("name"), body.get("emp_no"))
+        except ValueError as e:
+            return _error(400, str(e))
+        return {"status": "ok", "token": token, "user": auth_public_user(user)}
+
+    @app.route("/api/auth/me", methods=["GET"])
+    @wrap
+    def api_auth_me():
+        """GET → 현재 로그인 사용자 (토큰 헤더 X-IPLS-Auth 기준)."""
+        name = _req_user()
+        if not name:
+            return {"status": "ok", "user": None}
+        return {"status": "ok", "user": auth_public_user(auth_find_user(name))}
+
+    @app.route("/api/auth/users", methods=["GET", "POST"])
+    @wrap
+    def api_auth_users():
+        """관리자 전용 사용자 관리.
+
+        GET → 사용자 목록. POST {"name","set_admin":bool} 관리자 지정/해제,
+        POST {"name","delete":true} 사용자 삭제 (데이터는 유지 — 소유자만 남음).
+        """
+        me = _req_user()
+        if not me or not auth_is_admin(me):
+            return _error(403, "관리자만 사용할 수 있습니다.")
+        if request.method == "GET":
+            return {"status": "ok", "users": auth_list_users()}
+        body = json_body()
+        name = str(body.get("name") or "").strip()
+        try:
+            if body.get("delete"):
+                auth_delete_user(name)
+                return {"status": "ok", "deleted": name,
+                        "users": auth_list_users()}
+            user = auth_set_admin(name, bool(body.get("set_admin")))
+            return {"status": "ok", "user": user, "users": auth_list_users()}
+        except (ValueError, LookupError) as e:
+            return _error(400, str(e))
 
     # ---------------- 엑셀 업로드 작업 저장소 ----------------
     @app.route("/api/uploads", methods=["GET", "POST"])
@@ -903,33 +991,53 @@ def register_routes(app):
              영속화하며 즉시 분석 dataset 으로 등록.
         오류 400: 작업자/작업명 누락, 형식·크기 위반, 해석 불가.
         """
+        me = _req_user()
         if request.method == "GET":
-            return {"status": "ok", "items": uploads_list()}
+            items = [it for it in uploads_list()
+                     if auth_can_see(it.get("owner"), me)]
+            return {"status": "ok", "items": items,
+                    "me": me, "is_admin": auth_is_admin(me) if me else False}
         f = request.files.get("file")
         if f is None:
             return _error(400, "파일이 첨부되지 않았습니다.")
         try:
             entry = uploads_save(f.read(), f.filename,
                                             request.form.get("worker"),
-                                            request.form.get("job"))
+                                            request.form.get("job"),
+                                            owner=me)
         except ValueError as e:
             return _error(400, str(e))
         clear_all_caches()
-        return {"status": "ok", "entry": entry, "items": uploads_list()}
+        items = [it for it in uploads_list()
+                 if auth_can_see(it.get("owner"), me)]
+        return {"status": "ok", "entry": entry, "items": items}
 
     @app.route("/api/uploads/load", methods=["POST"])
     @wrap
     def api_uploads_load():
         """POST {"id"} → 저장된 작업을 파일에서 (재)적재해 분석 dataset 으로 등록."""
-        entry = uploads_load((json_body() or {}).get("id"))
+        uid = (json_body() or {}).get("id")
+        me = _req_user()
+        for it in uploads_list():
+            if str(it.get("id")) == str(uid) and \
+                    not auth_can_see(it.get("owner"), me):
+                return _error(403, "'%s' 사용자의 작업입니다 — 본인 작업만 불러올 수 "
+                                   "있습니다 (관리자 예외)." % it.get("owner"))
+        entry = uploads_load(uid)
         clear_all_caches()
         return {"status": "ok", "entry": entry}
 
     @app.route("/api/uploads/delete", methods=["POST"])
     @wrap
     def api_uploads_delete():
-        """POST {"id"} → 저장 작업 삭제 (메타데이터 + 서버 파일)."""
-        entry = uploads_delete((json_body() or {}).get("id"))
+        """POST {"id"} → 저장 작업 삭제 (본인 소유 또는 관리자만)."""
+        uid = (json_body() or {}).get("id")
+        me = _req_user()
+        for it in uploads_list():
+            if str(it.get("id")) == str(uid) and \
+                    not auth_can_delete(it.get("owner"), me):
+                return _error(403, "본인이 올린 작업만 삭제할 수 있습니다 (관리자 예외).")
+        entry = uploads_delete(uid)
         return {"status": "ok", "deleted": entry.get("id")}
 
     # ---------------- LLM 인사이트 보관함 / PPT 보고서 ----------------
@@ -942,7 +1050,9 @@ def register_routes(app):
         현재 분석 중인 dataset 을 함께 반환한다 — 보관함이 '현재 작업' 항목만
         기본 표시하고 이전 작업은 그룹별로 구분해 보여줄 수 있게.
         """
-        items = list_insights()
+        me = _req_user()
+        items = [it for it in list_insights()
+                 if auth_can_see(it.get("owner"), me)]
         job_labels = {}
         for up in (storage.load_uploads().get("items") or []):
             ds = str(up.get("dataset") or "")
@@ -957,8 +1067,15 @@ def register_routes(app):
     @app.route("/api/insights-log/delete", methods=["POST"])
     @wrap
     def api_insights_log_delete():
-        """POST {"id"} → 보관함 항목 삭제 (차트 이미지 파일 포함)."""
-        delete_insight((json_body() or {}).get("id"))
+        """POST {"id"} → 보관함 항목 삭제 (본인 소유 또는 관리자만)."""
+        iid = (json_body() or {}).get("id")
+        me = _req_user()
+        for it in list_insights():
+            if str(it.get("id")) == str(iid) and \
+                    not auth_can_delete(it.get("owner"), me):
+                return _error(403, "본인이 생성한 인사이트만 삭제할 수 있습니다 "
+                                   "(관리자 예외).")
+        delete_insight(iid)
         return {"status": "ok"}
 
     @app.route("/api/insights-log/image", methods=["GET"])
@@ -979,7 +1096,9 @@ def register_routes(app):
         python-pptx 미설치 환경에서는 내장 OOXML 생성기로 .pptx 를 만든다.
         """
         body = json_body()
-        items = get_insights(body.get("ids"))
+        me = _req_user()
+        items = [it for it in get_insights(body.get("ids"))
+                 if auth_can_see(it.get("owner"), me)]
         if not items:
             return _error(404, "내보낼 인사이트가 없습니다 — 먼저 각 차트에서 "
                                "'LLM 인사이트 생성'을 실행하세요.")

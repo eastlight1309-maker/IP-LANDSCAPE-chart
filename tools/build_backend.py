@@ -26,6 +26,7 @@ MODULE_ORDER = [
     "src/preprocessing.py",
     "src/metrics.py",
     "src/storage.py",
+    "src/auth.py",
     "src/data_access.py",
     "src/uploads.py",
     "src/insight_store.py",

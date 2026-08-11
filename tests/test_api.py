@@ -513,3 +513,52 @@ def test_advanced_stats_sections(client):
     skipped = {x["section"] for x in d2["skipped"]}
     assert {"prosecution", "expiry", "claims", "ipc"} <= skipped
     assert "coapplicant" in d2["sections"]
+
+
+def test_auth_login_and_ownership_scoping(client):
+    """로그인 API + 소유권 스코핑: 일반 사용자는 본인 항목만, 관리자는 전체."""
+    from src import storage as _st
+    _st.save_store("users", {"items": []})
+    try:
+        r = _post(client, "/api/auth/login",
+                  {"name": "IP팀/홍길동", "emp_no": "20240001"}).get_json()
+        assert r["status"] == "ok" and r["user"]["is_admin"] is True
+        tokA = r["token"]
+        r2 = _post(client, "/api/auth/login",
+                   {"name": "특허팀/김철수", "emp_no": "20240002"}).get_json()
+        tokB = r2["token"]
+        assert r2["user"]["is_admin"] is False
+        bad = _post(client, "/api/auth/login",
+                    {"name": "IP팀/홍길동", "emp_no": "wrongpw1"})
+        assert bad.status_code == 400
+        hA, hB = {"X-IPLS-Auth": tokA}, {"X-IPLS-Auth": tokB}
+        me = client.get("/api/auth/me", headers=hB).get_json()
+        assert me["user"]["name"] == "특허팀/김철수"
+        # 사용자 관리는 관리자만
+        assert client.get("/api/auth/users", headers=hB).status_code == 403
+        users = client.get("/api/auth/users", headers=hA).get_json()["users"]
+        assert {u["name"] for u in users} == {"IP팀/홍길동", "특허팀/김철수"}
+        # 스냅샷 소유권
+        client.post("/api/project/save", headers=hA,
+                    json={"name": "A의 분석", "filters": {}})
+        lstB = client.post("/api/project/load", headers=hB,
+                           json={}).get_json()["projects"]
+        assert all(p["name"] != "A의 분석" for p in lstB)
+        lstA = client.post("/api/project/load", headers=hA,
+                           json={}).get_json()["projects"]
+        assert any(p["name"] == "A의 분석" for p in lstA)
+        assert client.post("/api/project/load", headers=hB,
+                           json={"name": "A의 분석", "delete": True}).status_code == 403
+        # 소유자 없는(legacy) 항목은 모두에게 보임
+        projects = _st.load_projects()
+        projects["레거시"] = {"filters": {}, "saved_at": "2026-01-01", "owner": None}
+        _st.save_projects(projects)
+        lstB2 = client.post("/api/project/load", headers=hB,
+                            json={}).get_json()["projects"]
+        assert any(p["name"] == "레거시" for p in lstB2)
+        client.post("/api/project/load", headers=hA,
+                    json={"name": "A의 분석", "delete": True})
+        client.post("/api/project/load", headers=hA,
+                    json={"name": "레거시", "delete": True})
+    finally:
+        _st.save_store("users", {"items": []})
