@@ -106,6 +106,7 @@ from src.analyses.semantic_insights import (compute_emerging_clusters,
                                             compute_similarity_network)
 from src.analyses.wips_deep import compute_wips_deep
 from src.analyses.executive import compute_executive_summary
+from src.analyses.exec_plus import compute_exec_plus
 from src.analyses.axis_cross import compute_axis_cross
 from src.analyses.ownership import compute_ownership
 from src.web_search import search_web, format_web_context
@@ -518,6 +519,11 @@ def register_routes(app):
             lambda df, s, b: compute_wips_deep(df, s,
                                                only_sections=b.get("sections")),
             extra_key_fields=("sections",)),
+        "exec-plus": _analysis_route(
+            "exec-plus",
+            lambda df, s, b: compute_exec_plus(df, s, company=b.get("company"),
+                                               only_sections=b.get("sections")),
+            extra_key_fields=("sections", "company")),
         "executive-summary": _analysis_route(
             "executive-summary",
             lambda df, s, b: compute_executive_summary(df, s,

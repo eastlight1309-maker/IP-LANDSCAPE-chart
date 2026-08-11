@@ -258,6 +258,46 @@ def test_problem_solution_axis_titles(prepared, settings):
     assert set(r["problems"]) <= c_vals and set(r["solutions"]) <= b_vals
 
 
+# ---------------------------------------------------------------------------
+# 경영진 의사결정 차트 6종 (Executive Plus)
+# ---------------------------------------------------------------------------
+def test_exec_plus_sections(settings):
+    from src.analyses.exec_plus import compute_exec_plus
+    df = make_prepared(generate_sample(n=500, seed=42))
+    r = compute_exec_plus(df, settings)
+    assert r["status"] == "ok" and r["focal"]
+    s = r["sections"]
+    # 샘플 데이터에서 최소 5개 섹션 계산 (threat 는 신규 진입자 없으면 생략 가능)
+    assert len(s) >= 5
+    # ① 만료 절벽: 적층 막대 + 핵심 만료 특허 (drill)
+    ec = s["expiry_cliff"]
+    assert ec["fig"]["layout"]["barmode"] == "stack"
+    assert ec["key_rows"] and ec["key_rows"][0]["drill"]["type"] == "ids"
+    assert ec["peak_year"] >= 2026
+    # ② R&D 효율: 사분면 배정 + 자사 포함
+    re_ = s["rnd_efficiency"]
+    quads = {r_["quadrant"] for r_ in re_["rows"]}
+    assert quads <= {"양·질 겸비", "소작·정예", "다작·저임팩트", "양·질 모두 부족"}
+    assert any(r_["company"] == r["focal"] for r_ in re_["rows"])
+    # ③ 키맨: 집중도 지표 + 발명자 drill
+    km = s["keyman"]
+    assert 0 < km["top10_share"] <= 1 and km["hhi"] > 0
+    assert km["rows"][0]["drill"]["type"] == "inventor"
+    # ④ 추격 시계: 선두 또는 격차 행
+    cu = s["catchup"]
+    assert cu["rows"] and all("status" in r_ for r_ in cu["rows"])
+    # ⑥ 다이어트: 기준 명시 (금액 미계산 원칙)
+    pr = s["pruning"]
+    assert any("5년" in cr for cr in pr["criteria"])
+    assert "금액" in pr["note"] or pr["n_candidates"] == 0
+    # 자사 미지정 경고가 아닌, 지정 회사 반영
+    r2 = compute_exec_plus(df, settings, company="삼성전자")
+    assert r2["focal"] == "삼성전자"
+    # sections 파라미터 스코핑
+    r3 = compute_exec_plus(df, settings, only_sections=["keyman"])
+    assert set(r3["sections"].keys()) <= {"keyman"}
+
+
 def test_wips_deep_sections_param_and_gov_drill(settings):
     """sections 파라미터 스코핑 + 국가과제 막대 클릭 드릴 + 개시충실도 색상."""
     from src.analyses.wips_deep import compute_wips_deep

@@ -1066,6 +1066,243 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
 
   /* ---------- 1. Executive Overview ---------- */
   Views.overview = function (content) {
+    makeTabs(content, [
+      { label: '경영 요약', render: renderOverviewMain },
+      execPlusTab('📅 만료 절벽', ['expiry_cliff'],
+        '특허 만료 절벽 — 언제, 누구의, 어떤 기술이 풀리는가',
+        '향후 10년 만료 예정 특허를 연도×기업 적층 막대로 보여주고, 피인용 상위의 "핵심 만료 특허" ' +
+        '목록을 함께 제공합니다. 경쟁사 핵심 특허의 만료 시점=진입 기회 검토 구간, 자사 핵심 특허의 ' +
+        '만료=방어 공백입니다. 실제 존속 여부는 연차료 납부에 따라 달라지므로 등록원부 확인이 필요합니다.'),
+      execPlusTab('💰 R&D 효율', ['rnd_efficiency'],
+        'R&D 효율 사분면 — 특허비를 잘 쓰고 있는가',
+        'X축=누적 출원 규모(로그), Y축=질 지수(피인용·패밀리·유효율 z-score 평균), 버블=최근 출원, ' +
+        '빨강=자사. 점선(중앙값) 기준 4분면: 양·질 겸비 / 소작·정예 / 다작·저임팩트 / 양·질 모두 부족. ' +
+        '자사가 어느 영역인지, 벤치마킹할 "소작·정예" 기업이 누구인지 한눈에 보입니다.'),
+      execPlusTab('👤 키맨 리스크', ['keyman'],
+        '키맨 리스크 — 핵심 발명자 의존도',
+        '자사 특허가 소수 발명자에게 얼마나 집중되어 있는지(상위 10% 점유율·HHI)와 핵심 발명자별 ' +
+        '주력 기술·마지막 출원 연도를 보여줍니다. 빨간 막대=최근 2년 출원 없음(관찰 신호 — 인과 판단 ' +
+        '아님). 발명자 클릭 시 특허 이력이 열리며, 경쟁 인텔리전스의 발명자 이동 분석과 함께 보세요.'),
+      execPlusTab('⏱️ 추격 시계', ['catchup'],
+        '추격 시계 — 기술별 격차, 몇 년이면 따라잡나',
+        '기술분류별 자사 vs 선두 기업의 누적 출원 격차와, 최근 3년 출원 속도가 유지된다는 가정에서의 ' +
+        '추월 소요 연수를 표시합니다. 초록=5년 내 추월권, 노랑=추월 가능(장기), 빨강=현재 속도로는 ' +
+        '불가. 어디에 투자를 집중하면 순위가 바뀌는지 보여주는 화면입니다 (산술 추정이며 예측 아님).'),
+      execPlusTab('🚨 위협 레이더', ['threat'],
+        '신흥 위협 레이더 — 우리 밭에 들어온 새 플레이어',
+        '자사 주력 기술분류(상위 5개)에 최근 3년 내 처음 진입한 기업을 탐지합니다. X축=첫 진입 연도, ' +
+        'Y축=해당 기술 출원 수, 크기=그 기업의 전체 규모, 색=기술. 큰 기업의 신규 진입=본격 투자 신호, ' +
+        '작아도 빠르게 늘면 조기 경보입니다. 위협도 산식은 하단에 명시됩니다.'),
+      execPlusTab('✂️ 포트폴리오 다이어트', ['pruning'],
+        '포트폴리오 다이어트 — 연차료 절감 후보',
+        '자사 유효특허 중 "등록 5년+ 경과, 피인용 0, 단일국, 비핵심 기술" 기준을 모두 만족하는 유지 ' +
+        '재검토 후보를 선별합니다 (기준은 화면에 명시 — 기계적 선별이며 포기 권고가 아닙니다). ' +
+        '연차료는 등록 연차가 오래될수록 누진되므로 경과 연차 분포가 절감 여지의 크기입니다. ' +
+        '국가별 요율 데이터가 없어 금액은 계산하지 않습니다.')
+    ]);
+  };
+
+  function execPlusTab(label, sectionKeys, title, help) {
+    return { label: label, render: function (h) {
+      analysisCard({
+        analysis: 'exec-plus', holder: h, title: title, help: help,
+        body: { sections: sectionKeys },
+        controls: function (c, reload) {
+          var sel = Ui.el('<select><option value="">자사 자동 선택</option></select>');
+          ((State.filterOptions || {}).applicants || []).slice(0, 60).forEach(function (a) {
+            var o = document.createElement('option'); o.value = a; o.textContent = a;
+            sel.appendChild(o);
+          });
+          sel.addEventListener('change', function () { reload({ company: sel.value || null }); });
+          var lbl = Ui.el('<span style="font-size:11.5px;color:#647b8d">자사 기준</span>');
+          c.controls.prepend(sel); c.controls.prepend(lbl);
+        },
+        renderOk: renderExecPlus
+      });
+    } };
+  }
+
+  function renderExecPlus(r, c, setTarget) {
+    var s = r.sections || {};
+    var first = true;
+    c.body.appendChild(Ui.el('<div style="font-size:12.5px;color:#46607a;margin-bottom:6px">' +
+      '자사 기준: <b>' + Ui.esc(r.focal || '-') + '</b> (' + Ui.esc(r.focal_basis || '') + ')</div>'));
+    function addFig(fig, tall) {
+      if (!fig) return;
+      var holder = Ui.el('<div class="chart-holder"' +
+        (tall ? ' style="min-height:460px"' : '') + '></div>');
+      c.body.appendChild(holder);
+      Render.plotly(holder, fig, plotlyDrill);
+      if (first) { setTarget({ kind: 'plotly', el: holder }); first = false; }
+    }
+    function addTable(headers, trs) {
+      if (!trs.length) return;
+      var tbl = Ui.el(simpleTable(headers, []));
+      trs.forEach(function (tr) { tbl.querySelector('tbody').appendChild(tr); });
+      var wrap = Ui.el('<div style="overflow-x:auto;max-height:300px;overflow-y:auto"></div>');
+      wrap.appendChild(tbl);
+      c.body.appendChild(wrap);
+    }
+    function note(txt) {
+      if (txt) c.body.appendChild(Ui.el('<div class="disclaimer">' + Ui.esc(txt) + '</div>'));
+    }
+    if (s.expiry_cliff) {
+      var ec = s.expiry_cliff;
+      addFig(ec.fig, true);
+      c.body.appendChild(Ui.el('<div style="font-weight:700;font-size:12.5px;margin:8px 0 4px">' +
+        '🔑 핵심 만료 특허 (' + Ui.esc(ec.key_basis) + ')</div>'));
+      addTable(['특허', '명칭', '출원인', '기술분류', '만료 연도', '피인용'],
+        (ec.key_rows || []).map(function (x) {
+          var tr = document.createElement('tr');
+          var td0 = document.createElement('td');
+          td0.appendChild(drillCell(x.id, x.drill));
+          tr.appendChild(td0);
+          tr.insertAdjacentHTML('beforeend',
+            '<td>' + Ui.esc(x.title) + '</td>' +
+            '<td>' + Ui.esc(x.applicant) + (x.is_focal ? ' <span class="badge good">자사</span>' : '') + '</td>' +
+            '<td>' + Ui.esc(x.tech) + '</td>' +
+            '<td class="num">' + x.exp_year + '</td>' +
+            '<td class="num">' + (x.cites !== null && x.cites !== undefined ? x.cites : '-') + '</td>');
+          return tr;
+        }));
+      note(ec.note);
+    }
+    if (s.rnd_efficiency) {
+      var re = s.rnd_efficiency;
+      addFig(re.fig, true);
+      addTable(['기업', '사분면', '누적 출원', '질 지수', '최근 출원'],
+        (re.rows || []).map(function (x) {
+          var tr = document.createElement('tr');
+          var td0 = document.createElement('td');
+          td0.appendChild(drillCell(x.company, { type: 'applicant', applicant: x.company }));
+          tr.appendChild(td0);
+          tr.insertAdjacentHTML('beforeend',
+            '<td><span class="badge' + (x.quadrant === '양·질 겸비' ? ' good' : '') + '">' +
+            Ui.esc(x.quadrant) + '</span></td>' +
+            '<td class="num">' + Ui.num(x.n, 0) + '</td>' +
+            '<td class="num">' + (x.quality >= 0 ? '+' : '') + x.quality + '</td>' +
+            '<td class="num">' + Ui.num(x.recent_n, 0) + '</td>');
+          return tr;
+        }));
+      note('질 지수 = ' + (re.quality_metrics || []).join(', ') + ' 의 z-score 평균 (데이터셋 내 상대비교).');
+    }
+    if (s.keyman) {
+      var km = s.keyman;
+      var grid = Ui.el('<div class="kpi-grid" style="margin-bottom:10px"></div>');
+      [[Ui.num(km.n_inventors, 0) + '명', '전체 발명자'],
+       [Ui.pct(km.top10_share), '상위 10% 발명자 특허 점유율'],
+       [Ui.num(km.hhi, 3), '발명자 집중도 (HHI)'],
+       [km.n_inactive_top + '명', '핵심 중 최근 2년 출원 없음']].forEach(function (x) {
+        grid.appendChild(Ui.el('<div class="kpi"><div class="kpi-value">' + Ui.esc(x[0]) +
+          '</div><div class="kpi-label">' + Ui.esc(x[1]) + '</div></div>'));
+      });
+      c.body.appendChild(grid);
+      addFig(km.fig, true);
+      addTable(['발명자', '특허 수', '점유율', '주력 기술', '마지막 출원', '상태'],
+        (km.rows || []).map(function (x) {
+          var tr = document.createElement('tr');
+          var td0 = document.createElement('td');
+          td0.appendChild(drillCell(x.inventor, x.drill));
+          tr.appendChild(td0);
+          tr.insertAdjacentHTML('beforeend',
+            '<td class="num">' + Ui.num(x.n, 0) + '</td>' +
+            '<td class="num">' + Ui.pct(x.share) + '</td>' +
+            '<td>' + Ui.esc(x.top_tech) + '</td>' +
+            '<td class="num">' + (x.last_year || '-') + '</td>' +
+            '<td>' + (x.inactive ? '<span class="badge warn">최근 출원 없음</span>' : '활동 중') + '</td>');
+          return tr;
+        }));
+      note(km.note);
+    }
+    if (s.catchup) {
+      var cu = s.catchup;
+      addFig(cu.fig, true);
+      addTable(['기술분류', '선두', '선두/자사 건수', '격차', '속도 (선두/자사, 건·년)', '판정'],
+        (cu.rows || []).map(function (x) {
+          var tr = document.createElement('tr');
+          var td0 = document.createElement('td');
+          td0.appendChild(drillCell(x.tech, x.drill));
+          tr.appendChild(td0);
+          if (x.status === '선두') {
+            tr.insertAdjacentHTML('beforeend',
+              '<td><span class="badge good">자사 선두</span></td>' +
+              '<td class="num">-</td><td class="num">' +
+              (x.runner_gap !== null && x.runner_gap !== undefined ?
+                '+' + Ui.num(x.runner_gap, 0) : '-') + '</td>' +
+              '<td>-</td><td>2위 ' + Ui.esc(x.runner || '-') + '</td>');
+          } else {
+            tr.insertAdjacentHTML('beforeend',
+              '<td>' + Ui.esc(x.leader) + '</td>' +
+              '<td class="num">' + Ui.num(x.leader_n, 0) + ' / ' + Ui.num(x.focal_n, 0) + '</td>' +
+              '<td class="num">' + Ui.num(x.gap, 0) + '</td>' +
+              '<td class="num">' + x.leader_speed + ' / ' + x.focal_speed + '</td>' +
+              '<td>' + Ui.esc(x.status) + '</td>');
+          }
+          return tr;
+        }));
+      note(cu.note);
+    }
+    if (s.threat) {
+      var th = s.threat;
+      addFig(th.fig, true);
+      addTable(['기업', '진입 기술', '첫 진입', '해당 기술 출원', '기업 전체', '평균 피인용', '위협도'],
+        (th.rows || []).map(function (x) {
+          var tr = document.createElement('tr');
+          var td0 = document.createElement('td');
+          td0.appendChild(drillCell(x.company, x.drill));
+          tr.appendChild(td0);
+          tr.insertAdjacentHTML('beforeend',
+            '<td>' + Ui.esc(x.tech) + '</td>' +
+            '<td class="num">' + x.entry_year + '</td>' +
+            '<td class="num">' + Ui.num(x.n_in_tech, 0) + '</td>' +
+            '<td class="num">' + Ui.num(x.total_n, 0) + '</td>' +
+            '<td class="num">' + (x.avg_cites !== null && x.avg_cites !== undefined ?
+              Ui.num(x.avg_cites, 1) : '-') + '</td>' +
+            '<td class="num"><b>' + x.threat + '</b></td>');
+          return tr;
+        }));
+      note(th.note);
+    }
+    if (s.pruning) {
+      var pr = s.pruning;
+      var pgrid = Ui.el('<div class="kpi-grid" style="margin-bottom:10px"></div>');
+      [[Ui.num(pr.n_candidates, 0) + '건', '유지 재검토 후보'],
+       [Ui.num(pr.n_active, 0) + '건', '자사 등록·유효 특허'],
+       [pr.ratio !== undefined && pr.ratio !== null ? Ui.pct(pr.ratio) : '-', '후보 비중']]
+        .forEach(function (x) {
+          pgrid.appendChild(Ui.el('<div class="kpi"><div class="kpi-value">' + Ui.esc(x[0]) +
+            '</div><div class="kpi-label">' + Ui.esc(x[1]) + '</div></div>'));
+        });
+      c.body.appendChild(pgrid);
+      c.body.appendChild(Ui.el('<div style="font-size:12px;color:#46607a;margin-bottom:6px">' +
+        '선별 기준 (모두 만족): ' + (pr.criteria || []).map(function (cr) {
+          return '<span class="badge">' + Ui.esc(cr) + '</span>';
+        }).join(' ') + '</div>'));
+      addFig(pr.fig_tech);
+      addFig(pr.fig_age);
+      addTable(['특허', '명칭', '기술분류', '등록 후 경과'],
+        (pr.rows || []).map(function (x) {
+          var tr = document.createElement('tr');
+          var td0 = document.createElement('td');
+          td0.appendChild(drillCell(x.id, x.drill));
+          tr.appendChild(td0);
+          tr.insertAdjacentHTML('beforeend',
+            '<td>' + Ui.esc(x.title) + '</td>' +
+            '<td>' + Ui.esc(x.tech) + '</td>' +
+            '<td class="num">' + x.age + '년</td>');
+          return tr;
+        }));
+      note(pr.note);
+    }
+    if ((r.skipped || []).length) {
+      c.body.appendChild(Ui.el('<div class="disclaimer" style="margin-top:10px">생략: ' +
+        r.skipped.map(function (x) {
+          return Ui.esc(x.section) + ' (' + Ui.esc(x.reason) + ')';
+        }).join(' · ') + '</div>'));
+    }
+  }
+
+  function renderOverviewMain(content) {
     var c = card('Executive Overview', '기술·경쟁·권리 신호 요약. KPI 카드와 목록 클릭 시 근거 특허/상세 메뉴로 이동합니다.');
     content.appendChild(c.root);
     if (!availabilityGuard('overview', c.body)) return;
