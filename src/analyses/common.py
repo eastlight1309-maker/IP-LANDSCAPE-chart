@@ -138,6 +138,19 @@ def company_tech_shares(df, multiclass_mode="duplicate", by_year=False):
 # ---------------------------------------------------------------------------
 # Drill-down
 # ---------------------------------------------------------------------------
+def applicant_mask(df, name, scope="display"):
+    """출원인 매칭 마스크.
+
+    scope="any"  : 공동출원인 중 하나로라도 포함되면 매칭 (공동출원 귀속)
+    scope 기타   : 대표 출원인(applicant_display) 일치만 (기존 동작)
+    """
+    nm = str(name)
+    eq = df["applicant_display"].astype(str) == nm
+    if scope != "any" or "_co_applicants_display" not in df.columns:
+        return eq
+    return eq | df["_co_applicants_display"].map(lambda lst: nm in (lst or []))
+
+
 def select_patents(df, drill):
     """drill-down 조건 → 근거 특허 행 선택.
 
@@ -181,7 +194,15 @@ def select_patents(df, drill):
             m |= has_tech(str(b))
         mask &= m
     if drill.get("applicant"):
-        mask &= df["applicant_display"].astype(str) == str(drill["applicant"])
+        # applicant_scope="any": 공동출원인으로 포함된 건까지 매칭 (공동출원인
+        # 각각 집계 모드의 차트에서 온 drill). 기본은 대표 출원인 일치 — 기존
+        # 차트·공동출원 분석의 drill 의미를 바꾸지 않는다.
+        mask &= applicant_mask(df, drill["applicant"],
+                               scope=drill.get("applicant_scope", "display"))
+    if drill.get("co_applicant"):
+        # 출원인 화면을 특정 회사로 좁혀 본 상태의 drill: 그 회사가 (공동)출원인으로
+        # 포함된 건으로 추가 제한
+        mask &= applicant_mask(df, drill["co_applicant"], scope="any")
     if drill.get("owner") and "owner_display" in df.columns:
         mask &= df["owner_display"].astype(str) == str(drill["owner"])
     if drill.get("transferred") is not None and "owner_display" in df.columns:

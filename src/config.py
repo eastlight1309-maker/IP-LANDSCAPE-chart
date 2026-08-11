@@ -176,6 +176,13 @@ DEFAULT_ANALYSIS_UNIT = "family"
 MULTICLASS_MODES = ["duplicate", "fractional", "primary", "level_separate"]
 DEFAULT_MULTICLASS_MODE = "duplicate"
 
+# 공동출원(복수 출원인) 집계 방식 — 출원인별 순위·매트릭스·버블 등에 적용.
+#   all   : 공동출원 1건을 각 공동출원인에게 1건씩 집계 (WIPS 방식, 합계>전체 가능)
+#   first : 대표(첫) 출원인 1건만 집계
+# 협력 네트워크·공동출원 비율 등 '공동출원 자체'를 분석하는 화면에는 적용되지 않는다.
+COAPPLICANT_MODES = ["all", "first"]
+DEFAULT_COAPPLICANT_MODE = "all"
+
 # 생애주기 단계
 LIFECYCLE_PHASES = ["Emerging", "Growing", "Competitive", "Mature", "Declining", "Re-emerging"]
 
@@ -209,6 +216,7 @@ DEFAULT_SETTINGS = {
     "demo_mode": False,
     "analysis_unit": DEFAULT_ANALYSIS_UNIT,
     "multiclass_mode": DEFAULT_MULTICLASS_MODE,
+    "coapplicant_mode": DEFAULT_COAPPLICANT_MODE,
     "llm_id": DEFAULT_LLM_ID,
     "llm_insights_enabled": False,
     # none | dataset | rest | sbert(로컬 sentence-transformers) | llm_mesh

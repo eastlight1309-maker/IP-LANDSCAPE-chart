@@ -359,6 +359,10 @@ def standardize_applicants(df, applicant_rules=None):
         (우선순위: 사용자 mapping > 데이터의 표준화 출원인 컬럼(값 그대로) > 자동 표준화)
       applicant_auto_std: 자동 표준화 후보값 (사용자 검토·승인 대상)
       applicant_raw     : 원본 첫 출원인 (복원용)
+      _co_applicants_display: 공동출원인 전원의 표준명 리스트 (대표 출원인 포함,
+        중복 제거). 출원인별 집계에서 공동출원 1건을 각 출원인에게 귀속시키거나
+        특정 출원인 선택 시 공동출원 건을 포함하는 데 사용한다.
+        원본 리스트(_co_applicants)는 협력 네트워크 등 공동출원 분석용으로 유지.
 
     방어: 출원인/표준화 출원인 컬럼의 값이 대부분 숫자(오매핑된 건수 컬럼 등)이면
     해당 컬럼을 무시하고 다른 소스를 사용한다.
@@ -377,6 +381,7 @@ def standardize_applicants(df, applicant_rules=None):
         df["applicant_auto_std"] = ""
         df["applicant_display"] = ""
         df["_co_applicants"] = [[] for _ in range(len(df))]
+        df["_co_applicants_display"] = [[] for _ in range(len(df))]
         return df
 
     raw_first = df[raw_source].map(lambda v: (split_names(v) or [""])[0])
@@ -400,6 +405,26 @@ def standardize_applicants(df, applicant_rules=None):
         _final(r, p, a) for r, p, a in zip(df["applicant_raw"], provided, df["applicant_auto_std"])]
     df["_co_applicants"] = (df[app_col].map(split_names)
                             if app_col else [[] for _ in range(len(df))])
+
+    # 공동출원인 전원 표준명 (대표 출원인 우선, 중복 제거). 공동출원인은 표준화
+    # 컬럼(첫 출원인만 제공)이 없으므로 사용자 규칙 + 자동 표준화를 적용한다.
+    def _std_all(names, first_display):
+        out, seen = [], set()
+        for i, nm in enumerate(names or []):
+            nm = str(nm).strip()
+            if not nm:
+                continue
+            std = first_display if i == 0 else _final(nm, "", auto_standardize_name(nm))
+            if std and std not in seen:
+                seen.add(std)
+                out.append(std)
+        if first_display and first_display not in seen:
+            out.insert(0, first_display)
+        return out
+
+    df["_co_applicants_display"] = [
+        _std_all(names, disp)
+        for names, disp in zip(df["_co_applicants"], df["applicant_display"])]
     return df
 
 
@@ -751,7 +776,13 @@ def apply_filters(df, filters):
 
     if f.get("applicants"):
         wanted = set(map(str, f["applicants"]))
-        mask &= df["applicant_display"].astype(str).isin(wanted)
+        m = df["applicant_display"].astype(str).isin(wanted)
+        # 공동출원 건은 공동출원인 중 하나라도 선택되면 포함 (선택한 출원인의
+        # 공동출원 특허가 누락되지 않도록)
+        if "_co_applicants_display" in df.columns:
+            m |= df["_co_applicants_display"].map(
+                lambda lst: bool(wanted & set(lst or [])))
+        mask &= m
 
     if f.get("countries") and "country" in df.columns:
         wanted = set(str(c).strip().upper() for c in f["countries"])
@@ -858,9 +889,15 @@ def filter_options(df):
     opts = {
         "year_min": int(years.min()) if len(years) else None,
         "year_max": int(years.max()) if len(years) else None,
+        # 출원인 옵션: 공동출원인으로만 등장하는 회사도 선택할 수 있도록
+        # 공동출원인 전원 기준(문헌당 1회씩)으로 빈도 산출
         "applicants": _clean_option_values(
-            df["applicant_display"].astype(str).replace("", np.nan).dropna()
-              .value_counts().head(400).index.tolist())[:300],
+            (pd.Series([a for lst in df["_co_applicants_display"] for a in (lst or [])])
+             if "_co_applicants_display" in df.columns
+             and df["_co_applicants_display"].map(lambda v: bool(v)).any()
+             else df["applicant_display"].astype(str))
+            .replace("", np.nan).dropna()
+            .value_counts().head(400).index.tolist())[:300],
         "countries": countries,
         "legal_statuses": df["legal_status_norm"].value_counts().index.tolist(),
         "tech_l1": _level_values(df, "_tech_l1_list"),

@@ -60,6 +60,7 @@ import pandas as pd
 
 from src.config import (APP_NAME, APP_VERSION, ALLOWED_LLM_CANDIDATES, MESSAGES,
                         LEGAL_STATUS_CATEGORIES, ANALYSIS_UNITS, MULTICLASS_MODES,
+                        COAPPLICANT_MODES,
                         LIMITS, THRESHOLDS, WEIGHTS, DEFAULT_SETTINGS,
                         merged_settings, get_limit)
 from src.cache import cached_analysis, get_run_log, clear_all_caches
@@ -373,6 +374,7 @@ def register_routes(app):
                 "concepts": concept_catalog(),
                 "legal_status_categories": LEGAL_STATUS_CATEGORIES,
                 "analysis_units": ANALYSIS_UNITS, "multiclass_modes": MULTICLASS_MODES,
+                "coapplicant_modes": COAPPLICANT_MODES,
                 "transition_modes": TRANSITION_MODES,
                 "limits_defaults": LIMITS, "thresholds_defaults": THRESHOLDS,
                 "weights_defaults": WEIGHTS,
@@ -817,6 +819,8 @@ def register_routes(app):
                 return _error(400, "잘못된 분석 단위: %s" % v)
             if k == "multiclass_mode" and v not in MULTICLASS_MODES:
                 return _error(400, "잘못된 다중분류 처리방식: %s" % v)
+            if k == "coapplicant_mode" and v not in COAPPLICANT_MODES:
+                return _error(400, "잘못된 공동출원 집계방식: %s" % v)
             if k == "dataset" and v and validate_dataset_name(v) is None:
                 uploads_ensure_loaded(v)  # 업로드 dataset 자동 재적재 시도
                 if validate_dataset_name(v) is None:

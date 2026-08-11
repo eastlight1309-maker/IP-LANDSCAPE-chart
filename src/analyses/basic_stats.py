@@ -30,7 +30,7 @@ from src.metrics import robust_growth, year_counts
 from src.insights import build_insight, fmt_num, fmt_pct, period_label, check_small_sample
 from src.viz_payload import BLUES, YLGNBU, ok_result, empty_result, line_chart, bar_chart, heatmap, \
     base_layout
-from src.analyses.common import diagnose_year_tech
+from src.analyses.common import diagnose_year_tech, applicant_mask
 
 
 def _year_series(df, mask=None):
@@ -39,14 +39,42 @@ def _year_series(df, mask=None):
     return year_counts(years) if len(years) else pd.Series(dtype=float)
 
 
+def _applicant_lists(df, mode):
+    """행별 귀속 출원인 리스트.
+
+    mode="all"  : 공동출원인 전원 (공동출원 1건이 각 출원인에게 1건씩)
+    mode="first": 대표(첫) 출원인만
+    """
+    if mode == "all" and "_co_applicants_display" in df.columns:
+        disp = df["applicant_display"].astype(str)
+        return df["_co_applicants_display"].combine(
+            disp, lambda lst, d: list(lst) if lst else ([d] if d else []))
+    return df["applicant_display"].astype(str).map(lambda a: [a] if a else [])
+
+
 def compute_basic_stats(df, settings, company=None):
-    """기본 통계 계산. company 지정 시 해당 출원인의 문헌만 집계."""
+    """기본 통계 계산.
+
+    company 지정 시 해당 출원인의 문헌만 집계 (공동출원 건 포함).
+    출원인별 차트는 settings["coapplicant_mode"] 를 따른다:
+      all(기본)=공동출원인 각각 1건 집계, first=대표 출원인만.
+    """
+    co_mode = str(settings.get("coapplicant_mode", "all"))
     if company:
-        df = df[df["applicant_display"].astype(str) == str(company)]
+        df = df[applicant_mask(df, company, scope="any")]
         if not len(df):
-            return empty_result("출원인 '%s'의 문헌이 없습니다." % company)
+            return empty_result("출원인 '%s'의 문헌이 없습니다 (공동출원 포함 검색)."
+                                % company)
     if not len(df):
         return empty_result()
+
+    def _drill_scope(d):
+        """company 화면·공동출원 집계 모드에 맞게 drill 조건을 보정."""
+        if co_mode == "all" and d.get("applicant"):
+            d["applicant_scope"] = "any"
+        if company:
+            d["co_applicant"] = str(company)
+        return d
     years_all = df["_base_year"].dropna()
     if not len(years_all):
         return empty_result(diagnose_year_tech(df))
@@ -69,7 +97,8 @@ def compute_basic_stats(df, settings, company=None):
     fig_annual = line_chart(series_list, "연도", "건수", title="연도별 출원 동향",
                             year_axis=True)
     for tr in fig_annual["data"]:
-        tr["customdata"] = [{"drill": {"type": "year", "year": int(x)}} for x in tr["x"]]
+        tr["customdata"] = [{"drill": _drill_scope({"type": "year", "year": int(x)})}
+                            for x in tr["x"]]
 
     # ② 국가별 분포
     fig_country = None
@@ -80,24 +109,35 @@ def compute_basic_stats(df, settings, company=None):
             fig_country = bar_chart(
                 [str(c) for c in counts.index], [int(v) for v in counts.values],
                 title="국가별 출원 분포", x_title="국가", y_title="건수",
-                customdata=[{"drill": {"country": str(c)}} for c in counts.index])
+                customdata=[{"drill": _drill_scope({"country": str(c)})}
+                            for c in counts.index])
 
     # ③ 출원인 순위 + ④ 출원인×연도 매트릭스
+    # 공동출원 처리: co_mode="all"이면 공동출원 1건을 각 공동출원인에게 1건씩 집계
     fig_applicants, fig_app_year = None, None
-    app_counts = df["applicant_display"].replace("", np.nan).dropna().value_counts()
+    app_lists = _applicant_lists(df, co_mode)
+    n_joint = int(app_lists.map(lambda lst: len(lst) > 1).sum()) if co_mode == "all" \
+        else int(df["_co_applicants_display"].map(lambda lst: len(lst or []) > 1).sum()
+                 if "_co_applicants_display" in df.columns else 0)
+
+    def _amask(a):
+        return app_lists.map(lambda lst: str(a) in lst)
+
+    app_counts = pd.Series([a for lst in app_lists for a in lst]) \
+        .replace("", np.nan).dropna().value_counts()
     if len(app_counts):
         top_apps = app_counts.head(top_n)
         fig_applicants = bar_chart(
             [str(a) for a in top_apps.index][::-1], [int(v) for v in top_apps.values][::-1],
             title="출원인 순위 Top %d" % len(top_apps), orientation="h", x_title="건수",
-            customdata=[{"drill": {"type": "applicant", "applicant": str(a)}}
+            customdata=[{"drill": _drill_scope({"type": "applicant", "applicant": str(a)})}
                         for a in top_apps.index][::-1])
         matrix_apps = app_counts.head(max_rows).index.tolist()
         year_lo, year_hi = int(years_all.min()), int(years_all.max())
         years_range = list(range(year_lo, year_hi + 1))
         z, hover = [], []
         for a in matrix_apps:
-            s = _year_series(df, df["applicant_display"] == a)
+            s = _year_series(df, _amask(a))
             row = [float(s.get(y, 0.0)) for y in years_range]
             z.append(row)
             hover.append(["%s — %d년: %s건" % (a, y, fmt_num(v))
@@ -114,10 +154,10 @@ def compute_basic_stats(df, settings, company=None):
         pts = {"x": [], "y": [], "size": [], "color": [], "hover": [], "custom": []}
         vmax = 1.0
         for a in bub_apps:
-            s = _year_series(df, df["applicant_display"] == a)
+            s = _year_series(df, _amask(a))
             vmax = max(vmax, float(s.max()) if len(s) else 1.0)
         for a in bub_apps:
-            s = _year_series(df, df["applicant_display"] == a)
+            s = _year_series(df, _amask(a))
             for y, v in s.items():
                 if v <= 0:
                     continue
@@ -126,8 +166,9 @@ def compute_basic_stats(df, settings, company=None):
                 pts["size"].append(float(7 + 33 * np.sqrt(float(v) / vmax)))
                 pts["color"].append(float(v))
                 pts["hover"].append("%s — %d년 출원 %s건" % (a, int(y), fmt_num(v)))
-                pts["custom"].append({"drill": {"type": "applicant",
-                                                "applicant": str(a), "year": int(y)},
+                pts["custom"].append({"drill": _drill_scope({"type": "applicant",
+                                                             "applicant": str(a),
+                                                             "year": int(y)}),
                                       "m": {"출원인": str(a), "연도": int(y),
                                             "출원건수": int(v)}})
         fig_app_bubble = {"data": [{
@@ -157,7 +198,7 @@ def compute_basic_stats(df, settings, company=None):
         fig_tech = bar_chart(
             [str(t) for t in top_techs.index][::-1], [int(v) for v in top_techs.values][::-1],
             title="기술분류별 건수 Top %d" % len(top_techs), orientation="h", x_title="건수",
-            customdata=[{"drill": {"type": "tech", "tech": str(t)}}
+            customdata=[{"drill": _drill_scope({"type": "tech", "tech": str(t)})}
                         for t in top_techs.index][::-1])
         matrix_techs = tech_counts.head(max_rows).index.tolist()
         year_lo, year_hi = int(years_all.min()), int(years_all.max())
@@ -199,6 +240,13 @@ def compute_basic_stats(df, settings, company=None):
         share = app_counts.iloc[0] / float(len(df))
         sentences.append("출원인 1위는 '%s'(%s건, 점유율 %s)입니다."
                          % (app_counts.index[0], fmt_num(app_counts.iloc[0]), fmt_pct(share)))
+    if n_joint:
+        sentences.append(
+            ("공동출원 %s건은 각 공동출원인에게 1건씩 집계되어 출원인별 합계가 전체 "
+             "건수를 초과할 수 있습니다 (Settings→공동출원 집계에서 변경 가능)."
+             if co_mode == "all" else
+             "공동출원 %s건은 대표(첫) 출원인에게만 집계됩니다 (Settings→공동출원 "
+             "집계에서 '각각 집계'로 변경 가능).") % fmt_num(n_joint))
     if kpi["grant_rate"] is not None:
         sentences.append("등록률 %s%s — 등록·유효 정보는 법적상태/등록여부 컬럼 기준입니다."
                          % (fmt_pct(kpi["grant_rate"]),
@@ -232,13 +280,21 @@ def compute_basic_stats(df, settings, company=None):
             % (app_counts.index[0], fmt_num(app_counts.iloc[0]),
                fmt_pct(app_counts.iloc[0] / float(len(df))), fmt_pct(cr3),
                " — 소수 기업 주도 시장" if cr3 >= 0.5 else " — 경쟁이 분산된 시장")]
+        if n_joint:
+            chart_insights["applicants"].append(
+                ("공동출원 %s건은 각 공동출원인에게 1건씩 집계됩니다 — 출원인별 "
+                 "합계·점유율 합이 100%%를 넘을 수 있습니다."
+                 if co_mode == "all" else
+                 "공동출원 %s건은 대표(첫) 출원인에게만 집계됩니다.") % fmt_num(n_joint))
         recent_hi = int(years_all.max()) - recent + 1
-        rec_counts = df[df["_base_year"] >= recent_hi]["applicant_display"] \
+        rec_mask = df["_base_year"] >= recent_hi
+        rec_counts = pd.Series(
+            [a for lst in app_lists[rec_mask] for a in lst]) \
             .replace("", np.nan).dropna().value_counts()
         bub_sents = []
         max_cell = None
         for a in app_counts.head(max_rows).index:
-            s = _year_series(df, df["applicant_display"] == a)
+            s = _year_series(df, _amask(a))
             if len(s) and (max_cell is None or float(s.max()) > max_cell[2]):
                 max_cell = (str(a), int(s.idxmax()), float(s.max()))
         if max_cell:
@@ -302,7 +358,13 @@ def compute_tech_year_bubble(df, settings, companies=None):
     if not df["_tech_list"].map(lambda v: bool(v)).any():
         return empty_result(diagnose_year_tech(df))
     comps = [str(c) for c in (companies or []) if str(c).strip()][:4]
-    scope = df[df["applicant_display"].isin(comps)] if comps else df
+    if comps:  # 공동출원 건 포함 매칭
+        m = pd.Series(False, index=df.index)
+        for c in comps:
+            m |= applicant_mask(df, c, scope="any")
+        scope = df[m]
+    else:
+        scope = df
     if comps and not len(scope):
         return empty_result("선택한 출원인(%s)의 특허가 현재 필터에 없습니다."
                             % ", ".join(comps))
@@ -327,7 +389,7 @@ def compute_tech_year_bubble(df, settings, companies=None):
         return counts
 
     groups = comps if comps else [None]
-    all_counts = [cell_counts(scope[scope["applicant_display"] == g] if g else scope)
+    all_counts = [cell_counts(scope[applicant_mask(scope, g, scope="any")] if g else scope)
                   for g in groups]
     vmax = max([max(c.values()) for c in all_counts if c] or [1])
     n_g = len(groups)
@@ -350,6 +412,7 @@ def compute_tech_year_bubble(df, settings, companies=None):
             drill = {"type": "tech", "tech": str(t), "year": int(y)}
             if g:
                 drill["applicant"] = g
+                drill["applicant_scope"] = "any"  # 공동출원 건 포함
             customs.append({"drill": drill,
                             "m": {"출원인": name, "기술분류": str(t),
                                   "연도": int(y), "건수": int(n)}})

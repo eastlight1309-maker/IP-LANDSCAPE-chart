@@ -121,7 +121,13 @@ def test_apply_filters(prepared):
     assert f1["_base_year"].between(2018, 2020).all()
     apps = filter_options(prepared)["applicants"][:2]
     f2 = apply_filters(prepared, {"applicants": apps})
-    assert set(f2["applicant_display"]) <= set(apps)
+    # 공동출원 포함: 선택 출원인이 공동출원인 중 하나로라도 포함되면 매칭
+    wanted = set(apps)
+    assert f2.apply(lambda r: (str(r["applicant_display"]) in wanted)
+                    or bool(wanted & set(r["_co_applicants_display"] or [])),
+                    axis=1).all()
+    # 대표 출원인 기준 건은 모두 포함 (기존 결과의 상위집합)
+    assert prepared["applicant_display"].astype(str).isin(wanted).sum() <= len(f2)
     f3 = apply_filters(prepared, {"countries": ["KR"]})
     assert (f3["country"].str.upper() == "KR").all()
     f4 = apply_filters(prepared, {"legal_statuses": ["Granted-Active"]})

@@ -639,6 +639,73 @@ def test_basic_stats_company_filter(prepared, settings):
     assert none["status"] == "empty" and "없는회사XYZ" in none["message"]
 
 
+def test_coapplicant_display_standardized(settings):
+    """공동출원인 전원의 표준명 리스트(_co_applicants_display)가 생성된다."""
+    df = make_prepared(generate_sample(n=400, seed=21))
+    assert "_co_applicants_display" in df.columns
+    joint = df[df["_co_applicants_display"].map(lambda lst: len(lst or []) > 1)]
+    assert len(joint) > 0  # 샘플에는 공동출원이 존재
+    for lst, disp in zip(joint["_co_applicants_display"], joint["applicant_display"]):
+        assert disp in lst            # 대표 출원인 포함
+        assert len(set(lst)) == len(lst)  # 중복 제거
+
+
+def test_basic_stats_coapplicant_modes(settings):
+    """공동출원 집계: all=각 공동출원인 1건씩, first=대표 출원인만."""
+    from src.analyses.basic_stats import compute_basic_stats
+
+    def counts_of(fig):
+        # 가로 막대: x=건수, y=출원인
+        return dict(zip(fig["data"][0]["y"], fig["data"][0]["x"]))
+
+    df = make_prepared(generate_sample(n=400, seed=21))
+    s_all = dict(settings, coapplicant_mode="all")
+    s_first = dict(settings, coapplicant_mode="first")
+    r_all = compute_basic_stats(df, s_all)
+    r_first = compute_basic_stats(df, s_first)
+    c_all, c_first = counts_of(r_all["applicants"]), counts_of(r_first["applicants"])
+    # 각각 집계 모드의 출원인별 건수 총합은 대표만 모드 이상 (공동출원 중복 귀속)
+    assert sum(c_all.values()) > sum(c_first.values())
+    # 공동출원인으로 포함된 어떤 회사는 각각 집계에서 건수가 늘어난다
+    grew = [a for a in c_first if a in c_all and c_all[a] > c_first[a]]
+    assert grew, (c_all, c_first)
+    # KPI 전체 건수(특허 수)는 모드와 무관
+    assert r_all["kpi"]["total"] == r_first["kpi"]["total"] == len(df)
+    # 안내 문구: 각각 집계 모드에서 공동출원 집계 방식이 명시된다
+    assert any("공동출원" in t for t in r_all["chart_insights"]["applicants"])
+    # all 모드 출원인 막대 drill 은 공동출원 포함 범위
+    cd = r_all["applicants"]["data"][0]["customdata"][0]["drill"]
+    assert cd.get("applicant_scope") == "any"
+
+
+def test_company_filter_includes_joint_filings(settings):
+    """출원인 선택 시 그 회사가 공동출원인인 특허도 포함된다."""
+    from src.analyses.basic_stats import compute_basic_stats
+    from src.analyses.common import applicant_mask, select_patents
+    df = make_prepared(generate_sample(n=400, seed=21))
+    # 공동출원인으로 등장하지만 대표 출원인이 아닌 건이 있는 회사를 찾는다
+    target = None
+    for _, row in df.iterrows():
+        lst = row["_co_applicants_display"] or []
+        if len(lst) > 1:
+            target = lst[1]
+            break
+    assert target
+    n_eq = int((df["applicant_display"].astype(str) == target).sum())
+    n_any = int(applicant_mask(df, target, scope="any").sum())
+    assert n_any > n_eq  # 공동출원 포함 검색이 실제로 더 많은 문헌을 찾음
+    r = compute_basic_stats(df, settings, company=target)
+    assert r["status"] == "ok" and r["kpi"]["total"] == n_any
+    # drill: applicant_scope="any" 는 공동출원 포함, 기본은 대표 출원인 일치(기존 동작)
+    assert len(select_patents(df, {"applicant": target, "applicant_scope": "any"})) == n_any
+    assert len(select_patents(df, {"applicant": target})) == n_eq
+    # company 화면에서 온 연도 drill 은 그 회사(공동출원 포함) 건으로 제한된다
+    cd = r["annual"]["data"][0]["customdata"][0]["drill"]
+    assert cd.get("co_applicant") == target
+    sub = select_patents(df, cd)
+    assert 0 < len(sub) <= n_any
+
+
 def test_emerging_clusters_company_filter(prepared, settings):
     """신흥 기술 탐지를 출원인별로 좁혀 볼 수 있고, 표본 부족 시 사유를 밝힌다."""
     from src.analyses.semantic_insights import compute_emerging_clusters
@@ -646,8 +713,9 @@ def test_emerging_clusters_company_filter(prepared, settings):
     r = compute_emerging_clusters(prepared, settings, company=comp)
     assert r["status"] == "ok"
     assert comp in r["methods"]["scope"]
-    # 해당 출원인 문헌 수를 넘는 군집 합계가 나오면 안 됨
-    n_comp = int((prepared["applicant_display"].astype(str) == comp).sum())
+    # 해당 출원인 문헌 수(공동출원 포함)를 넘는 군집 합계가 나오면 안 됨
+    from src.analyses.common import applicant_mask
+    n_comp = int(applicant_mask(prepared, comp, scope="any").sum())
     assert sum(c["n"] for c in r["clusters"]) <= n_comp
     small = compute_emerging_clusters(prepared, settings, company="없는회사XYZ")
     assert small["status"] == "empty" and "최소 30건" in small["message"]
