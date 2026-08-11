@@ -39,8 +39,12 @@ def _year_series(df, mask=None):
     return year_counts(years) if len(years) else pd.Series(dtype=float)
 
 
-def compute_basic_stats(df, settings):
-    """기본 통계 계산."""
+def compute_basic_stats(df, settings, company=None):
+    """기본 통계 계산. company 지정 시 해당 출원인의 문헌만 집계."""
+    if company:
+        df = df[df["applicant_display"].astype(str) == str(company)]
+        if not len(df):
+            return empty_result("출원인 '%s'의 문헌이 없습니다." % company)
     if not len(df):
         return empty_result()
     years_all = df["_base_year"].dropna()

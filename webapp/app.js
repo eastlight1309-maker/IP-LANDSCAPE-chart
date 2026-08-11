@@ -1628,10 +1628,22 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
 
   /* ---------- 1.5 Basic Statistics (WIPS·PatentSight 스타일) ---------- */
   Views.basic = function (content) {
-    function statsTab(title, help, keys, guide) {
+    function statsTab(title, help, keys, guide, withCompany) {
       return function (h) {
         analysisCard({
           analysis: 'basic-stats', holder: h, title: title, help: help, guide: guide,
+          controls: withCompany ? function (c, reload) {
+            var sel = Ui.el('<select><option value="">전체 출원인</option></select>');
+            ((State.filterOptions || {}).applicants || []).slice(0, 60).forEach(function (a) {
+              var o = document.createElement('option'); o.value = a; o.textContent = a;
+              sel.appendChild(o);
+            });
+            sel.addEventListener('change', function () {
+              reload({ company: sel.value || null });
+            });
+            var lbl = Ui.el('<span style="font-size:11.5px;color:#647b8d">출원인 선택</span>');
+            c.controls.prepend(sel); c.controls.prepend(lbl);
+          } : undefined,
           renderOk: function (r, c, setTarget) {
             if (r.kpi && keys.indexOf('annual') >= 0) {
               var k = r.kpi;
@@ -2074,10 +2086,10 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
           '국가별 출원 분포, 출원인 순위 Top, 출원인×출원연도 버블(크기=출원건수), 출원인×연도 활동 매트릭스(진할수록 활발)입니다. 막대·버블을 클릭하면 해당 국가/출원인(해당 연도)의 특허 목록이 열립니다.',
           ['country', 'applicants', 'applicant_year_bubble', 'applicant_year'],
           '국가별 분포: X축=국가, Y축=건수 — 어느 시장에 권리를 확보했는지 보여줍니다. 출원인 순위: X축=건수, Y축=출원인 — 이 분야의 주요 플레이어 순위입니다. 출원인×출원연도 버블: X축=출원연도(1년=1칸), Y축=출원인(위가 누적 1위), 버블 크기·색=그 해 출원건수 — 큰 버블이 이어지는 줄=꾸준한 투자 기업, 최근에만 큰 버블이 생긴 기업=신규 집중 투자, 버블이 사라진 기업=투자 축소 신호이며 버블 클릭 시 그 기업·연도 특허가 열립니다. 활동 매트릭스: 같은 데이터의 히트맵 보기입니다.') },
-      { label: '기술분류 동향', render: statsTab('기술분류별 건수 · 연도 동향',
-          '기술분류별 누적 건수 순위와 분류×연도 동향 매트릭스입니다. 다중분류는 Settings 의 처리방식을 따르지 않고 각 분류에 1건씩 계산합니다.',
+      { label: '기술분류 동향', render: statsTab('기술분류별 건수 · 연도 동향 (출원인 선택 가능)',
+          '기술분류별 누적 건수 순위와 분류×연도 동향 매트릭스입니다. 상단에서 출원인을 선택하면 그 회사의 기술 포트폴리오만 표시됩니다. 다중분류는 Settings 의 처리방식을 따르지 않고 각 분류에 1건씩 계산합니다.',
           ['tech', 'tech_year'],
-          '순위: X축=건수, Y축=기술분류 — 포트폴리오가 집중된 기술. 동향 매트릭스: X축=연도, Y축=기술분류, 색=그 해 건수. 읽는 법: 오른쪽(최근)으로 갈수록 진해지는 분류=성장 기술, 왼쪽만 진하고 최근이 옅은 분류=쇠퇴 기술입니다.') },
+          '순위: X축=건수, Y축=기술분류 — 포트폴리오가 집중된 기술. 동향 매트릭스: X축=연도, Y축=기술분류, 색=그 해 건수. 읽는 법: 오른쪽(최근)으로 갈수록 진해지는 분류=성장 기술, 왼쪽만 진하고 최근이 옅은 분류=쇠퇴 기술입니다. 출원인을 선택하면 그 회사 기준으로 같은 해석을 적용하세요.', true) },
       { label: '기술×연도 버블', render: function (h) {
         var sel1, sel2, sel3;
         function selectedCompanies() {
@@ -2468,7 +2480,19 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
       { label: '신흥 기술 탐지 (임베딩)', render: function (h) {
         analysisCard({
           analysis: 'emerging-clusters', holder: h,
-          title: '신흥 기술 조기 탐지 — Emerging Cluster Detection',
+          title: '신흥 기술 조기 탐지 — Emerging Cluster Detection (출원인 선택 가능)',
+          controls: function (c, reload) {
+            var sel = Ui.el('<select><option value="">전체 출원인</option></select>');
+            ((State.filterOptions || {}).applicants || []).slice(0, 60).forEach(function (a) {
+              var o = document.createElement('option'); o.value = a; o.textContent = a;
+              sel.appendChild(o);
+            });
+            sel.addEventListener('change', function () {
+              reload({ company: sel.value || null });
+            });
+            var lbl = Ui.el('<span style="font-size:11.5px;color:#647b8d">출원인 선택</span>');
+            c.controls.prepend(sel); c.controls.prepend(lbl);
+          },
           help: '전체 문헌 텍스트(요약·독립청구항)를 KR-SBERT 임베딩으로 군집화한 뒤 각 군집의 ' +
             '출원 시점 분포를 봅니다. 최근 3년에 몰려 있고, 신규 출원인이 늘고, 이전에 없던 ' +
             '새 군집이면 신흥 기술 후보입니다. 군집 라벨은 중심에 가까운 특허들의 특징 키워드로 ' +

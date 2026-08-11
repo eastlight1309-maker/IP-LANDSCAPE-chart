@@ -196,8 +196,18 @@ def _llm_cluster_names(clusters, settings):
 # ---------------------------------------------------------------------------
 # 1) 신흥 기술 조기 탐지
 # ---------------------------------------------------------------------------
-def compute_emerging_clusters(df, settings):
-    """임베딩 군집 × 출원 시점 분포로 신흥 기술 후보 탐지 + 키워드 자동 라벨."""
+def compute_emerging_clusters(df, settings, company=None):
+    """임베딩 군집 × 출원 시점 분포로 신흥 기술 후보 탐지 + 키워드 자동 라벨.
+
+    company 지정 시 해당 출원인의 문헌만으로 군집화 — "이 회사가 어떤 신흥
+    주제로 움직이는가"를 본다 (표본이 줄어 군집 수·안정성이 달라질 수 있음).
+    """
+    if company:
+        df = df[df["applicant_display"].astype(str) == str(company)]
+        if len(df) < 30:
+            return empty_result("출원인 '%s'의 문헌이 %d건뿐이라 군집 기반 신흥 기술 "
+                                "탐지가 어렵습니다 (최소 30건). 전체 보기로 확인하세요."
+                                % (company, len(df)))
     if not df["_base_year"].notna().any():
         return empty_result("연도를 해석할 수 있는 문헌이 없어 시점 분포 기반 신흥 기술 "
                             "탐지를 할 수 없습니다 — 출원일/우선일/공개일 매핑을 확인하세요.")
@@ -347,6 +357,7 @@ def compute_emerging_clusters(df, settings):
         drills=[{"label": "후보 군집 특허 보기", "drill": emergings[0]["drill"]}]
         if emergings else None,
         small_sample=check_small_sample(len(work), settings))
+    methods = dict(methods, scope=("출원인 '%s' 문헌만" % company) if company else "전체 문헌")
     methods = dict(methods, labeling=label_method)
     return ok_result({"figure": fig, "clusters": clusters[:20], "methods": methods},
                      insight=insight,

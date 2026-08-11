@@ -626,6 +626,33 @@ def test_basic_stats_chart_insights(prepared, settings):
     assert cs[0][1] == "#f0f6fc" and cs[-1][1] == "#1b5e93"
 
 
+def test_basic_stats_company_filter(prepared, settings):
+    """기술분류 동향 등 기초 통계를 특정 출원인 문헌만으로 재계산할 수 있다."""
+    from src.analyses.basic_stats import compute_basic_stats
+    full = compute_basic_stats(prepared, settings)
+    comp = prepared["applicant_display"].value_counts().index[0]
+    r = compute_basic_stats(prepared, settings, company=comp)
+    assert r["status"] == "ok"
+    assert 0 < r["kpi"]["total"] < full["kpi"]["total"]
+    # 존재하지 않는 출원인 → 값을 지어내지 않고 사유와 함께 empty
+    none = compute_basic_stats(prepared, settings, company="없는회사XYZ")
+    assert none["status"] == "empty" and "없는회사XYZ" in none["message"]
+
+
+def test_emerging_clusters_company_filter(prepared, settings):
+    """신흥 기술 탐지를 출원인별로 좁혀 볼 수 있고, 표본 부족 시 사유를 밝힌다."""
+    from src.analyses.semantic_insights import compute_emerging_clusters
+    comp = prepared["applicant_display"].value_counts().index[0]
+    r = compute_emerging_clusters(prepared, settings, company=comp)
+    assert r["status"] == "ok"
+    assert comp in r["methods"]["scope"]
+    # 해당 출원인 문헌 수를 넘는 군집 합계가 나오면 안 됨
+    n_comp = int((prepared["applicant_display"].astype(str) == comp).sum())
+    assert sum(c["n"] for c in r["clusters"]) <= n_comp
+    small = compute_emerging_clusters(prepared, settings, company="없는회사XYZ")
+    assert small["status"] == "empty" and "최소 30건" in small["message"]
+
+
 # ---------------------------------------------------------------------------
 # 심층 시그널 (잘 안 쓰는 WIPS 필드 9종)
 # ---------------------------------------------------------------------------

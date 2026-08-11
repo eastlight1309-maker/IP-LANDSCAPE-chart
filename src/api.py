@@ -522,7 +522,9 @@ def register_routes(app):
         "classification-quality": _analysis_route(
             "classification-quality", lambda df, s, b: compute_classification_quality(df, s)),
         "basic-stats": _analysis_route(
-            "basic-stats", lambda df, s, b: compute_basic_stats(df, s)),
+            "basic-stats",
+            lambda df, s, b: compute_basic_stats(df, s, company=b.get("company")),
+            extra_key_fields=("company",)),
         "portfolio-index": _analysis_route(
             "portfolio-index", lambda df, s, b: compute_portfolio_index(df, s)),
         "advanced-stats": _analysis_route(
@@ -534,7 +536,10 @@ def register_routes(app):
         "combo-upset": _analysis_route(
             "combo-upset", lambda df, s, b: compute_combo_upset(df, s)),
         "emerging-clusters": _analysis_route(
-            "emerging-clusters", lambda df, s, b: compute_emerging_clusters(df, s)),
+            "emerging-clusters",
+            lambda df, s, b: compute_emerging_clusters(df, s,
+                                                       company=b.get("company")),
+            extra_key_fields=("company",)),
         "semantic-influence": _analysis_route(
             "semantic-influence", lambda df, s, b: compute_semantic_influence(df, s)),
         "similarity-network": _analysis_route(
