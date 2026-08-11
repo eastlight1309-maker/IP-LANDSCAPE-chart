@@ -8674,7 +8674,7 @@ _GNI_TRILLION = {
 _GNI_DEFAULT = 0.1  # 목록에 없는 국가의 기본 GNI (조 USD)
 
 
-# 한글 국가명 → ISO 코드 (WIPS 국가 목록이 한글로 오는 경우)
+# 한글 국가명/특수 표기 → ISO 코드 (WIPS 국가 목록이 한글로 오는 경우)
 _KO_COUNTRY = {
     "한국": "KR", "대한민국": "KR", "미국": "US", "일본": "JP", "중국": "CN",
     "유럽": "EP", "독일": "DE", "프랑스": "FR", "영국": "GB", "대만": "TW",
@@ -8682,28 +8682,44 @@ _KO_COUNTRY = {
     "스페인": "ES", "이탈리아": "IT", "네덜란드": "NL", "스위스": "CH",
     "스웨덴": "SE", "멕시코": "MX", "인도네시아": "ID", "터키": "TR",
     "싱가포르": "SG", "홍콩": "HK", "이스라엘": "IL", "베트남": "VN", "태국": "TH",
+    "PCT": "WO", "국제": "WO", "기타": "XX",   # XX: 미상국 — 기본 GNI 적용
 }
 _CODE_RE = _re_mc.compile(r"\b([A-Za-z]{2})\b")
+# 토큰 끝의 건수 표기: '한국-1', '미국 - 0', 'US(2)', 'JP: 3', 'KR 3'
+_COUNT_SUFFIX_RE = _re_mc.compile(r"[\s\-–—:(]+(\d+)\s*\)?\s*$")
 
 
 def _country_codes_of(value):
-    """국가 목록 셀 → ISO 코드 집합.
+    """국가 목록 셀 → 문헌을 실제 보유한 국가의 ISO 코드 집합.
 
-    'KR 3 | US 2'(WIPS 개별국 문헌 수), 'KR;US;JP', '한국(3), 미국(2)' 등
-    코드+건수 혼합·한글 국가명 형식을 모두 처리한다. 숫자만 있으면 무시."""
+    처리 형식 (WIPS '패밀리 개별국 문헌 수' 등):
+      '한국-1 | 미국-0 | 일본-1 | EP-0 | PCT-1 | 기타-1'  ← 건수 0 국가는 제외
+      'KR 3 | US 2', 'US(2); JP(1)', 'KR;US;JP', '한국(3), 미국(2)'
+    건수 표기가 없으면 나열 자체를 보유로 간주. 숫자만 있는 토큰은 무시."""
     codes = set()
     for token in parse_multiclass_cell(value):
         t = str(token).strip()
         if not t:
             continue
-        m = _CODE_RE.search(t)
-        if m:
-            codes.add(m.group(1).upper())
+        m_cnt = _COUNT_SUFFIX_RE.search(t)
+        if m_cnt:
+            if int(m_cnt.group(1)) <= 0:   # '미국-0' = 해당국 문헌 없음 → 제외
+                continue
+            t = t[:m_cnt.start()].strip()
+        if not t:
             continue
+        base = t.upper()
+        matched = None
         for name, code in _KO_COUNTRY.items():
-            if name in t:
-                codes.add(code)
+            if name.upper() in base:
+                matched = code
                 break
+        if matched is None:
+            m = _CODE_RE.search(t)
+            if m:
+                matched = m.group(1).upper()
+        if matched:
+            codes.add(matched)
     return codes
 
 
@@ -8835,7 +8851,7 @@ def compute_portfolio_index(df, settings):
     fig_rank = bar_chart(
         [r["company"] for r in top_bar][::-1],
         [r["portfolio_index"] for r in top_bar][::-1],
-        title="Patent Asset Index (PAI 유사) 순위 — %s 기준" % scope_label,
+        title="Patent Asset Index 순위 — %s 기준" % scope_label,
         orientation="h", x_title="Patent Asset Index (Σ Competitive Impact)",
         hovertext=["%s — PI %s / %s건 / 평균 CI %s (TR %s × MC %s)"
                    % (r["company"], fmt_num(r["portfolio_index"]), fmt_num(r["n"]),

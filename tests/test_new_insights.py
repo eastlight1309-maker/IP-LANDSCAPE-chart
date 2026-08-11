@@ -308,6 +308,27 @@ def test_mc_country_parsing_and_variation():
     assert mc.notna().all() and mc.nunique() == 3, "국가 구성이 다르면 MC 도 달라야 함"
 
 
+def test_mc_wips_dash_count_format():
+    """실제 WIPS 형식 '한국-1 | 미국-0 | ...': 건수 0 국가는 보호국에서 제외,
+    PCT→WO(보호 아님, GNI 0), 기타→기본 GNI."""
+    from src.analyses.portfolio_index import (_country_codes_of,
+                                              _mc_from_country_list,
+                                              _GNI_TRILLION)
+    cell = "한국-1 | 미국-0 | 일본-1 | 중국-1 | EP-0 | PCT-1 | 기타-1"
+    codes = _country_codes_of(cell)
+    assert codes == {"KR", "JP", "CN", "WO", "XX"}, codes
+    assert "US" not in codes and "EP" not in codes  # -0 은 문헌 없음
+    mc = _mc_from_country_list(pd.Series([cell, "미국-1 | 한국-0"]))
+    us = _GNI_TRILLION["US"]
+    expect0 = (_GNI_TRILLION["KR"] + _GNI_TRILLION["JP"] + _GNI_TRILLION["CN"]
+               + _GNI_TRILLION["WO"] + 0.1) / us
+    assert abs(mc.iloc[0] - expect0) < 1e-9
+    assert abs(mc.iloc[1] - 1.0) < 1e-9   # 미국만 보호 = 1.0
+    # 공백 변형·건수 없는 나열도 동일 동작
+    assert _country_codes_of("한국 - 2 | 미국 - 0") == {"KR"}
+    assert _country_codes_of("한국 | 미국 | 일본") == {"KR", "US", "JP"}
+
+
 def test_sankey_labels_include_applicant(settings):
     from src.analyses.semantic_insights import compute_semantic_influence
     df = make_prepared(generate_sample(n=400, seed=21))
