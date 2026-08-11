@@ -89,6 +89,7 @@ ANALYSIS_PATHS = [
     "/api/emerging-clusters", "/api/semantic-influence", "/api/similarity-network",
     "/api/wips-deep", "/api/executive-summary", "/api/axis-cross",
     "/api/tech-year-bubble", "/api/ownership", "/api/exec-plus",
+    "/api/deep-plus",
 ]
 
 

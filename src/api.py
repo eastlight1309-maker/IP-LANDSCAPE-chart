@@ -112,6 +112,7 @@ from src.analyses.semantic_insights import (compute_emerging_clusters,
 from src.analyses.wips_deep import compute_wips_deep
 from src.analyses.executive import compute_executive_summary
 from src.analyses.exec_plus import compute_exec_plus
+from src.analyses.deep_plus import compute_deep_plus
 from src.analyses.axis_cross import compute_axis_cross
 from src.analyses.ownership import compute_ownership
 from src.web_search import search_web, format_web_context
@@ -563,6 +564,11 @@ def register_routes(app):
             lambda df, s, b: compute_tech_year_bubble(df, s,
                                                       companies=b.get("companies")),
             extra_key_fields=("companies",)),
+        "deep-plus": _analysis_route(
+            "deep-plus",
+            lambda df, s, b: compute_deep_plus(df, s,
+                                               only_sections=b.get("sections")),
+            extra_key_fields=("sections",)),
         "ownership": _analysis_route(
             "ownership", lambda df, s, b: compute_ownership(df, s)),
     }

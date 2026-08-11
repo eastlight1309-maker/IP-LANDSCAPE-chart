@@ -524,6 +524,72 @@ def test_exec_plus_sections(settings):
     assert set(r3["sections"].keys()) <= {"keyman"}
 
 
+def test_deep_plus_six_sections(settings):
+    """특수 신호 6종: 실시권·표준특허·거절사유·과학연계·권리변동·심사관."""
+    from src.analyses.deep_plus import compute_deep_plus
+    from src.analyses.common import select_patents
+    from src.preprocessing import parse_bool
+    df = make_prepared(generate_sample(n=500, seed=42))
+    r = compute_deep_plus(df, settings)
+    assert r["status"] == "ok"
+    s = r["sections"]
+    assert set(s.keys()) == {"license", "sep", "rejection", "science",
+                             "assignment", "examiner"}
+    # ① 실시권: 라이선스율 % 축 + licensed 드릴이 실시권 특허만 선택
+    lc = s["license"]
+    assert lc["n_licensed"] > 0 and 0 < lc["ratio"] < 1
+    picked = select_patents(df, {"licensed": True})
+    assert len(picked) == int((df["license_flag"].map(parse_bool) == True).sum())  # noqa: E712
+    # ② 표준특허: 기구별/기업별/연도별
+    sp = s["sep"]
+    assert sp["n_sep"] >= 3 and sp["fig_org"] and sp["rows"]
+    assert len(select_patents(df, {"sep": True})) == sp["n_sep"]
+    # ③ 거절 사유: 키워드 분류 + 기업별 거절률 + 재심사율
+    rj = s["rejection"]
+    assert rj["reason_counts"] and "진보성" in rj["reason_counts"]
+    assert rj["reexam_rate"] is not None
+    # ④ 과학 연계성
+    sc = s["science"]
+    assert sc["avg_all"] > 0 and sc["rows"]
+    # ⑤ 권리변동: 연도 타임라인 + 최근 거래 목록 (양도인→양수인)
+    am = s["assignment"]
+    assert am["n_assign"] >= 3 and am["rows"]
+    assert am["rows"][0]["date"] and am["rows"][0]["drill"]["type"] == "ids"
+    # ⑥ 심사관: 민감정보 주의 문구 필수
+    ex = s["examiner"]
+    assert ex["rows"] and "실명" in ex["note"]
+    # 섹션 스코핑
+    r2 = compute_deep_plus(df, settings, only_sections=["license"])
+    assert set(r2["sections"].keys()) <= {"license"}
+    # 인사이트에 섹션별 문장 포함
+    joined = " ".join(r["insight"]["sentences"])
+    assert "실시권" in joined and "표준특허" in joined and "거절 사유" in joined
+
+
+def test_deep_plus_mapping():
+    """신규 WIPS 특수 필드가 자동 매핑되는지."""
+    from src.column_mapping import suggest_mapping
+    cols = ["실시권 설정 유무[KR]", "실시권자 수[KR]", "표준화기구", "표준번호",
+            "선언일", "거절 사유[KR]", "거절결정 여부[KR,JP]", "재심사청구 여부[KR]",
+            "비 특허 참고문헌 수(B1)", "최근 양수인[KR,US,CN]", "최근 양도인[KR,US,CN]",
+            "최근 양도일[KR,US,CN]", "최근 양도유형[KR,US,CN]", "심사관[KR,JP,US,CN]",
+            "출원인", "출원일"]
+    m = suggest_mapping(cols)
+    got = {k: v["column"] for k, v in m.items()}
+    for concept, col in [
+            ("license_flag", "실시권 설정 유무[KR]"), ("licensee_count", "실시권자 수[KR]"),
+            ("sep_org", "표준화기구"), ("sep_number", "표준번호"), ("sep_date", "선언일"),
+            ("rejection_reason", "거절 사유[KR]"), ("rejection_flag", "거절결정 여부[KR,JP]"),
+            ("reexam_flag", "재심사청구 여부[KR]"),
+            ("npl_count", "비 특허 참고문헌 수(B1)"),
+            ("recent_assignee", "최근 양수인[KR,US,CN]"),
+            ("recent_assignor", "최근 양도인[KR,US,CN]"),
+            ("assign_date", "최근 양도일[KR,US,CN]"),
+            ("assign_type", "최근 양도유형[KR,US,CN]"),
+            ("examiner", "심사관[KR,JP,US,CN]")]:
+        assert got.get(concept) == col, "%s: %r" % (concept, got.get(concept))
+
+
 def test_wips_deep_sections_param_and_gov_drill(settings):
     """sections 파라미터 스코핑 + 국가과제 막대 클릭 드릴 + 개시충실도 색상."""
     from src.analyses.wips_deep import compute_wips_deep

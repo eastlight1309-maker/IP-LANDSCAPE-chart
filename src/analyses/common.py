@@ -220,6 +220,14 @@ def select_patents(df, drill):
         if drill.get("solutions") and "solution" in df.columns:
             wanted_s = set(map(str, drill["solutions"]))
             mask &= df["solution"].astype(str).str.strip().isin(wanted_s)
+    if drill.get("licensed") is not None and "license_flag" in df.columns:
+        from src.preprocessing import parse_bool as _pb
+        lic = df["license_flag"].map(_pb)
+        mask &= (lic == True) if drill["licensed"] else (lic == False)  # noqa: E712
+    if drill.get("sep") is not None and "sep_org" in df.columns:
+        has_sep = ~df["sep_org"].astype(str).str.strip().str.lower() \
+            .isin(["", "nan", "none", "-"])
+        mask &= has_sep if drill["sep"] else ~has_sep
     if drill.get("gov_program") and "gov_program" in df.columns:
         mask &= df["gov_program"].astype(str).str.strip() == \
             str(drill["gov_program"]).strip()

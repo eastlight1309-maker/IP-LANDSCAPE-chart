@@ -1677,6 +1677,156 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
         });
       } };
     }
+    function deepPlusTab(label, sectionKeys, title, help) {
+      return { label: label, render: function (h) {
+        analysisCard({
+          analysis: 'deep-plus', holder: h, title: title,
+          help: help + ' 해당 컬럼이 매핑된 섹션만 계산되고 나머지는 사유와 함께 생략됩니다. ' +
+            '모든 신호는 상관 관찰이며 인과·법률 판단이 아닙니다.',
+          body: { sections: sectionKeys },
+          renderOk: renderDeepPlus
+        });
+      } };
+    }
+
+    function renderDeepPlus(r, c, setTarget) {
+      var s = r.sections || {};
+      var first = true;
+      function head(txt) {
+        c.body.appendChild(Ui.el('<div style="font-weight:700;font-size:13px;' +
+          'margin:14px 0 4px;border-top:1px solid #e8eff5;padding-top:10px">' +
+          Ui.esc(txt) + '</div>'));
+      }
+      function addFig(fig, capText) {
+        if (!fig) return;
+        var holder = Ui.el('<div class="chart-holder"></div>');
+        c.body.appendChild(holder);
+        Render.plotly(holder, fig, plotlyDrill);
+        if (first) { setTarget({ kind: 'plotly', el: holder }); first = false; }
+        if (capText) c.body.appendChild(chartCap(capText));
+      }
+      function addTable(headers, trs) {
+        if (!trs.length) return;
+        var tbl = Ui.el(simpleTable(headers, []));
+        trs.forEach(function (tr) { tbl.querySelector('tbody').appendChild(tr); });
+        var wrap = Ui.el('<div style="overflow-x:auto;max-height:280px;overflow-y:auto"></div>');
+        wrap.appendChild(tbl);
+        c.body.appendChild(wrap);
+      }
+      function note(txt) {
+        if (txt) c.body.appendChild(Ui.el('<div class="disclaimer">' + Ui.esc(txt) + '</div>'));
+      }
+      function idRow(x, extraCells) {
+        var tr = document.createElement('tr');
+        var td0 = document.createElement('td');
+        td0.appendChild(drillCell(x.id, x.drill));
+        tr.appendChild(td0);
+        tr.insertAdjacentHTML('beforeend', extraCells);
+        return tr;
+      }
+      if (s.license) {
+        var lc = s.license;
+        head('🤝 실시권(라이선스) 신호 — 상업화의 직접 증거');
+        c.body.appendChild(Ui.el('<div style="color:#46607a;font-size:12.5px;margin-bottom:6px">' +
+          '실시권 설정 특허 <b>' + Ui.num(lc.n_licensed, 0) + '건</b> (' + Ui.pct(lc.ratio) + ')' +
+          (lc.quality ? ' · 평균 피인용: 실시권 <b>' + Ui.num(lc.quality.licensed_avg, 1) +
+            '</b> vs 일반 <b>' + Ui.num(lc.quality.other_avg, 1) + '</b>' : '') + '</div>'));
+        addFig(lc.fig_tech,
+          'X축=라이선스율(실시권 설정 비율), Y축=기술분류. 읽는 법: 라이선스율이 높은 기술은 ' +
+          '시장에서 실제로 돈을 내고 쓰는 기술 — 특허의 상업 가치가 검증된 영역입니다.');
+        addFig(lc.fig_comp, null);
+        addTable(['특허', '명칭', '출원인', '기술분류', '실시권자 수'],
+          (lc.rows || []).map(function (x) {
+            return idRow(x, '<td>' + Ui.esc(x.title) + '</td><td>' + Ui.esc(x.applicant) +
+              '</td><td>' + Ui.esc(x.tech) + '</td><td class="num">' +
+              (x.licensees !== null && x.licensees !== undefined ? x.licensees : '-') + '</td>');
+          }));
+        note(lc.note);
+      }
+      if (s.sep) {
+        var sp = s.sep;
+        head('📡 표준특허(SEP) 현황 — 선언 ' + Ui.num(sp.n_sep, 0) + '건');
+        addFig(sp.fig_org,
+          'X축=선언 특허 수, Y축=표준화기구. 읽는 법: 표준 필수특허 선언은 로열티 협상력의 ' +
+          '근거입니다 — 선언은 자기 신고이며 필수성 검증은 아닙니다.');
+        addFig(sp.fig_comp, null);
+        addFig(sp.fig_year, null);
+        addTable(['특허', '출원인', '표준화기구', '표준번호', '선언일'],
+          (sp.rows || []).map(function (x) {
+            return idRow(x, '<td>' + Ui.esc(x.applicant) + '</td><td>' + Ui.esc(x.org) +
+              '</td><td>' + Ui.esc(x.std_no) + '</td><td>' + Ui.esc(x.declared) + '</td>');
+          }));
+        note(sp.note);
+      }
+      if (s.assignment) {
+        var am = s.assignment;
+        head('🔄 권리변동 타임라인 — 양도 기록 ' + Ui.num(am.n_assign, 0) + '건');
+        addFig(am.fig_year,
+          'X축=양도 연도, 색=양도유형. 읽는 법: 거래가 몰린 시기·유형이 시장 이벤트의 흔적입니다. ' +
+          '담보설정은 특허를 담보로 한 자금 조달의 관찰 신호입니다.');
+        addFig(am.fig_buyers, null);
+        addTable(['특허', '양도일', '양도인', '양수인', '유형', '기술분류'],
+          (am.rows || []).map(function (x) {
+            return idRow(x, '<td style="white-space:nowrap">' + Ui.esc(x.date) + '</td><td>' +
+              Ui.esc(x.assignor) + '</td><td>' + Ui.esc(x.assignee) + '</td><td>' +
+              Ui.esc(x.type) + '</td><td>' + Ui.esc(x.tech) + '</td>');
+          }));
+        note(am.note);
+      }
+      if (s.rejection) {
+        var rj = s.rejection;
+        head('🚫 거절 사유 인텔리전스 — 출원 전략 개선 지점');
+        addFig(rj.fig_reason,
+          'X축=건수, Y축=거절 사유 유형(키워드 자동 분류). 읽는 법: 1위 사유가 우리 분야 출원이 ' +
+          '가장 자주 부딪히는 벽입니다 — 진보성이면 선행조사 강화, 기재불비면 명세서 품질 점검.');
+        addFig(rj.fig_comp, null);
+        if (rj.reexam_rate !== null && rj.reexam_rate !== undefined) {
+          c.body.appendChild(Ui.el('<div style="color:#46607a;font-size:12.5px;margin:6px 0">' +
+            '재심사청구율: <b>' + Ui.pct(rj.reexam_rate) + '</b> — 거절 후 재도전 비율</div>'));
+        }
+        note(rj.note);
+      }
+      if (s.science) {
+        var sc = s.science;
+        head('🔬 과학 연계성 (Science Linkage) — 평균 NPL 인용 ' + Ui.num(sc.avg_all, 1) + '건');
+        addFig(sc.fig_tech,
+          'X축=평균 비특허문헌(논문 등) 인용 수, Y축=기술분류. 읽는 법: NPL 인용이 많은 기술은 ' +
+          '기초연구에서 갓 나온 신기술 신호 — 장기 관점의 원천 기술 후보입니다.');
+        addFig(sc.fig_comp, null);
+        addTable(['특허', '명칭', '출원인', '기술분류', 'NPL 인용'],
+          (sc.rows || []).map(function (x) {
+            return idRow(x, '<td>' + Ui.esc(x.title) + '</td><td>' + Ui.esc(x.applicant) +
+              '</td><td>' + Ui.esc(x.tech) + '</td><td class="num">' + x.npl + '</td>');
+          }));
+        note(sc.note);
+      }
+      if (s.examiner) {
+        var ex = s.examiner;
+        head('🧑‍⚖️ 심사관 인텔리전스 (내부 참고용)');
+        addFig(ex.fig,
+          'X축=담당 건수, Y축=심사관. hover 에 등록률·평균 OA 횟수. 읽는 법: 데이터셋 표본 ' +
+          '기준의 참고 정보이며 심사관 개인의 전체 성향과 다를 수 있습니다.');
+        addTable(['심사관', '담당 건수', '등록률', '평균 OA'],
+          (ex.rows || []).map(function (x) {
+            var tr = document.createElement('tr');
+            tr.insertAdjacentHTML('beforeend',
+              '<td>' + Ui.esc(x.examiner) + '</td><td class="num">' + Ui.num(x.n, 0) + '</td>' +
+              '<td class="num">' + (x.grant_rate !== null && x.grant_rate !== undefined ?
+                Ui.pct(x.grant_rate) : '-') + '</td>' +
+              '<td class="num">' + (x.avg_oa !== null && x.avg_oa !== undefined ?
+                x.avg_oa : '-') + '</td>');
+            return tr;
+          }));
+        note(ex.note);
+      }
+      if ((r.skipped || []).length) {
+        c.body.appendChild(Ui.el('<div class="disclaimer" style="margin-top:10px">생략: ' +
+          r.skipped.map(function (x) {
+            return Ui.esc(x.section) + ' (' + Ui.esc(x.reason) + ')';
+          }).join(' · ') + '</div>'));
+      }
+    }
+
     function renderDeepSections(r, c, setTarget) {
             var s = r.sections || {};
             var first = true;
@@ -2069,6 +2219,14 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
         '심판·소송 기록으로 상업적으로 가장 뜨거운 기술·특허를, 국가연구 과제명으로 정부 R&D 가 ' +
         '만드는 특허 지형을 봅니다. 국가과제 막대를 클릭하면 해당 과제의 특허 목록이 열리고 ' +
         'Excel 로 내려받을 수 있습니다.'),
+      deepPlusTab('시그널: 라이선스·표준·양도', ['license', 'sep', 'assignment'],
+        '특수 신호 — 실시권(라이선스) · 표준특허 · 권리변동 타임라인',
+        '실시권 설정(=기술료 수익화의 직접 증거), 표준화기구 선언 특허(SEP), 최근 양도 기록' +
+        '(누가 언제 어떤 유형으로 특허를 거래했나)을 봅니다.'),
+      deepPlusTab('시그널: 거절·과학·심사관', ['rejection', 'science', 'examiner'],
+        '특수 신호 — 거절 사유 · 과학 연계성 · 심사관',
+        '거절 사유 유형 분포와 기업별 거절결정률(출원 전략 개선 지점), 비특허문헌(논문) 인용 기반 ' +
+        '과학 연계성(기초연구 근접도), 심사관별 처리 현황(개인 실명 — 내부 참고용)을 봅니다.'),
       { label: 'Patent Asset Index', render: function (h) {
         analysisCard({
           analysis: 'portfolio-index', holder: h,
@@ -3556,7 +3714,7 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
     section('🗺️ 메뉴 안내',
       '<table class="ipls-table"><thead><tr><th>메뉴</th><th>내용</th></tr></thead><tbody>' +
       '<tr><td>📊 Executive Overview</td><td>경영 요약(KPI·경보·BCG 매트릭스·경쟁 포지션) + 경영 차트 6종: 📅만료 절벽 / 💰R&amp;D 효율 사분면 / 👤키맨 리스크 / ⏱️추격 시계 / 🚨위협 레이더 / ✂️포트폴리오 다이어트 (탭마다 자사 기준 선택 가능)</td></tr>' +
-      '<tr><td>📈 Basic Statistics</td><td>연도/국가/출원인/기술분류 기본 통계(차트별 인사이트 포함), 출원인×연도 버블, 기술×연도 버블(최대 3사 비교), 심화 분석, 심층 시그널 4개 탭(수명·시장 / 심사 이력 / 출원 행태 / 분쟁·국가과제), Patent Asset Index(공식 방법론 기반 TR·MC·CI·PAI + 공식 지수와의 차이 명시)</td></tr>' +
+      '<tr><td>📈 Basic Statistics</td><td>연도/국가/출원인/기술분류 기본 통계(차트별 인사이트 포함), 출원인×연도 버블, 기술×연도 버블(최대 3사 비교), 심화 분석, 심층 시그널 4개 탭(수명·시장 / 심사 이력 / 출원 행태 / 분쟁·국가과제), 특수 신호 2개 탭(실시권·표준특허·권리변동 / 거절 사유·과학 연계성·심사관), Patent Asset Index(공식 방법론 기반 TR·MC·CI·PAI + 공식 지수와의 차이 명시)</td></tr>' +
       '<tr><td>🧬 Technology Evolution</td><td>기술 생애주기, 전이 Sankey, Emerging Radar, 조합 네트워크, 분류축 교차(A·B·C), 신흥 기술 탐지(임베딩)</td></tr>' +
       '<tr><td>🏢 Competitor Intelligence</td><td>기업 DNA, 기술 궤적, 선도–추종, 권리범위 엔트로피, 전략 유사도·중첩도</td></tr>' +
       '<tr><td>🎯 White Space &amp; R&amp;D</td><td>Opportunity Matrix, 미점유 조합 UpSet, 문제–해결수단 매트릭스(C축=해결과제 × B축=해결수단 분류 기반 — 두 축 매핑 시 활성), 추천 R&amp;D 테마</td></tr>' +

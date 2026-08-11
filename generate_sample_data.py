@@ -207,6 +207,30 @@ def generate_sample(n=600, seed=42, sep="; ", multiclass_format="sep",
             "국가연구 과제명": (["소재부품장비 기술개발사업", "K-반도체 전략 지원사업",
                           "차세대 지능형 반도체 기술개발", "나노소재 원천기술개발"]
                          [(l1_idx + i) % 4] if rng.random() < 0.15 else ""),
+            # 특수 신호 6종 (Deep Plus)
+            "실시권 설정 유무": ("유" if rng.random() < 0.08 else "무"),
+            "실시권자 수": (int(rng.integers(1, 4)) if rng.random() < 0.08 else 0),
+            "표준화기구": (["ETSI", "IEEE", "ITU-T"][i % 3]
+                      if rng.random() < 0.05 else ""),
+            "표준번호": ("TS 38.%03d" % rng.integers(100, 400)
+                     if rng.random() < 0.05 else ""),
+            "선언일": ("%d-%02d-15" % (year + 2, (i % 12) + 1)
+                    if rng.random() < 0.05 else ""),
+            "거절 사유": (["진보성 결여", "신규성 상실", "명세서 기재불비",
+                       "진보성 및 기재불비", "산업상 이용가능성 부정"]
+                      [(i + l1_idx) % 5] if rng.random() < 0.25 else ""),
+            "거절결정 여부": ("유" if rng.random() < 0.12 else "무"),
+            "재심사청구 여부": ("유" if rng.random() < 0.06 else "무"),
+            "비 특허 참고문헌 수(B1)": int(rng.integers(0, 12)),
+            "최근 양수인": (COMPANIES[int(rng.integers(0, len(COMPANIES)))]
+                       if rng.random() < 0.07 else ""),
+            "최근 양도인": (COMPANIES[int(rng.integers(0, len(COMPANIES)))]
+                       if rng.random() < 0.07 else ""),
+            "최근 양도일": ("%d-%02d-01" % (min(year + 3, 2025), (i % 12) + 1)
+                       if rng.random() < 0.07 else ""),
+            "최근 양도유형": (["양도", "합병", "담보설정"][i % 3]
+                        if rng.random() < 0.07 else ""),
+            "심사관": ("심사관%02d" % (i % 12) if rng.random() < 0.6 else ""),
         })
     return pd.DataFrame(rows)
 

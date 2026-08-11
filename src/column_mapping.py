@@ -336,6 +336,80 @@ CONCEPTS = {
         "variants": ["심사청구일", "심사 청구일", "심사청구일자", "request for examination",
                      "examination request date", "심사청구 일자"],
     },
+    "license_flag": {
+        "label": "실시권 설정 유무", "dtype": "불리언/문자열 (유/무, Y/N)",
+        "preferred": ["실시권 설정 유무"],  # 기본 매핑 (WIPS)
+        "variants": ["실시권 설정 유무", "실시권 설정유무", "실시권설정유무", "실시권 유무",
+                     "license flag", "licensed", "라이선스 유무"],
+    },
+    "licensee_count": {
+        "label": "실시권자 수", "dtype": "숫자",
+        "preferred": ["실시권자 수"],  # 기본 매핑 (WIPS)
+        "variants": ["실시권자 수", "실시권자수", "licensee count", "라이선시 수"],
+    },
+    "sep_org": {
+        "label": "표준화기구", "dtype": "문자열 (예: ETSI, IEEE)",
+        "variants": ["표준화기구", "표준화 기구", "standard organization", "sso",
+                     "standard setting organization", "표준기구"],
+    },
+    "sep_number": {
+        "label": "표준번호", "dtype": "문자열",
+        "variants": ["표준번호", "표준 번호", "standard number", "표준규격번호"],
+    },
+    "sep_date": {
+        "label": "표준 선언일", "dtype": "날짜",
+        "variants": ["선언일", "표준 선언일", "declaration date", "선언일자"],
+    },
+    "rejection_reason": {
+        "label": "거절 사유", "dtype": "문자열 (진보성/신규성/기재불비 등)",
+        "preferred": ["거절 사유"],  # 기본 매핑 (WIPS)
+        "variants": ["거절 사유", "거절사유", "rejection reason", "거절이유",
+                     "거절 이유"],
+    },
+    "rejection_flag": {
+        "label": "거절결정 여부", "dtype": "불리언/문자열 (유/무, Y/N)",
+        "variants": ["거절결정 여부", "거절결정여부", "final rejection", "거절 여부",
+                     "거절여부"],
+    },
+    "reexam_flag": {
+        "label": "재심사청구 여부", "dtype": "불리언/문자열 (유/무, Y/N)",
+        "variants": ["재심사청구 여부", "재심사청구여부", "재심사 청구 여부",
+                     "reexamination", "재심사여부"],
+    },
+    "npl_count": {
+        "label": "비특허 참고문헌 수", "dtype": "숫자 (논문 등 NPL 인용 수)",
+        "preferred": ["비 특허 참고문헌 수(B1)"],  # 기본 매핑 (WIPS)
+        "variants": ["비 특허 참고문헌 수(B1)", "비 특허 참고문헌 수", "비특허 참고문헌 수",
+                     "비특허문헌 수", "npl count", "non patent literature count",
+                     "비특허 인용 수"],
+    },
+    "recent_assignee": {
+        "label": "최근 양수인", "dtype": "문자열",
+        "preferred": ["최근 양수인"],  # 기본 매핑 (WIPS)
+        "variants": ["최근 양수인", "최근양수인", "recent assignee", "양수인(최근)"],
+    },
+    "recent_assignor": {
+        "label": "최근 양도인", "dtype": "문자열",
+        "preferred": ["최근 양도인"],  # 기본 매핑 (WIPS)
+        "variants": ["최근 양도인", "최근양도인", "recent assignor", "양도인(최근)"],
+    },
+    "assign_date": {
+        "label": "최근 양도일", "dtype": "날짜",
+        "preferred": ["최근 양도일"],  # 기본 매핑 (WIPS)
+        "variants": ["최근 양도일", "최근양도일", "양도일", "assignment date",
+                     "recent assignment date"],
+    },
+    "assign_type": {
+        "label": "최근 양도유형", "dtype": "문자열 (양도/합병/담보 등)",
+        "preferred": ["최근 양도유형"],  # 기본 매핑 (WIPS)
+        "variants": ["최근 양도유형", "최근양도유형", "양도유형", "assignment type",
+                     "conveyance type"],
+    },
+    "examiner": {
+        "label": "심사관", "dtype": "문자열",
+        "preferred": ["심사관"],  # 기본 매핑 (WIPS)
+        "variants": ["심사관", "examiner", "심사관명"],
+    },
     "oa_count": {
         "label": "거절이유통지(OA) 횟수", "dtype": "숫자",
         "preferred": ["거절서류발행 횟수[KR]"],  # 기본 매핑 (WIPS)
@@ -449,6 +523,7 @@ ANALYSIS_REQUIREMENTS = {
     "executive-summary":     {"required": [{"any": ANY_TECH}, {"any": ANY_DATE}, {"any": ANY_APPLICANT}], "optional": ["cites_forward", "is_active", "legal_status", "expiry_date", "is_own"]},
     "axis-cross":            {"required": [{"any": ANY_TECH}], "optional": ["tech_b_l1", "tech_b_l2", "tech_b_l3", "tech_c_l1", "tech_c_l2", "tech_c_l3", {"any": ANY_DATE}] + ANY_APPLICANT},
     "tech-year-bubble":      {"required": [{"any": ANY_TECH}, {"any": ANY_DATE}], "optional": ANY_APPLICANT},
+    "deep-plus":             {"required": [{"any": ANY_APPLICANT + ["pub_number", "app_number"]}], "optional": ["license_flag", "licensee_count", "sep_org", "sep_number", "sep_date", "rejection_reason", "rejection_flag", "reexam_flag", "npl_count", "recent_assignee", "recent_assignor", "assign_date", "assign_type", "examiner", "oa_count", "cites_forward", "is_granted", "legal_status", {"any": ANY_TECH}, {"any": ANY_DATE}]},
     "ownership":             {"required": [{"any": ANY_APPLICANT}, "assignee"], "optional": [{"any": ANY_TECH}, {"any": ANY_DATE}, "cites_forward", "is_active", "legal_status", "reg_date"]},
 }
 
@@ -472,6 +547,9 @@ CONCEPT_KINDS = {
     "examiner_citations": "count_or_list", "applicant_citations": "count_or_list",
     "trial_count": "number", "lawsuit_count": "number",
     "expedited_exam": "bool",
+    "license_flag": "bool", "licensee_count": "number",
+    "sep_date": "date", "rejection_flag": "bool", "reexam_flag": "bool",
+    "npl_count": "number", "assign_date": "date",
 }
 
 

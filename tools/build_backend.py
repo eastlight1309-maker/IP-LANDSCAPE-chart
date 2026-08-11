@@ -58,6 +58,7 @@ MODULE_ORDER = [
     "src/analyses/semantic_insights.py",
     "src/analyses/wips_deep.py",
     "src/analyses/exec_plus.py",
+    "src/analyses/deep_plus.py",
     "src/analyses/executive.py",
     "src/analyses/axis_cross.py",
     "src/analyses/ownership.py",
