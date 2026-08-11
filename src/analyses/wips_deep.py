@@ -122,11 +122,30 @@ def _km_median(times, probs):
 def _survival_section(df, settings):
     if "reg_date" not in df.columns or not df["reg_date"].notna().any():
         return None, "등록일 컬럼 필요"
-    if "lapse_date" not in df.columns or not df["lapse_date"].notna().any():
-        return None, "소멸일 컬럼 필요 (연차료 포기 시점 — WIPS '소멸일'/'포기일')"
     now = pd.Timestamp.now()
     sub = df[df["reg_date"].notna()].copy()
-    lapse = sub["lapse_date"]
+    lapse_basis = None
+    if "lapse_date" in sub.columns and sub["lapse_date"].notna().any():
+        lapse = sub["lapse_date"]
+        lapse_basis = "소멸일 컬럼"
+    elif "expiry_date" in sub.columns and sub["expiry_date"].notna().any() \
+            and "legal_status_norm" in sub.columns:
+        # 소멸일 미매핑 폴백: 권리가 이미 종료된 특허(소멸/포기/존속기간만료)의
+        # '존속기간(예상)만료일'이 과거 날짜면 그 시점을 권리 종료일로 근사한다
+        # (WIPS 는 소멸 특허의 (예상)만료일에 실제 종료 시점을 기록하는 경우가 많음).
+        dead = sub["legal_status_norm"].isin(
+            ["Lapsed", "Abandoned", "Granted-Expired"])
+        past = sub["expiry_date"].notna() & (sub["expiry_date"] <= now)
+        lapse = sub["expiry_date"].where(dead & past)
+        if lapse.notna().sum() < 5:
+            return None, ("소멸일 컬럼 필요 — 법적상태·만료일 기반 근사도 표본 부족 "
+                          "(권리 종료 특허 5건 미만)")
+        lapse_basis = ("법적상태(소멸·포기·만료) × 존속기간(예상)만료일 근사 — "
+                       "소멸일 컬럼이 없어 권리 종료 특허의 (예상)만료일(과거)을 "
+                       "종료 시점으로 사용")
+    else:
+        return None, ("소멸일 컬럼 필요 (또는 법적상태 + 존속기간(예상)만료일 매핑 시 "
+                      "자동 근사 계산)")
     dur = np.where(lapse.notna(),
                    (lapse - sub["reg_date"]).dt.days / 365.25,
                    (now - sub["reg_date"]).dt.days / 365.25)
@@ -192,7 +211,8 @@ def _survival_section(df, settings):
                         for c, _m, _n in plot_rows])
     n_events = int(sub["_event"].sum())
     return {"fig": fig, "fig_company": fig_comp, "techs": tech_rows,
-            "n": int(len(sub)), "n_events": n_events}, None
+            "n": int(len(sub)), "n_events": n_events,
+            "note": "권리 종료 시점 기준: %s." % lapse_basis}, None
 
 
 # ---------------------------------------------------------------------------
@@ -912,9 +932,17 @@ def compute_wips_deep(df, settings, only_sections=None):
         else:
             skipped.append({"section": key, "reason": reason})
     if not sections:
-        return empty_result("심층 시그널에 필요한 컬럼(소멸일/대리인/우선심사/원출원번호/"
-                            "심판 이력 등)이 하나도 매핑되지 않았습니다. Settings → 컬럼 "
-                            "매핑에서 해당 WIPS 필드를 매핑하세요.")
+        labels = {"survival": "연차료 생존곡선", "market_entry": "지정국 진입 시차",
+                  "agent": "대리인 전환", "examiner_eye": "심사관의 눈",
+                  "expedited": "우선심사", "divisional": "분할출원",
+                  "anomaly": "심사기간 이상탐지", "disclosure": "개시 충실도",
+                  "trial": "심판·소송", "gov_program": "국가연구 과제"}
+        details = " · ".join("%s: %s" % (labels.get(s["section"], s["section"]),
+                                         s["reason"]) for s in skipped)
+        return empty_result("이 화면의 섹션이 계산되지 못했습니다 — %s. Settings → "
+                            "컬럼 매핑에서 위 컬럼을 매핑하면 활성화됩니다 (자동 매핑을 "
+                            "다시 실행하면 '등록일[KR,JP…]'처럼 국가목록이 붙은 WIPS "
+                            "헤더도 인식됩니다)." % details)
 
     sentences, metrics = [], {}
     period = period_label(df)

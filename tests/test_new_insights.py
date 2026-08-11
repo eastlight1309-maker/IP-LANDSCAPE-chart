@@ -258,6 +258,47 @@ def test_problem_solution_axis_titles(prepared, settings):
     assert set(r["problems"]) <= c_vals and set(r["solutions"]) <= b_vals
 
 
+def test_bracketed_wips_headers_auto_mapped():
+    """WIPS 국가목록/코드 접미사 헤더('등록일[KR,JP]', '(B1)') 자동 인식."""
+    from src.column_mapping import suggest_mapping
+    cols = ["존속기간(예상)만료일[KR,JP,US,EP,CN,CA,AU]", "등록일[KR,JP,US,EP]",
+            "출원일", "대리인[KR]", "우선심사여부[KR]", "출원인", "발명의 명칭"]
+    m = suggest_mapping(cols)
+    assert m["expiry_date"]["column"].startswith("존속기간(예상)만료일")
+    assert m["expiry_date"]["score"] == 1.01  # preferred
+    assert m["reg_date"]["column"] == "등록일[KR,JP,US,EP]"
+    assert m["agent"]["column"] == "대리인[KR]"
+    assert m["expedited_exam"]["column"] == "우선심사여부[KR]"
+    # 접미사 없는 원형 완전일치(1.0)가 접미사 제거형(0.99)보다 우선
+    assert m["app_date"]["score"] == 1.0
+
+
+def test_survival_fallback_without_lapse_date(settings):
+    """소멸일 컬럼이 없어도 법적상태×만료일로 생존곡선을 근사 계산한다.
+
+    실제 WIPS 상황 재현: 소멸 특허의 '존속기간(예상)만료일'에 과거의 실제
+    권리 종료 시점이 기록되어 있는 경우.
+    """
+    from src.analyses.wips_deep import compute_wips_deep
+    raw = generate_sample(n=400, seed=23).drop(columns=["소멸일"])
+    reg = pd.to_datetime(raw["등록일"], errors="coerce")
+    old = raw.index[(reg.notna()) & (reg.dt.year <= 2018)][:60]
+    assert len(old) >= 20
+    raw.loc[old, "법적상태"] = "소멸"
+    raw.loc[old, "만료예정일"] = "2022-06-30"   # 과거 = 실제 권리 종료 시점 근사
+    df = make_prepared(raw)
+    r = compute_wips_deep(df, settings, only_sections=["survival"])
+    assert r["status"] == "ok" and "survival" in r["sections"]
+    assert "근사" in r["sections"]["survival"]["note"]
+    # 만료일·법적상태까지 없으면 사유에 대안 안내 포함
+    raw2 = generate_sample(n=200, seed=24).drop(
+        columns=["소멸일", "만료예정일", "법적상태"])
+    r2 = compute_wips_deep(make_prepared(raw2), settings,
+                           only_sections=["survival"])
+    if r2["status"] == "empty":
+        assert "소멸일" in r2["message"]
+
+
 # ---------------------------------------------------------------------------
 # 경영진 의사결정 차트 6종 (Executive Plus)
 # ---------------------------------------------------------------------------

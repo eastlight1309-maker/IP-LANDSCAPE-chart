@@ -122,7 +122,11 @@ CONCEPTS = {
     },
     "expiry_date": {
         "label": "만료예정일", "dtype": "날짜 (존속기간 만료 예정일)",
-        "variants": ["만료예정일", "만료일", "존속기간 만료일", "존속기간만료일", "expiry date",
+        "preferred": ["존속기간(예상)만료일[KR,JP,US,EP,CN,CA,AU]",
+                      "존속기간(예상)만료일"],  # 기본 매핑 (WIPS)
+        "variants": ["존속기간(예상)만료일[KR,JP,US,EP,CN,CA,AU]", "존속기간(예상)만료일",
+                     "존속기간 예상 만료일", "예상만료일", "(예상)만료일",
+                     "만료예정일", "만료일", "존속기간 만료일", "존속기간만료일", "expiry date",
                      "expiration date", "expected expiry", "predicted expiry date", "만료 예정일"],
     },
     "country": {
@@ -502,6 +506,18 @@ def _norm(s):
     return _NORM_RE.sub("", str(s).strip().lower())
 
 
+_SUFFIX_BRACKET_RE = re.compile(r"\[[^\]]*\]")           # [KR,JP,US,...] 국가목록
+_SUFFIX_PAREN_RE = re.compile(r"\(\s*[A-Za-z0-9,\s]+\s*\)\s*$")  # 끝의 (B1)/(F1) 등
+
+
+def _strip_header_suffix(col):
+    """WIPS 헤더의 부가 접미사 제거: '등록일[KR,JP,US]' → '등록일',
+    '인용 문헌 수(B1)' → '인용 문헌 수'. (한글 괄호 내용은 의미가 있어 유지)"""
+    s = _SUFFIX_BRACKET_RE.sub("", str(col))
+    s = _SUFFIX_PAREN_RE.sub("", s.strip())
+    return s.strip()
+
+
 def suggest_mapping(actual_columns, cutoff=None):
     """실제 컬럼 목록 → {concept: {column, method, score}} 자동 추천 매핑.
 
@@ -512,35 +528,47 @@ def suggest_mapping(actual_columns, cutoff=None):
     if cutoff is None:
         cutoff = THRESHOLDS["fuzzy_match_cutoff"]
     cols = [c for c in actual_columns if c is not None and str(c).strip() != ""]
+    # 헤더 형태 2종으로 매칭: 원형 + 접미사 제거형('등록일[KR,JP]'→'등록일').
+    # WIPS 가 국가목록/코드 접미사를 붙이는 컬럼들이 사전 변형에 없어도 잡히게.
     norm_cols = {c: _norm(c) for c in cols}
+    alt_cols = {c: _norm(_strip_header_suffix(c)) for c in cols}
 
     candidates = []  # (score, concept, column, method)
     for concept, spec in CONCEPTS.items():
         norm_variants = [_norm(v) for v in spec["variants"]]
+        pref = [_norm(v) for v in spec.get("preferred", [])]
         for col, ncol in norm_cols.items():
             if not ncol:
                 continue
+            nalt = alt_cols[col]
+            forms = [ncol] if (not nalt or nalt == ncol) else [ncol, nalt]
             best = None
-            if ncol in norm_variants:
-                # preferred 변형(개념별 기본 매핑 지정)은 완전일치 간 동률에서 우선
-                pref = [_norm(v) for v in spec.get("preferred", [])]
-                best = (1.01 if ncol in pref else 1.0, "exact")
-            else:
+            for fi, form in enumerate(forms):
+                if form in norm_variants:
+                    # preferred 변형(개념별 기본 매핑)은 완전일치 간 동률에서 우선.
+                    # 접미사 제거형 일치(fi=1)는 원형 일치보다 살짝 낮게 (0.99).
+                    best = ((1.01 if form in pref else (1.0 if fi == 0 else 0.99)),
+                            "exact")
+                    break
+            if best is None:
                 # 부분일치: 변형↔헤더 겹침 비율로 점수 차등 (긴 일치 우선)
                 part_score = 0.0
-                for nv in norm_variants:
-                    if len(nv) >= 2 and (nv in ncol or ncol in nv):
-                        coverage = min(len(nv), len(ncol)) / float(max(len(nv), len(ncol)))
-                        part_score = max(part_score, 0.8 + 0.1 * coverage)
+                for form in forms:
+                    for nv in norm_variants:
+                        if len(nv) >= 2 and (nv in form or form in nv):
+                            coverage = min(len(nv), len(form)) / float(max(len(nv), len(form)))
+                            part_score = max(part_score, 0.8 + 0.1 * coverage)
                 if part_score:
                     best = (round(part_score, 3), "partial")
                 if best is None:
                     ratio = max(
-                        (difflib.SequenceMatcher(None, ncol, nv).ratio() for nv in norm_variants),
+                        (difflib.SequenceMatcher(None, form, nv).ratio()
+                         for form in forms for nv in norm_variants),
                         default=0.0)
                     if ratio >= cutoff:
                         best = (round(ratio, 3), "fuzzy")
-            if best and _kind_compatible(concept, best[1], ncol):
+            # 형식 가드는 접미사 제거형 기준 ('횟수[KR]' 가 'kr' 로 끝나도 건수 인식)
+            if best and _kind_compatible(concept, best[1], nalt or ncol):
                 candidates.append((best[0], concept, col, best[1]))
 
     candidates.sort(key=lambda t: (-t[0], t[1], t[2]))

@@ -697,7 +697,11 @@ CONCEPTS = {
     },
     "expiry_date": {
         "label": "만료예정일", "dtype": "날짜 (존속기간 만료 예정일)",
-        "variants": ["만료예정일", "만료일", "존속기간 만료일", "존속기간만료일", "expiry date",
+        "preferred": ["존속기간(예상)만료일[KR,JP,US,EP,CN,CA,AU]",
+                      "존속기간(예상)만료일"],  # 기본 매핑 (WIPS)
+        "variants": ["존속기간(예상)만료일[KR,JP,US,EP,CN,CA,AU]", "존속기간(예상)만료일",
+                     "존속기간 예상 만료일", "예상만료일", "(예상)만료일",
+                     "만료예정일", "만료일", "존속기간 만료일", "존속기간만료일", "expiry date",
                      "expiration date", "expected expiry", "predicted expiry date", "만료 예정일"],
     },
     "country": {
@@ -1077,6 +1081,18 @@ def _norm(s):
     return _NORM_RE.sub("", str(s).strip().lower())
 
 
+_SUFFIX_BRACKET_RE = re.compile(r"\[[^\]]*\]")           # [KR,JP,US,...] 국가목록
+_SUFFIX_PAREN_RE = re.compile(r"\(\s*[A-Za-z0-9,\s]+\s*\)\s*$")  # 끝의 (B1)/(F1) 등
+
+
+def _strip_header_suffix(col):
+    """WIPS 헤더의 부가 접미사 제거: '등록일[KR,JP,US]' → '등록일',
+    '인용 문헌 수(B1)' → '인용 문헌 수'. (한글 괄호 내용은 의미가 있어 유지)"""
+    s = _SUFFIX_BRACKET_RE.sub("", str(col))
+    s = _SUFFIX_PAREN_RE.sub("", s.strip())
+    return s.strip()
+
+
 def suggest_mapping(actual_columns, cutoff=None):
     """실제 컬럼 목록 → {concept: {column, method, score}} 자동 추천 매핑.
 
@@ -1087,35 +1103,47 @@ def suggest_mapping(actual_columns, cutoff=None):
     if cutoff is None:
         cutoff = THRESHOLDS["fuzzy_match_cutoff"]
     cols = [c for c in actual_columns if c is not None and str(c).strip() != ""]
+    # 헤더 형태 2종으로 매칭: 원형 + 접미사 제거형('등록일[KR,JP]'→'등록일').
+    # WIPS 가 국가목록/코드 접미사를 붙이는 컬럼들이 사전 변형에 없어도 잡히게.
     norm_cols = {c: _norm(c) for c in cols}
+    alt_cols = {c: _norm(_strip_header_suffix(c)) for c in cols}
 
     candidates = []  # (score, concept, column, method)
     for concept, spec in CONCEPTS.items():
         norm_variants = [_norm(v) for v in spec["variants"]]
+        pref = [_norm(v) for v in spec.get("preferred", [])]
         for col, ncol in norm_cols.items():
             if not ncol:
                 continue
+            nalt = alt_cols[col]
+            forms = [ncol] if (not nalt or nalt == ncol) else [ncol, nalt]
             best = None
-            if ncol in norm_variants:
-                # preferred 변형(개념별 기본 매핑 지정)은 완전일치 간 동률에서 우선
-                pref = [_norm(v) for v in spec.get("preferred", [])]
-                best = (1.01 if ncol in pref else 1.0, "exact")
-            else:
+            for fi, form in enumerate(forms):
+                if form in norm_variants:
+                    # preferred 변형(개념별 기본 매핑)은 완전일치 간 동률에서 우선.
+                    # 접미사 제거형 일치(fi=1)는 원형 일치보다 살짝 낮게 (0.99).
+                    best = ((1.01 if form in pref else (1.0 if fi == 0 else 0.99)),
+                            "exact")
+                    break
+            if best is None:
                 # 부분일치: 변형↔헤더 겹침 비율로 점수 차등 (긴 일치 우선)
                 part_score = 0.0
-                for nv in norm_variants:
-                    if len(nv) >= 2 and (nv in ncol or ncol in nv):
-                        coverage = min(len(nv), len(ncol)) / float(max(len(nv), len(ncol)))
-                        part_score = max(part_score, 0.8 + 0.1 * coverage)
+                for form in forms:
+                    for nv in norm_variants:
+                        if len(nv) >= 2 and (nv in form or form in nv):
+                            coverage = min(len(nv), len(form)) / float(max(len(nv), len(form)))
+                            part_score = max(part_score, 0.8 + 0.1 * coverage)
                 if part_score:
                     best = (round(part_score, 3), "partial")
                 if best is None:
                     ratio = max(
-                        (difflib.SequenceMatcher(None, ncol, nv).ratio() for nv in norm_variants),
+                        (difflib.SequenceMatcher(None, form, nv).ratio()
+                         for form in forms for nv in norm_variants),
                         default=0.0)
                     if ratio >= cutoff:
                         best = (round(ratio, 3), "fuzzy")
-            if best and _kind_compatible(concept, best[1], ncol):
+            # 형식 가드는 접미사 제거형 기준 ('횟수[KR]' 가 'kr' 로 끝나도 건수 인식)
+            if best and _kind_compatible(concept, best[1], nalt or ncol):
                 candidates.append((best[0], concept, col, best[1]))
 
     candidates.sort(key=lambda t: (-t[0], t[1], t[2]))
@@ -10737,11 +10765,30 @@ def _km_median(times, probs):
 def _survival_section(df, settings):
     if "reg_date" not in df.columns or not df["reg_date"].notna().any():
         return None, "등록일 컬럼 필요"
-    if "lapse_date" not in df.columns or not df["lapse_date"].notna().any():
-        return None, "소멸일 컬럼 필요 (연차료 포기 시점 — WIPS '소멸일'/'포기일')"
     now = pd.Timestamp.now()
     sub = df[df["reg_date"].notna()].copy()
-    lapse = sub["lapse_date"]
+    lapse_basis = None
+    if "lapse_date" in sub.columns and sub["lapse_date"].notna().any():
+        lapse = sub["lapse_date"]
+        lapse_basis = "소멸일 컬럼"
+    elif "expiry_date" in sub.columns and sub["expiry_date"].notna().any() \
+            and "legal_status_norm" in sub.columns:
+        # 소멸일 미매핑 폴백: 권리가 이미 종료된 특허(소멸/포기/존속기간만료)의
+        # '존속기간(예상)만료일'이 과거 날짜면 그 시점을 권리 종료일로 근사한다
+        # (WIPS 는 소멸 특허의 (예상)만료일에 실제 종료 시점을 기록하는 경우가 많음).
+        dead = sub["legal_status_norm"].isin(
+            ["Lapsed", "Abandoned", "Granted-Expired"])
+        past = sub["expiry_date"].notna() & (sub["expiry_date"] <= now)
+        lapse = sub["expiry_date"].where(dead & past)
+        if lapse.notna().sum() < 5:
+            return None, ("소멸일 컬럼 필요 — 법적상태·만료일 기반 근사도 표본 부족 "
+                          "(권리 종료 특허 5건 미만)")
+        lapse_basis = ("법적상태(소멸·포기·만료) × 존속기간(예상)만료일 근사 — "
+                       "소멸일 컬럼이 없어 권리 종료 특허의 (예상)만료일(과거)을 "
+                       "종료 시점으로 사용")
+    else:
+        return None, ("소멸일 컬럼 필요 (또는 법적상태 + 존속기간(예상)만료일 매핑 시 "
+                      "자동 근사 계산)")
     dur = np.where(lapse.notna(),
                    (lapse - sub["reg_date"]).dt.days / 365.25,
                    (now - sub["reg_date"]).dt.days / 365.25)
@@ -10807,7 +10854,8 @@ def _survival_section(df, settings):
                         for c, _m, _n in plot_rows])
     n_events = int(sub["_event"].sum())
     return {"fig": fig, "fig_company": fig_comp, "techs": tech_rows,
-            "n": int(len(sub)), "n_events": n_events}, None
+            "n": int(len(sub)), "n_events": n_events,
+            "note": "권리 종료 시점 기준: %s." % lapse_basis}, None
 
 
 # ---------------------------------------------------------------------------
@@ -11527,9 +11575,17 @@ def compute_wips_deep(df, settings, only_sections=None):
         else:
             skipped.append({"section": key, "reason": reason})
     if not sections:
-        return empty_result("심층 시그널에 필요한 컬럼(소멸일/대리인/우선심사/원출원번호/"
-                            "심판 이력 등)이 하나도 매핑되지 않았습니다. Settings → 컬럼 "
-                            "매핑에서 해당 WIPS 필드를 매핑하세요.")
+        labels = {"survival": "연차료 생존곡선", "market_entry": "지정국 진입 시차",
+                  "agent": "대리인 전환", "examiner_eye": "심사관의 눈",
+                  "expedited": "우선심사", "divisional": "분할출원",
+                  "anomaly": "심사기간 이상탐지", "disclosure": "개시 충실도",
+                  "trial": "심판·소송", "gov_program": "국가연구 과제"}
+        details = " · ".join("%s: %s" % (labels.get(s["section"], s["section"]),
+                                         s["reason"]) for s in skipped)
+        return empty_result("이 화면의 섹션이 계산되지 못했습니다 — %s. Settings → "
+                            "컬럼 매핑에서 위 컬럼을 매핑하면 활성화됩니다 (자동 매핑을 "
+                            "다시 실행하면 '등록일[KR,JP…]'처럼 국가목록이 붙은 WIPS "
+                            "헤더도 인식됩니다)." % details)
 
     sentences, metrics = [], {}
     period = period_label(df)
