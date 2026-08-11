@@ -1002,8 +1002,8 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
     return div;
   }
 
-  function definitionsTable(definitions) {
-    /* 지표 정의표: 지표 | 정의 | 산식 | 해석 (서버가 내려주는 definitions 사용) */
+  function definitionsTable(definitions, officialDiff) {
+    /* 지표 정의표: 지표 | 정의 | 계산식 | 해석 (+공식 지수와의 차이 목록) */
     var wrap = Ui.el('<div style="margin-bottom:12px"></div>');
     if (!definitions || !definitions.length) return wrap;
     wrap.appendChild(Ui.el('<div style="font-weight:700;font-size:12.5px;margin-bottom:4px">' +
@@ -1019,6 +1019,20 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
     var tblWrap = Ui.el('<div style="overflow-x:auto"></div>');
     tblWrap.appendChild(Ui.el(simpleTable(['지표', '정의', '계산식', '해석'], rows)));
     wrap.appendChild(tblWrap);
+    if (officialDiff && officialDiff.length) {
+      var diffBox = Ui.el('<details style="margin:8px 0"><summary style="cursor:pointer;' +
+        'font-size:12.5px;font-weight:700;color:#46607a">📌 공식 지수(PatentSight)와 ' +
+        '본 계산의 차이 — 펼쳐 보기</summary></details>');
+      var ul = document.createElement('ul');
+      ul.style.cssText = 'padding-left:18px;font-size:12px;line-height:1.7;color:#4b606f;margin:6px 0';
+      officialDiff.forEach(function (s) {
+        var li = document.createElement('li');
+        li.textContent = s;
+        ul.appendChild(li);
+      });
+      diffBox.appendChild(ul);
+      wrap.appendChild(diffBox);
+    }
     return wrap;
   }
 
@@ -2025,7 +2039,7 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
           title: 'Patent Asset Index · Competitive Impact · Market Coverage',
           help: '공개 방법론(Ernst & Omland 2011, Patent Asset Index)에 따라 TR(연도×기술분야 코호트 보정 피인용), MC(보호국 GNI 가중, 미국=1), CI=TR×MC, PAI=유효특허 CI 합계를 계산합니다. 아래 지표 정의표와 각 차트의 해석 설명을 참고하세요.',
           renderOk: function (r, c, setTarget) {
-            c.body.appendChild(definitionsTable(r.definitions));
+            c.body.appendChild(definitionsTable(r.definitions, r.official_diff));
             var fb = Ui.el('<div class="chart-holder tall"></div>');
             c.body.appendChild(fb);
             Render.plotly(fb, r.family_bubble, plotlyDrill);
@@ -2058,7 +2072,7 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
           title: '포트폴리오 가치 지표 종합 (Patent Asset Index 방법론)',
           help: '공개 방법론(Ernst & Omland 2011)에 따른 PAI/CI/TR/MC 로 포트폴리오의 양과 질을 종합 진단합니다. 각 지표의 정의·산식·해석은 아래 지표 정의표를, 각 차트의 읽는 법은 차트 아래 설명을 참고하세요.',
           renderOk: function (r, c, setTarget) {
-            c.body.appendChild(definitionsTable(r.definitions));
+            c.body.appendChild(definitionsTable(r.definitions, r.official_diff));
             var rank = Ui.el('<div class="chart-holder"></div>');
             c.body.appendChild(rank);
             Render.plotly(rank, r.rank, plotlyDrill);
@@ -2427,7 +2441,7 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
             '해석 규칙: 다양성↑+출원↑=탐색적 R&D 확대 / 다양성↓+출원↑=핵심 상용화 후보 집중 / ' +
             '다양성↑+등록률↓=전략 분산·특허성 검증 부족 가능성 (표 "전략 국면" 열에 자동 판정).',
           renderOk: function (r, c, setTarget) {
-            if (r.definitions) c.body.appendChild(definitionsTable(r.definitions));
+            if (r.definitions) c.body.appendChild(definitionsTable(r.definitions, r.official_diff));
             var holder = Ui.el('<div class="chart-holder tall"></div>');
             c.body.appendChild(holder);
             Render.plotly(holder, r.radar);

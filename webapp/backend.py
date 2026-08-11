@@ -8753,24 +8753,43 @@ def compute_portfolio_index(df, settings):
     work = df.copy()
     cites = work["cites_forward"].fillna(0).astype(float)
 
-    # --- TR: 출원연도 × 기술분야 코호트 정규화 (공개 방법론과 동일 구조) ---
-    years = work["_base_year"]
-    field = work["_tech_list"].map(lambda lst: lst[0] if lst else None) \
-        if "_tech_list" in work.columns else pd.Series([None] * len(work), index=work.index)
+    # --- TR: 공식 방법론 코호트 = 최초 공개연도 × IPC 4자리 ---
+    # TR_i = NFC_i / mean(NFC of 동일 공개연도·동일 IPC4 코호트).
+    # 특허청별 인용 보정가중치(w_o)는 비공개라 모든 인용을 동일 가중(1)으로 집계.
+    if "pub_date" in work.columns and work["pub_date"].notna().any():
+        years = work["pub_date"].dt.year.fillna(work["_base_year"])
+        tr_year_src = "최초 공개연도"
+    else:
+        years = work["_base_year"]
+        tr_year_src = "출원연도 (공개일 미매핑)"
+    field = pd.Series([None] * len(work), index=work.index)
+    tr_field_src = "기술분야 정보 없음"
+    if "ipc" in work.columns and work["ipc"].notna().any():
+        # 공식과 동일하게 IPC 4자리(서브클래스, 예: H01L) 기준
+        field = work["ipc"].map(
+            lambda v: (parse_multiclass_cell(v) or [None])[0]).map(
+            lambda c: str(c).replace(" ", "")[:4].upper() if c else None)
+        if field.notna().any():
+            tr_field_src = "IPC 4자리 (공식 기준)"
+    if not field.notna().any() and "_tech_list" in work.columns:
+        field = work["_tech_list"].map(lambda lst: lst[0] if lst else None)
+        if field.notna().any():
+            tr_field_src = "내부 기술분류 (IPC 미매핑 — 대체)"
     global_mean = float(cites.mean()) or 0.0
     cohort_mean = pd.Series(global_mean, index=work.index)
     tr_source = "전체 평균 정규화"
     if years.notna().any():
         by_year = cites.groupby(years).transform("mean")
         cohort_mean = by_year.where(by_year > 0).fillna(cohort_mean)
-        tr_source = "출원연도 코호트 정규화"
+        tr_source = "%s 코호트" % tr_year_src
         if field.notna().any():
             grp = [years, field]
             by_yf = cites.groupby(grp).transform("mean")
             size_yf = cites.groupby(grp).transform("size")
             fine = by_yf.where((by_yf > 0) & (size_yf >= 5))
             cohort_mean = fine.fillna(cohort_mean)
-            tr_source = "출원연도 × 기술분야 코호트 정규화 (표본<5 셀은 연도 코호트)"
+            tr_source = "%s × %s 코호트 (표본<5 셀은 연도 코호트)" \
+                % (tr_year_src, tr_field_src)
     tr = (cites / cohort_mean.replace(0, np.nan)).fillna(0.0)
 
     # --- MC: GNI 가중 (공개 방법론) → 국가 수 → 패밀리 수 → 1.0 폴백 ---
@@ -8797,6 +8816,18 @@ def compute_portfolio_index(df, settings):
     if mc is None:
         mc = pd.Series(1.0, index=work.index)
         mc_source = "미가용 (MC=1 고정)"
+    # 공식 상태 가중 s_c: 등록·존속=1.0 / 계류 출원=0.7 / 활성 권리 없음=0.
+    # WIPS 국가 목록에는 국가별 법적상태가 없어, 패밀리(문헌)의 법적상태를
+    # 전체 국가에 일괄 적용하는 근사를 사용한다.
+    status_note = ""
+    if "legal_status_norm" in work.columns and \
+            (work["legal_status_norm"] != "Unknown").any():
+        status_w = work["legal_status_norm"].map(
+            {"Granted-Active": 1.0, "Pending": 0.7}).fillna(0.0)
+        status_w = status_w.where(work["legal_status_norm"] != "Unknown", 1.0)
+        mc = mc * status_w
+        status_note = " × 상태 가중(등록·존속 1.0 / 계류 0.7 / 소멸 0)"
+    mc_source += status_note
     # 값이 사실상 하나뿐이면(예: 전 문헌이 KR 단일국 패밀리) 그 사실을 명시 —
     # "모든 기업 MC 동일" 이 계산 오류가 아니라 데이터 특성임을 알 수 있게
     if float(pd.Series(mc).std() or 0.0) < 1e-9:
@@ -8988,21 +9019,26 @@ def compute_portfolio_index(df, settings):
                             drills=[{"label": "1위 기업 특허", "drill": top["drill"]}],
                             small_sample=check_small_sample(len(scoped), settings))
 
-    # 지표 정의표 (프론트가 차트 옆에 체계적으로 표시)
+    # 지표 정의표 (프론트가 차트 옆에 체계적으로 표시) — 공식 수식 기준
     definitions = [
         {"code": "TR", "name": "Technology Relevance (기술 영향력)",
-         "definition": "특허가 후속 기술 개발에 미친 영향력 — 전 세계 피인용 수 기반",
-         "formula": "TR = 피인용 수 ÷ 평균 피인용(동일 출원연도 × 동일 기술분야 코호트)",
+         "definition": "특허 패밀리가 받은 후속 인용(forward citation) 기반의 상대 "
+                       "영향력 — 인용 관행·연령·기술분야를 보정한 지수",
+         "formula": "TR_i = NFC_i ÷ 평균 NFC(동일 공개연도 × 동일 IPC4 코호트)  "
+                    "(공식: NFC 는 특허청별 보정가중 합)",
          "basis": "이번 계산: " + tr_source,
          "reading": "1.0 = 같은 시기·같은 분야 특허의 평균 수준. 2.0 이면 평균의 2배로 "
                     "인용되는 영향력 큰 특허. 연령·분야를 보정하므로 오래된 특허와 최신 "
                     "특허를 공정하게 비교할 수 있습니다."},
         {"code": "MC", "name": "Market Coverage (시장 커버리지)",
-         "definition": "특허 패밀리가 권리를 확보한 국가들의 시장 규모 합",
-         "formula": "MC = Σ GNI(보호국) ÷ GNI(미국)  — 미국에서만 보호 시 1.0",
+         "definition": "특허 패밀리가 권리(등록·존속) 또는 출원(계류)으로 활성 상태인 "
+                       "국가들의 시장 규모 합 (GNI 기준, 미국=1)",
+         "formula": "MC_i = Σ_c [ GNI_c ÷ GNI_US × s_c ],  s_c: 등록·존속=1.0 / "
+                    "계류 출원=0.7 / 활성 권리 없음=0",
          "basis": "이번 계산: " + mc_source,
-         "reading": "1.0 = 미국 시장 규모와 같은 보호 범위. 미국+중국+유럽에서 보호되면 "
-                    "약 2~3 수준. 값이 클수록 넓은 시장에서 권리를 확보한 특허입니다."},
+         "reading": "1.0 = 미국에 등록·존속 특허만 있는 수준, 0.7 = 미국에 계류 출원만 "
+                    "있는 수준. 미국+중국+유럽 등록이면 약 2~3. 값이 클수록 넓은 "
+                    "시장에서 권리를 확보한 특허입니다."},
         {"code": "CI", "name": "Competitive Impact (경쟁 임팩트)",
          "definition": "특허 1건의 질적 가치 — 기술 영향력과 시장 커버리지의 결합",
          "formula": "CI = TR × MC",
@@ -9016,11 +9052,30 @@ def compute_portfolio_index(df, settings):
          "reading": "양(특허 수)과 질(CI)을 동시에 반영한 총량 지표. 특허가 많아도 CI 가 "
                     "낮으면 PAI 는 크지 않습니다. 기업 간 상대 비교 용도로 사용하세요."},
     ]
+    # 공식 PatentSight 지수와 본 계산의 차이 (화면 하단 명시용)
+    official_diff = [
+        "특허청별 인용 보정가중치(w_o)는 비공개 계수라 적용하지 못했습니다 — 모든 "
+        "인용을 동일 가중(1)으로 집계합니다. (공식: 인용 특허청별 가중 합)",
+        "패밀리 간 중복 인용 제거(family-to-family dedup)는 재현 불가 — WIPS 의 "
+        "피인용 문헌 수(F1)를 그대로 사용하며, '분석 단위=패밀리 대표' 선택 시 "
+        "패밀리 대표 문헌 기준으로 근사됩니다.",
+        "TR 코호트 — 공식: 최초 공개연도 × IPC 4자리 / 본 계산: %s." % tr_source,
+        "MC 상태 가중 — 공식: '국가별' 등록·존속(1.0)/계류(0.7) 구분 / 본 계산: "
+        "WIPS 국가 목록에 국가별 법적상태가 없어 문헌의 법적상태를 전체 국가에 "
+        "일괄 적용합니다.",
+        "계류 PCT/EP 의 잠재시장 가중(체약국 GNI 합 × 0.7)은 국별단계 진입 여부를 "
+        "알 수 없어 미적용 (PCT 가중 0) — 공식 대비 보수적으로 낮게 나올 수 "
+        "있습니다.",
+        "GNI 는 World Bank 2023 근사표(고정)를 사용합니다 — 공식은 현재가격 GNI 를 "
+        "연도별 갱신. 이런 차이로 절대값은 공식 지수와 다를 수 있으며, 기업 간 "
+        "상대 비교 용도로 사용하세요.",
+    ]
     return ok_result({"rank": fig_rank, "bubble": bubble, "trend": fig_trend,
                       "family_bubble": family_bubble, "mc_bar": fig_mc,
                       "companies": shown, "top_patents": top_patents,
                       "scope": scope_label, "mc_source": mc_source,
-                      "tr_source": tr_source, "definitions": definitions},
+                      "tr_source": tr_source, "definitions": definitions,
+                      "official_diff": official_diff},
                      insight=insight,
                      meta={"note": ("공개 방법론(Ernst & Omland 2011)의 구조·정규화를 따라 "
                                     "계산했습니다 (TR: %s / MC: %s / 대상: %s). 상용 "
