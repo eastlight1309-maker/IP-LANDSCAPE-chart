@@ -92,7 +92,9 @@ CONCEPTS = {
     },
     "assignee": {
         "label": "현재 권리자", "dtype": "문자열",
-        "variants": ["현재 권리자", "권리자", "현재권리자", "양수인", "assignee",
+        "preferred": ["현재권리자 대표명화 국문명", "현재권리자"],  # 기본 매핑 (WIPS)
+        "variants": ["현재권리자 대표명화 국문명", "현재권리자 대표명화 영문명",
+                     "현재 권리자", "권리자", "현재권리자", "양수인", "assignee",
                      "current assignee", "owner", "patent owner", "right holder", "권리자명"],
     },
     "inventors": {
@@ -172,12 +174,18 @@ CONCEPTS = {
     },
     "family_size": {
         "label": "패밀리 수", "dtype": "정수 (패밀리 문헌 수)",
-        "variants": ["패밀리 수", "패밀리수", "패밀리 문헌 수", "family size", "family count",
+        "preferred": ["WIPS패밀리 문헌 수(출원기준)"],  # 기본 매핑 (WIPS)
+        "variants": ["WIPS패밀리 문헌 수(출원기준)", "wips패밀리 문헌 수",
+                     "EPO패밀리 문헌 수(출원기준)",
+                     "패밀리 수", "패밀리수", "패밀리 문헌 수", "family size", "family count",
                      "패밀리문헌수", "simple family size", "extended family size"],
     },
     "family_country_count": {
         "label": "패밀리 국가 수", "dtype": "정수",
-        "variants": ["패밀리 국가 수", "패밀리 국가수", "패밀리국가수", "family country count",
+        "preferred": ["WIPS패밀리 국가 수(출원기준)"],  # 기본 매핑 (WIPS)
+        "variants": ["WIPS패밀리 국가 수(출원기준)", "wips패밀리 국가 수",
+                     "EPO패밀리 국가 수(출원기준)",
+                     "패밀리 국가 수", "패밀리 국가수", "패밀리국가수", "family country count",
                      "지정국 수", "출원국 수", "국가 수"],
     },
     "family_countries": {
@@ -567,6 +575,15 @@ def suggest_mapping(actual_columns, cutoff=None):
                         default=0.0)
                     if ratio >= cutoff:
                         best = (round(ratio, 3), "fuzzy")
+            # 인용 계열 개념은 비완전일치 시 헤더에 '인용' 류 단어가 있어야 함
+            # ('출원인 수' 같은 인원수 컬럼이 퍼지 매칭으로 잘못 잡히는 것 방지)
+            if best and best[1] != "exact" and concept in (
+                    "cites_backward", "cites_forward",
+                    "examiner_citations", "applicant_citations"):
+                form_all = (nalt or "") + ncol
+                if not any(kw in form_all for kw in
+                           ("인용", "citation", "cited", "citing", "reference")):
+                    best = None
             # 형식 가드는 접미사 제거형 기준 ('횟수[KR]' 가 'kr' 로 끝나도 건수 인식)
             if best and _kind_compatible(concept, best[1], nalt or ncol):
                 candidates.append((best[0], concept, col, best[1]))

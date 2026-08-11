@@ -258,6 +258,80 @@ def test_problem_solution_axis_titles(prepared, settings):
     assert set(r["problems"]) <= c_vals and set(r["solutions"]) <= b_vals
 
 
+def test_real_wips_export_headers_full_mapping():
+    """실제 WIPS 다운로드 항목명 전체가 심층 시그널·경영 차트에 필요한 개념으로
+    올바르게 매핑되고, 인원수 컬럼('출원인 수')이 인용 개념에 오매핑되지 않는다."""
+    from src.column_mapping import suggest_mapping
+    cols = ["국가코드", "발명의 명칭", "요약", "독립청구항[KR,JP,US,CN,EP,IN]",
+            "청구항 수", "독립항 수[KR,JP,US,CN,EP,IN]",
+            "해결과제 요약[KR,US,JP,CN,EP,PCT,TW]", "해결수단 요약[KR,US,JP,CN,EP,PCT,TW]",
+            "출원번호", "출원일", "공개일", "등록일", "출원인", "출원인 수",
+            "출원인 대표명화 국문명[KR]", "발명자", "발명자 수", "대리인",
+            "우선권 주장일", "원출원번호[KR,JP,EP,CN,IN,CA]", "Current IPC All",
+            "인용 문헌 수(B1)", "자기인용 문헌번호(B1)",
+            "심사관인용 문헌번호(BE)[KR,US,JP,EP]", "피인용 문헌 수(F1)",
+            "WIPS패밀리 ID", "WIPS패밀리 문헌 수(출원기준)",
+            "WIPS패밀리 개별국 문헌 수(출원기준)", "WIPS패밀리 국가 수(출원기준)",
+            "상태정보[KR,JP,US,EP,CN,CA,AU]", "존속기간(예상)만료일[KR,JP,US,EP,CN,CA,AU]",
+            "현재권리자[KR,JP,US,CN,CA,AU]", "현재권리자 대표명화 국문명[KR]",
+            "개별도면 수", "거절서류발행 횟수[KR]", "우선심사청구 여부[KR]",
+            "심판 전체 횟수[KR,JP,US,EP]", "심판 종류[KR,JP,US,EP]",
+            "소송 전체 횟수[US]", "관할법원 종류[US]", "국가연구 과제명[KR]"]
+    m = suggest_mapping(cols)
+    got = {k: v["column"] for k, v in m.items()}
+    expect = {
+        "app_date": "출원일", "reg_date": "등록일",
+        "expiry_date": "존속기간(예상)만료일[KR,JP,US,EP,CN,CA,AU]",
+        "legal_status": "상태정보[KR,JP,US,EP,CN,CA,AU]",
+        "agent": "대리인", "family_id": "WIPS패밀리 ID",
+        "family_size": "WIPS패밀리 문헌 수(출원기준)",
+        "family_country_count": "WIPS패밀리 국가 수(출원기준)",
+        "family_countries": "WIPS패밀리 개별국 문헌 수(출원기준)",
+        "examiner_citations": "심사관인용 문헌번호(BE)[KR,US,JP,EP]",
+        "applicant_citations": "자기인용 문헌번호(B1)",
+        "expedited_exam": "우선심사청구 여부[KR]",
+        "parent_app_number": "원출원번호[KR,JP,EP,CN,IN,CA]",
+        "drawings_count": "개별도면 수", "oa_count": "거절서류발행 횟수[KR]",
+        "trial_count": "심판 전체 횟수[KR,JP,US,EP]",
+        "lawsuit_count": "소송 전체 횟수[US]",
+        "court_type": "관할법원 종류[US]", "gov_program": "국가연구 과제명[KR]",
+        "assignee": "현재권리자 대표명화 국문명[KR]",
+        "applicant_std": "출원인 대표명화 국문명[KR]",
+    }
+    for k, col in expect.items():
+        assert got.get(k) == col, "%s: %r != %r" % (k, got.get(k), col)
+    # 인원수 컬럼이 어느 개념에도 오매핑되지 않음
+    assert "출원인 수" not in got.values() and "발명자 수" not in got.values()
+
+
+def test_merged_backend_no_name_collision(tmp_path):
+    """병합 backend.py 에서 모듈 전역 이름 충돌이 없어야 한다.
+
+    회귀: exec_plus._SECTIONS 가 wips_deep._SECTIONS 를 덮어써 심층 시그널이
+    빈 결과(사유 없는 empty)를 반환하던 버그 — 병합본을 실제 로드해 검증.
+    """
+    import importlib.util, subprocess, sys, os
+    subprocess.run([sys.executable, "tools/build_backend.py"], check=True)
+    env_store = str(tmp_path / "store.json")
+    os.environ["IP_LANDSCAPE_STORE"] = env_store
+    spec = importlib.util.spec_from_file_location("merged_bk", "webapp/backend.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    wips_keys = [k for k, _ in mod._SECTIONS]
+    assert "survival" in wips_keys and "gov_program" in wips_keys
+    exec_keys = [k for k, _ in mod._EXEC_SECTIONS]
+    assert "expiry_cliff" in exec_keys
+    # 병합본에서 심층 시그널 섹션 스코핑이 실제로 동작
+    from generate_sample_data import generate_sample
+    df = mod.build_standard_frame(
+        generate_sample(n=200, seed=5),
+        {k: v["column"] for k, v in
+         mod.suggest_mapping(list(generate_sample(n=5, seed=5).columns)).items()})
+    r = mod.compute_wips_deep(df, mod.merged_settings({}),
+                              only_sections=["survival", "market_entry"])
+    assert r["status"] == "ok" and r["sections"], r.get("message")
+
+
 def test_bracketed_wips_headers_auto_mapped():
     """WIPS 국가목록/코드 접미사 헤더('등록일[KR,JP]', '(B1)') 자동 인식."""
     from src.column_mapping import suggest_mapping

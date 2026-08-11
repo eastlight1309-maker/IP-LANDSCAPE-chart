@@ -33,13 +33,13 @@ from src.viz_payload import ok_result, empty_result, bar_chart, base_layout, \
 from src.analyses.executive import _pick_focal
 
 
-def _ids_of(sub, cap=200):
+def _xp_ids_of(sub, cap=200):
     col = "pub_number" if "pub_number" in sub.columns else \
         ("app_number" if "app_number" in sub.columns else None)
     return [str(v) for v in (sub[col] if col else sub.index)][:cap]
 
 
-def _primary_tech(df):
+def _xp_primary_tech(df):
     return df["_tech_list"].map(lambda lst: lst[0] if lst else None)
 
 
@@ -101,7 +101,7 @@ def _expiry_cliff_section(df, settings, focal):
         key_basis = "만료 임박 순 (피인용 미매핑)"
     key_rows = []
     for _i, r in key.iterrows():
-        ids = _ids_of(key.loc[[_i]])
+        ids = _xp_ids_of(key.loc[[_i]])
         key_rows.append({
             "id": ids[0] if ids else "-",
             "title": str(r.get("title", ""))[:60],
@@ -501,7 +501,7 @@ def _pruning_section(df, settings, focal):
         x_title="등록 후 경과", y_title="건수")
     rows = []
     for _i, r in cand.sort_values("_age", ascending=False).head(20).iterrows():
-        ids = _ids_of(cand.loc[[_i]])
+        ids = _xp_ids_of(cand.loc[[_i]])
         rows.append({"id": ids[0] if ids else "-",
                      "title": str(r.get("title", ""))[:60],
                      "tech": (r.get("_tech_list") or ["-"])[0],
@@ -519,7 +519,7 @@ def _pruning_section(df, settings, focal):
 # ---------------------------------------------------------------------------
 # 통합
 # ---------------------------------------------------------------------------
-_SECTIONS = (("expiry_cliff", _expiry_cliff_section),
+_EXEC_SECTIONS = (("expiry_cliff", _expiry_cliff_section),
              ("rnd_efficiency", _rnd_efficiency_section),
              ("keyman", _keyman_section),
              ("catchup", _catchup_section),
@@ -536,7 +536,7 @@ def compute_exec_plus(df, settings, company=None, only_sections=None):
         return empty_result("출원인 정보가 없어 자사(focal)를 정할 수 없습니다.")
     wanted = set(only_sections) if only_sections else None
     sections, skipped = {}, []
-    for key, fn in _SECTIONS:
+    for key, fn in _EXEC_SECTIONS:
         if wanted is not None and key not in wanted:
             continue
         try:

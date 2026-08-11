@@ -667,7 +667,9 @@ CONCEPTS = {
     },
     "assignee": {
         "label": "현재 권리자", "dtype": "문자열",
-        "variants": ["현재 권리자", "권리자", "현재권리자", "양수인", "assignee",
+        "preferred": ["현재권리자 대표명화 국문명", "현재권리자"],  # 기본 매핑 (WIPS)
+        "variants": ["현재권리자 대표명화 국문명", "현재권리자 대표명화 영문명",
+                     "현재 권리자", "권리자", "현재권리자", "양수인", "assignee",
                      "current assignee", "owner", "patent owner", "right holder", "권리자명"],
     },
     "inventors": {
@@ -747,12 +749,18 @@ CONCEPTS = {
     },
     "family_size": {
         "label": "패밀리 수", "dtype": "정수 (패밀리 문헌 수)",
-        "variants": ["패밀리 수", "패밀리수", "패밀리 문헌 수", "family size", "family count",
+        "preferred": ["WIPS패밀리 문헌 수(출원기준)"],  # 기본 매핑 (WIPS)
+        "variants": ["WIPS패밀리 문헌 수(출원기준)", "wips패밀리 문헌 수",
+                     "EPO패밀리 문헌 수(출원기준)",
+                     "패밀리 수", "패밀리수", "패밀리 문헌 수", "family size", "family count",
                      "패밀리문헌수", "simple family size", "extended family size"],
     },
     "family_country_count": {
         "label": "패밀리 국가 수", "dtype": "정수",
-        "variants": ["패밀리 국가 수", "패밀리 국가수", "패밀리국가수", "family country count",
+        "preferred": ["WIPS패밀리 국가 수(출원기준)"],  # 기본 매핑 (WIPS)
+        "variants": ["WIPS패밀리 국가 수(출원기준)", "wips패밀리 국가 수",
+                     "EPO패밀리 국가 수(출원기준)",
+                     "패밀리 국가 수", "패밀리 국가수", "패밀리국가수", "family country count",
                      "지정국 수", "출원국 수", "국가 수"],
     },
     "family_countries": {
@@ -1142,6 +1150,15 @@ def suggest_mapping(actual_columns, cutoff=None):
                         default=0.0)
                     if ratio >= cutoff:
                         best = (round(ratio, 3), "fuzzy")
+            # 인용 계열 개념은 비완전일치 시 헤더에 '인용' 류 단어가 있어야 함
+            # ('출원인 수' 같은 인원수 컬럼이 퍼지 매칭으로 잘못 잡히는 것 방지)
+            if best and best[1] != "exact" and concept in (
+                    "cites_backward", "cites_forward",
+                    "examiner_citations", "applicant_citations"):
+                form_all = (nalt or "") + ncol
+                if not any(kw in form_all for kw in
+                           ("인용", "citation", "cited", "citing", "reference")):
+                    best = None
             # 형식 가드는 접미사 제거형 기준 ('횟수[KR]' 가 'kr' 로 끝나도 건수 인식)
             if best and _kind_compatible(concept, best[1], nalt or ncol):
                 candidates.append((best[0], concept, col, best[1]))
@@ -11686,13 +11703,13 @@ import pandas as pd
 
 
 
-def _ids_of(sub, cap=200):
+def _xp_ids_of(sub, cap=200):
     col = "pub_number" if "pub_number" in sub.columns else \
         ("app_number" if "app_number" in sub.columns else None)
     return [str(v) for v in (sub[col] if col else sub.index)][:cap]
 
 
-def _primary_tech(df):
+def _xp_primary_tech(df):
     return df["_tech_list"].map(lambda lst: lst[0] if lst else None)
 
 
@@ -11754,7 +11771,7 @@ def _expiry_cliff_section(df, settings, focal):
         key_basis = "만료 임박 순 (피인용 미매핑)"
     key_rows = []
     for _i, r in key.iterrows():
-        ids = _ids_of(key.loc[[_i]])
+        ids = _xp_ids_of(key.loc[[_i]])
         key_rows.append({
             "id": ids[0] if ids else "-",
             "title": str(r.get("title", ""))[:60],
@@ -12154,7 +12171,7 @@ def _pruning_section(df, settings, focal):
         x_title="등록 후 경과", y_title="건수")
     rows = []
     for _i, r in cand.sort_values("_age", ascending=False).head(20).iterrows():
-        ids = _ids_of(cand.loc[[_i]])
+        ids = _xp_ids_of(cand.loc[[_i]])
         rows.append({"id": ids[0] if ids else "-",
                      "title": str(r.get("title", ""))[:60],
                      "tech": (r.get("_tech_list") or ["-"])[0],
@@ -12172,7 +12189,7 @@ def _pruning_section(df, settings, focal):
 # ---------------------------------------------------------------------------
 # 통합
 # ---------------------------------------------------------------------------
-_SECTIONS = (("expiry_cliff", _expiry_cliff_section),
+_EXEC_SECTIONS = (("expiry_cliff", _expiry_cliff_section),
              ("rnd_efficiency", _rnd_efficiency_section),
              ("keyman", _keyman_section),
              ("catchup", _catchup_section),
@@ -12189,7 +12206,7 @@ def compute_exec_plus(df, settings, company=None, only_sections=None):
         return empty_result("출원인 정보가 없어 자사(focal)를 정할 수 없습니다.")
     wanted = set(only_sections) if only_sections else None
     sections, skipped = {}, []
-    for key, fn in _SECTIONS:
+    for key, fn in _EXEC_SECTIONS:
         if wanted is not None and key not in wanted:
             continue
         try:

@@ -153,7 +153,38 @@ def strip_internal_imports(source):
     return "\n".join(out_lines)
 
 
+# 병합 시 모듈 간 이름공간이 하나로 합쳐진다 — 서로 다른 모듈이 같은 전역 이름을
+# 정의하면 나중 모듈이 앞 모듈을 덮어써 침묵 버그가 된다 (예: wips_deep._SECTIONS
+# 를 exec_plus._SECTIONS 가 덮어써 심층 시그널이 빈 결과를 반환). 빌드에서 차단.
+_COLLISION_ALLOWED = {"logger"}   # logging.getLogger 동일 객체 — 무해
+
+
+def check_name_collisions():
+    import ast
+    owners = {}
+    problems = []
+    for rel in MODULE_ORDER:
+        with io.open(os.path.join(ROOT, rel), "r", encoding="utf-8") as fh:
+            tree = ast.parse(fh.read())
+        for node in tree.body:
+            names = []
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                names = [node.name]
+            elif isinstance(node, ast.Assign):
+                names = [t.id for t in node.targets if isinstance(t, ast.Name)]
+            for name in names:
+                if name in _COLLISION_ALLOWED:
+                    continue
+                if name in owners and owners[name] != rel:
+                    problems.append("'%s': %s ↔ %s" % (name, owners[name], rel))
+                owners.setdefault(name, rel)
+    if problems:
+        raise SystemExit("병합 이름 충돌 — 한쪽 모듈에서 이름을 바꾸세요:\n  "
+                         + "\n  ".join(sorted(set(problems))))
+
+
 def build():
+    check_name_collisions()
     parts = [HEADER]
     for rel in MODULE_ORDER:
         path = os.path.join(ROOT, rel)
