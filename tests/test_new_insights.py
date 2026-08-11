@@ -258,6 +258,67 @@ def test_problem_solution_axis_titles(prepared, settings):
     assert set(r["problems"]) <= c_vals and set(r["solutions"]) <= b_vals
 
 
+def test_survival_curve_visible_and_median_capped(settings):
+    """생존곡선: 이벤트가 적어도 관측 종료까지 수평선 연장(빈 그래프 방지),
+    중위 미도달은 21이 아닌 20+ 표기 (특허 존속기간과 혼동 방지)."""
+    from src.analyses.wips_deep import compute_wips_deep
+    df = make_prepared(generate_sample(n=400, seed=21))
+    r = compute_wips_deep(df, settings, only_sections=["survival"])
+    sv = r["sections"]["survival"]
+    for tr in sv["fig"]["data"]:
+        assert len(tr["x"]) >= 2, "곡선이 점 하나뿐 (안 보임): %s" % tr["name"]
+        assert tr["x"][-1] > 0
+    if sv["fig_company"]:
+        vals = sv["fig_company"]["data"][0]["x"]  # horizontal bar values
+        assert max(vals) <= 20.0, "중위 생존연수가 20을 초과 표기"
+        assert "20+" in sv["fig_company"]["layout"]["title"]["text"]
+
+
+def test_gov_linked_companies_and_drill(settings):
+    """국가과제: 연계 특허 보유 기업이 연계율 차트에 포함되고, 막대 드릴은
+    연계 특허만 선택하며, 특허 목록에 '국가과제' 컬럼이 표시된다."""
+    from src.analyses.wips_deep import compute_wips_deep
+    from src.analyses.common import select_patents, patent_records
+    df = make_prepared(generate_sample(n=400, seed=21))
+    r = compute_wips_deep(df, settings, only_sections=["gov_program"])
+    gp = r["sections"]["gov_program"]
+    assert gp["fig_company"] is not None
+    ratios = gp["fig_company"]["data"][0]["x"]
+    assert any(v > 0 for v in ratios), "연계 기업이 전부 0%"
+    assert gp["fig_company"]["layout"]["xaxis"]["tickformat"] == ".0%"
+    cd = gp["fig_company"]["data"][0]["customdata"][-1]["drill"]
+    assert cd.get("gov_linked") is True
+    picked = select_patents(df, cd)
+    assert len(picked) > 0
+    prog = picked["gov_program"].astype(str).str.strip().str.lower()
+    assert (~prog.isin(["", "nan", "none", "-"])).all()
+    recs = patent_records(picked)["records"]
+    assert "국가과제" in recs[0]
+
+
+def test_mc_country_parsing_and_variation():
+    """MC: 'KR 3 | US 2' 같은 코드+건수 혼합·한글 국가명 파싱, 숫자만은 무시."""
+    from src.analyses.portfolio_index import _country_codes_of, _mc_from_country_list
+    assert _country_codes_of("KR 3 | US 2 | JP 1") == {"KR", "US", "JP"}
+    assert _country_codes_of("한국(3); 미국(2)") == {"KR", "US"}
+    assert _country_codes_of("KR;US;EP") == {"KR", "US", "EP"}
+    assert _country_codes_of("3; 2; 1") == set()
+    s = pd.Series(["KR 1", "KR 2 | US 3", "US 1 | CN 2 | JP 1"])
+    mc = _mc_from_country_list(s)
+    assert mc.notna().all() and mc.nunique() == 3, "국가 구성이 다르면 MC 도 달라야 함"
+
+
+def test_sankey_labels_include_applicant(settings):
+    from src.analyses.semantic_insights import compute_semantic_influence
+    df = make_prepared(generate_sample(n=400, seed=21))
+    r = compute_semantic_influence(df, settings)
+    if r["status"] == "ok" and r.get("sankey"):
+        labels = r["sankey"]["data"][0]["node"]["label"]
+        n_src = len(r["top_patents"][:8])
+        assert all("(" in lab and ")" in lab for lab in labels[:n_src]), \
+            "원천 노드 라벨에 (출원인) 누락"
+
+
 def test_real_wips_export_headers_full_mapping():
     """실제 WIPS 다운로드 항목명 전체가 심층 시그널·경영 차트에 필요한 개념으로
     올바르게 매핑되고, 인원수 컬럼('출원인 수')이 인용 개념에 오매핑되지 않는다."""

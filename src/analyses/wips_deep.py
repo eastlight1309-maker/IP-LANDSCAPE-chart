@@ -163,14 +163,27 @@ def _survival_section(df, settings):
     top_techs = [t for t in tech_counts.index if tech_counts[t] >= min_n][:6]
     traces, tech_rows = [], []
     color_reg = {}
+
+    def _km_trace(group, name, color=None):
+        """KM 곡선 trace. 이벤트가 적어도 곡선이 보이도록 관측 종료 시점까지
+        수평선을 연장한다 (이벤트 0건 그룹도 100% 평행선으로 표시)."""
+        times, probs = _km_curve(group["_dur"], group["_event"])
+        t_end = float(min(float(np.max(group["_dur"])), 21.0))
+        if times[-1] < t_end:
+            times = list(times) + [t_end]
+            probs = list(probs) + [probs[-1]]
+        line = {"shape": "hv"}
+        if color:
+            line["color"] = color
+        return {"type": "scatter", "mode": "lines", "name": str(name)[:24],
+                "x": times, "y": probs, "line": line,
+                "hovertemplate": str(name) + " · %{x:.0f}년차 생존율 %{y:.0%}"
+                                 "<extra></extra>"}, times, probs
+
     for tech in top_techs:
         g = sub[sub["_ptech"] == tech]
-        times, probs = _km_curve(g["_dur"], g["_event"])
-        traces.append({"type": "scatter", "mode": "lines", "name": str(tech),
-                       "x": times, "y": probs, "line": {"shape": "hv",
-                       "color": color_for(str(tech), color_reg)},
-                       "hovertemplate": str(tech) + " · %{x:.0f}년차 생존율 %{y:.0%}"
-                                        "<extra></extra>"})
+        trace, times, probs = _km_trace(g, tech, color_for(str(tech), color_reg))
+        traces.append(trace)
         tech_rows.append({
             "tech": str(tech), "n": int(len(g)),
             "surv_5y": round(_km_at(times, probs, 5.0), 3),
@@ -180,9 +193,8 @@ def _survival_section(df, settings):
             "drill": {"type": "tech", "tech": str(tech)}})
     if not traces:
         # 분류가 부족하면 전체 곡선 하나
-        times, probs = _km_curve(sub["_dur"], sub["_event"])
-        traces.append({"type": "scatter", "mode": "lines", "name": "전체",
-                       "x": times, "y": probs, "line": {"shape": "hv"}})
+        trace, _t, _p = _km_trace(sub, "전체")
+        traces.append(trace)
     fig = {"data": traces, "layout": base_layout(
         "연차료 생존곡선 (Kaplan-Meier) — 기업 스스로 매긴 특허 가치",
         xaxis={"title": "등록 후 경과 (년)", "range": [0, 21], "dtick": 2},
@@ -198,17 +210,25 @@ def _survival_section(df, settings):
         by_comp.append((str(comp), med, int(len(g))))
     fig_comp = None
     if by_comp:
-        plot_rows = [(c, (m if m is not None else 21.0), n) for c, m, n in by_comp]
+        # 중위 미도달(관측 기간 내 생존율이 50% 아래로 떨어지지 않음) = "20+" 표기.
+        # 축은 '등록 후 경과 연수'라 출원 후 20년 존속기간과 달리 최대 ~18~20년.
+        plot_rows = [(c, (min(m, 20.0) if m is not None else 20.0),
+                      m is None, n) for c, m, n in by_comp]
         plot_rows.sort(key=lambda r: r[1])
         fig_comp = bar_chart(
-            [r[0] for r in plot_rows], [round(r[1], 1) for r in plot_rows],
-            title="기업별 중위 생존연수 (21=관측 기간 내 절반 미달 — 장수 포트폴리오)",
-            orientation="h", x_title="중위 생존연수 (년)",
+            ["%s%s" % (c, " (20+)" if nr else "") for c, _m, nr, _n in plot_rows],
+            [round(m2, 1) for _c, m2, _nr, _n in plot_rows],
+            title="기업별 중위 생존연수 — 등록 특허의 절반이 소멸되는 시점 "
+                  "(20+ = 절반 이상이 관측 종료까지 생존한 장수 포트폴리오)",
+            orientation="h", x_title="중위 생존연수 (등록 후 경과 년)",
             hovertext=["%s — %s (표본 %d건)"
-                       % (c, ("중위 %.1f년" % m2) if m2 < 21 else "관측 내 중위 미도달",
-                          n) for c, m2, n in plot_rows],
+                       % (c, ("등록 후 %.1f년에 절반 소멸" % m2) if not nr
+                          else "중위 미도달: 절반 이상이 여전히 유효 (20+)",
+                          n) for c, m2, nr, n in plot_rows],
+            colors=["#59A14F" if nr else "#4E79A7"
+                    for _c, _m, nr, _n in plot_rows],
             customdata=[{"drill": {"type": "applicant", "applicant": c}}
-                        for c, _m, _n in plot_rows])
+                        for c, _m, _nr, _n in plot_rows])
     n_events = int(sub["_event"].sum())
     return {"fig": fig, "fig_company": fig_comp, "techs": tech_rows,
             "n": int(len(sub)), "n_events": n_events,
@@ -839,28 +859,38 @@ def _gov_program_section(df, settings):
         customdata=[{"drill": {"gov_program": str(p)}}
                     for p in top_progs.index][::-1])
 
-    # 기업별 정부과제 연계율
+    # 기업별 정부과제 연계율 — 연계 특허를 실제 보유한 기업이 반드시 포함되도록
+    # (전체 상위 기업 ∪ 연계 건수 상위 기업; 상위 기업만 보면 전부 0% 로 보이는
+    #  문제 방지)
     fig_comp = None
     comp_rows = []
     apps = df["applicant_display"].replace("", np.nan).dropna()
     if len(apps):
         min_n = int(get_threshold(settings, "min_class_patents")) + 2
-        for comp, total in apps.value_counts().head(12).items():
-            if total < min_n:
+        totals = apps.value_counts()
+        linked_by_comp = sub["applicant_display"].replace("", np.nan).dropna() \
+            .value_counts()
+        comps = list(totals.head(12).index) + \
+            [c for c in linked_by_comp.head(10).index
+             if c not in totals.head(12).index]
+        for comp in comps:
+            total = int(totals.get(comp, 0))
+            if total < max(3, min_n if comp in totals.head(12).index else 3):
                 continue
-            n_link = int(linked[df["applicant_display"] == comp].sum())
-            comp_rows.append((str(comp), n_link, int(total),
-                              n_link / float(total)))
+            n_link = int(linked_by_comp.get(comp, 0))
+            comp_rows.append((str(comp), n_link, total, n_link / float(total)))
         if comp_rows:
             comp_rows.sort(key=lambda r: r[3])
             fig_comp = bar_chart(
-                [r[0] for r in comp_rows], [round(r[3], 3) for r in comp_rows],
-                title="기업별 국가연구 과제 연계율 — 높을수록 국책과제 의존 R&D",
+                [r[0] for r in comp_rows], [round(r[3], 4) for r in comp_rows],
+                title="기업별 국가연구 과제 연계율 — 높을수록 국책과제 의존 R&D "
+                      "(막대 클릭 → 그 기업의 연계 특허만 표시)",
                 orientation="h", x_title="연계율",
                 hovertext=["%s — 정부과제 연계 %d건 / 전체 %d건 (%s)"
                            % (r[0], r[1], r[2], fmt_pct(r[3])) for r in comp_rows],
-                customdata=[{"drill": {"type": "applicant", "applicant": r[0]}}
+                customdata=[{"drill": {"applicant": r[0], "gov_linked": True}}
                             for r in comp_rows])
+            fig_comp["layout"]["xaxis"]["tickformat"] = ".0%"
 
     # 기술분류별 연계율 (국가 지원이 집중되는 기술)
     fig_tech = None
@@ -875,13 +905,16 @@ def _gov_program_section(df, settings):
         if rows:
             rows.sort(key=lambda r: r[3])
             fig_tech = bar_chart(
-                [r[0] for r in rows], [round(r[3], 3) for r in rows],
-                title="기술분류별 국가과제 연계율 — 국가 지원이 집중되는 기술",
+                [r[0] for r in rows], [round(r[3], 4) for r in rows],
+                title="기술분류별 국가과제 연계율 — 국가 지원이 집중되는 기술 "
+                      "(막대 클릭 → 그 기술의 연계 특허만 표시)",
                 orientation="h", x_title="연계율",
                 hovertext=["%s — 연계 %d건 / 전체 %d건 (%s)"
                            % (r[0], r[1], r[2], fmt_pct(r[3])) for r in rows],
-                customdata=[{"drill": {"type": "tech", "tech": r[0]}}
+                customdata=[{"drill": {"type": "tech", "tech": r[0],
+                                       "gov_linked": True}}
                             for r in rows])
+            fig_tech["layout"]["xaxis"]["tickformat"] = ".0%"
 
     # 정부과제 특허 vs 자체 특허 품질
     quality = None

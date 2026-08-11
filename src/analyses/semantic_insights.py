@@ -429,7 +429,8 @@ def compute_semantic_influence(df, settings):
     node_labels, node_colors = [], []
     comp_index = {}
     for i, r in enumerate(src_nodes):
-        node_labels.append("%s · %s" % (r["id"], r["applicant"][:8]))
+        # 라벨: 출원번호 (출원인) — 어느 회사의 원천 특허인지 바로 식별
+        node_labels.append("%s (%s)" % (r["id"], (r["applicant"] or "-")[:16]))
         node_colors.append(PALETTE[i % len(PALETTE)])
     links = {"source": [], "target": [], "value": [], "label": [], "color": []}
     for i, r in enumerate(src_nodes):

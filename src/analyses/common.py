@@ -250,6 +250,7 @@ _RECORD_FIELDS = [
     ("title", "발명의 명칭"), ("applicant_display", "출원인"), ("country", "국가"),
     ("legal_status_norm", "법적상태"), ("family_id", "패밀리 ID"),
     ("cites_forward", "피인용 수"), ("family_size", "패밀리 수"),
+    ("gov_program", "국가과제"),   # 매핑된 경우에만 표시 — 연계특허 식별용
 ]
 
 

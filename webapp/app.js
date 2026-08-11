@@ -1017,7 +1017,7 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
         '<td>' + Ui.esc(d.reading) + '</td>';
     });
     var tblWrap = Ui.el('<div style="overflow-x:auto"></div>');
-    tblWrap.appendChild(Ui.el(simpleTable(['지표', '정의', '산식 (이번 계산 기준)', '해석'], rows)));
+    tblWrap.appendChild(Ui.el(simpleTable(['지표', '정의', '계산식', '해석'], rows)));
     wrap.appendChild(tblWrap);
     return wrap;
   }

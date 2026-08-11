@@ -4924,6 +4924,7 @@ _RECORD_FIELDS = [
     ("title", "발명의 명칭"), ("applicant_display", "출원인"), ("country", "국가"),
     ("legal_status_norm", "법적상태"), ("family_id", "패밀리 ID"),
     ("cites_forward", "피인용 수"), ("family_size", "패밀리 수"),
+    ("gov_program", "국가과제"),   # 매핑된 경우에만 표시 — 연계특허 식별용
 ]
 
 
@@ -8650,6 +8651,8 @@ analyses/portfolio_index.py — 포트폴리오 가치 지표 (Patent Asset Inde
 Drill-down: 기업 {"type":"applicant"}, 특허 {"type":"ids"}.
 예외처리: 피인용 없으면 disabled(안내), 표본 미달 기업 제외.
 """
+import re as _re_mc
+
 import numpy as np
 import pandas as pd
 
@@ -8671,17 +8674,47 @@ _GNI_TRILLION = {
 _GNI_DEFAULT = 0.1  # 목록에 없는 국가의 기본 GNI (조 USD)
 
 
+# 한글 국가명 → ISO 코드 (WIPS 국가 목록이 한글로 오는 경우)
+_KO_COUNTRY = {
+    "한국": "KR", "대한민국": "KR", "미국": "US", "일본": "JP", "중국": "CN",
+    "유럽": "EP", "독일": "DE", "프랑스": "FR", "영국": "GB", "대만": "TW",
+    "인도": "IN", "캐나다": "CA", "호주": "AU", "러시아": "RU", "브라질": "BR",
+    "스페인": "ES", "이탈리아": "IT", "네덜란드": "NL", "스위스": "CH",
+    "스웨덴": "SE", "멕시코": "MX", "인도네시아": "ID", "터키": "TR",
+    "싱가포르": "SG", "홍콩": "HK", "이스라엘": "IL", "베트남": "VN", "태국": "TH",
+}
+_CODE_RE = _re_mc.compile(r"\b([A-Za-z]{2})\b")
+
+
+def _country_codes_of(value):
+    """국가 목록 셀 → ISO 코드 집합.
+
+    'KR 3 | US 2'(WIPS 개별국 문헌 수), 'KR;US;JP', '한국(3), 미국(2)' 등
+    코드+건수 혼합·한글 국가명 형식을 모두 처리한다. 숫자만 있으면 무시."""
+    codes = set()
+    for token in parse_multiclass_cell(value):
+        t = str(token).strip()
+        if not t:
+            continue
+        m = _CODE_RE.search(t)
+        if m:
+            codes.add(m.group(1).upper())
+            continue
+        for name, code in _KO_COUNTRY.items():
+            if name in t:
+                codes.add(code)
+                break
+    return codes
+
+
 def _mc_from_country_list(series):
-    """패밀리 국가 목록 → GNI 가중 Market Coverage (US=1). 목록 없으면 NaN."""
+    """패밀리 국가 목록 → GNI 가중 Market Coverage (US=1). 목록 없으면 NaN.
+
+    공개 방법론(Ernst & Omland 2011): MC_i = Σ_j GNI(보호국 j) / GNI(US)."""
     us = _GNI_TRILLION["US"]
 
     def one(value):
-        countries = parse_multiclass_cell(value)
-        codes = set()
-        for c in countries:
-            code = str(c).strip().upper()[:2]
-            if code.isalpha():
-                codes.add(code)
+        codes = _country_codes_of(value)
         if not codes:
             return np.nan
         return sum(_GNI_TRILLION.get(code, _GNI_DEFAULT) for code in codes) / us
@@ -8728,7 +8761,8 @@ def compute_portfolio_index(df, settings):
     mc, mc_source, mc_exact = None, None, False
     if "family_countries" in work.columns:
         mc_gni = _mc_from_country_list(work["family_countries"])
-        if mc_gni.notna().any():
+        # 파싱 성공률이 낮으면(30% 미만) 형식이 국가 목록이 아닌 것 — 폴백 사용
+        if float(mc_gni.notna().mean()) >= 0.3:
             fill = float(mc_gni.median())
             mc = mc_gni.fillna(fill)
             mc_source = "패밀리 국가 목록 × GNI 가중 (US=1, 공개 방법론)"
@@ -8747,6 +8781,11 @@ def compute_portfolio_index(df, settings):
     if mc is None:
         mc = pd.Series(1.0, index=work.index)
         mc_source = "미가용 (MC=1 고정)"
+    # 값이 사실상 하나뿐이면(예: 전 문헌이 KR 단일국 패밀리) 그 사실을 명시 —
+    # "모든 기업 MC 동일" 이 계산 오류가 아니라 데이터 특성임을 알 수 있게
+    if float(pd.Series(mc).std() or 0.0) < 1e-9:
+        mc_source += (" — 모든 문헌의 보호국 구성이 동일해 기업 간 MC 차이가 "
+                      "없습니다 (예: 전부 단일국 패밀리)")
     ci = tr * mc
     work["_tr"], work["_mc"], work["_ci"] = tr, mc, ci
 
@@ -10396,7 +10435,8 @@ def compute_semantic_influence(df, settings):
     node_labels, node_colors = [], []
     comp_index = {}
     for i, r in enumerate(src_nodes):
-        node_labels.append("%s · %s" % (r["id"], r["applicant"][:8]))
+        # 라벨: 출원번호 (출원인) — 어느 회사의 원천 특허인지 바로 식별
+        node_labels.append("%s (%s)" % (r["id"], (r["applicant"] or "-")[:16]))
         node_colors.append(PALETTE[i % len(PALETTE)])
     links = {"source": [], "target": [], "value": [], "label": [], "color": []}
     for i, r in enumerate(src_nodes):
@@ -10823,14 +10863,27 @@ def _survival_section(df, settings):
     top_techs = [t for t in tech_counts.index if tech_counts[t] >= min_n][:6]
     traces, tech_rows = [], []
     color_reg = {}
+
+    def _km_trace(group, name, color=None):
+        """KM 곡선 trace. 이벤트가 적어도 곡선이 보이도록 관측 종료 시점까지
+        수평선을 연장한다 (이벤트 0건 그룹도 100% 평행선으로 표시)."""
+        times, probs = _km_curve(group["_dur"], group["_event"])
+        t_end = float(min(float(np.max(group["_dur"])), 21.0))
+        if times[-1] < t_end:
+            times = list(times) + [t_end]
+            probs = list(probs) + [probs[-1]]
+        line = {"shape": "hv"}
+        if color:
+            line["color"] = color
+        return {"type": "scatter", "mode": "lines", "name": str(name)[:24],
+                "x": times, "y": probs, "line": line,
+                "hovertemplate": str(name) + " · %{x:.0f}년차 생존율 %{y:.0%}"
+                                 "<extra></extra>"}, times, probs
+
     for tech in top_techs:
         g = sub[sub["_ptech"] == tech]
-        times, probs = _km_curve(g["_dur"], g["_event"])
-        traces.append({"type": "scatter", "mode": "lines", "name": str(tech),
-                       "x": times, "y": probs, "line": {"shape": "hv",
-                       "color": color_for(str(tech), color_reg)},
-                       "hovertemplate": str(tech) + " · %{x:.0f}년차 생존율 %{y:.0%}"
-                                        "<extra></extra>"})
+        trace, times, probs = _km_trace(g, tech, color_for(str(tech), color_reg))
+        traces.append(trace)
         tech_rows.append({
             "tech": str(tech), "n": int(len(g)),
             "surv_5y": round(_km_at(times, probs, 5.0), 3),
@@ -10840,9 +10893,8 @@ def _survival_section(df, settings):
             "drill": {"type": "tech", "tech": str(tech)}})
     if not traces:
         # 분류가 부족하면 전체 곡선 하나
-        times, probs = _km_curve(sub["_dur"], sub["_event"])
-        traces.append({"type": "scatter", "mode": "lines", "name": "전체",
-                       "x": times, "y": probs, "line": {"shape": "hv"}})
+        trace, _t, _p = _km_trace(sub, "전체")
+        traces.append(trace)
     fig = {"data": traces, "layout": base_layout(
         "연차료 생존곡선 (Kaplan-Meier) — 기업 스스로 매긴 특허 가치",
         xaxis={"title": "등록 후 경과 (년)", "range": [0, 21], "dtick": 2},
@@ -10858,17 +10910,25 @@ def _survival_section(df, settings):
         by_comp.append((str(comp), med, int(len(g))))
     fig_comp = None
     if by_comp:
-        plot_rows = [(c, (m if m is not None else 21.0), n) for c, m, n in by_comp]
+        # 중위 미도달(관측 기간 내 생존율이 50% 아래로 떨어지지 않음) = "20+" 표기.
+        # 축은 '등록 후 경과 연수'라 출원 후 20년 존속기간과 달리 최대 ~18~20년.
+        plot_rows = [(c, (min(m, 20.0) if m is not None else 20.0),
+                      m is None, n) for c, m, n in by_comp]
         plot_rows.sort(key=lambda r: r[1])
         fig_comp = bar_chart(
-            [r[0] for r in plot_rows], [round(r[1], 1) for r in plot_rows],
-            title="기업별 중위 생존연수 (21=관측 기간 내 절반 미달 — 장수 포트폴리오)",
-            orientation="h", x_title="중위 생존연수 (년)",
+            ["%s%s" % (c, " (20+)" if nr else "") for c, _m, nr, _n in plot_rows],
+            [round(m2, 1) for _c, m2, _nr, _n in plot_rows],
+            title="기업별 중위 생존연수 — 등록 특허의 절반이 소멸되는 시점 "
+                  "(20+ = 절반 이상이 관측 종료까지 생존한 장수 포트폴리오)",
+            orientation="h", x_title="중위 생존연수 (등록 후 경과 년)",
             hovertext=["%s — %s (표본 %d건)"
-                       % (c, ("중위 %.1f년" % m2) if m2 < 21 else "관측 내 중위 미도달",
-                          n) for c, m2, n in plot_rows],
+                       % (c, ("등록 후 %.1f년에 절반 소멸" % m2) if not nr
+                          else "중위 미도달: 절반 이상이 여전히 유효 (20+)",
+                          n) for c, m2, nr, n in plot_rows],
+            colors=["#59A14F" if nr else "#4E79A7"
+                    for _c, _m, nr, _n in plot_rows],
             customdata=[{"drill": {"type": "applicant", "applicant": c}}
-                        for c, _m, _n in plot_rows])
+                        for c, _m, _nr, _n in plot_rows])
     n_events = int(sub["_event"].sum())
     return {"fig": fig, "fig_company": fig_comp, "techs": tech_rows,
             "n": int(len(sub)), "n_events": n_events,
@@ -11499,28 +11559,38 @@ def _gov_program_section(df, settings):
         customdata=[{"drill": {"gov_program": str(p)}}
                     for p in top_progs.index][::-1])
 
-    # 기업별 정부과제 연계율
+    # 기업별 정부과제 연계율 — 연계 특허를 실제 보유한 기업이 반드시 포함되도록
+    # (전체 상위 기업 ∪ 연계 건수 상위 기업; 상위 기업만 보면 전부 0% 로 보이는
+    #  문제 방지)
     fig_comp = None
     comp_rows = []
     apps = df["applicant_display"].replace("", np.nan).dropna()
     if len(apps):
         min_n = int(get_threshold(settings, "min_class_patents")) + 2
-        for comp, total in apps.value_counts().head(12).items():
-            if total < min_n:
+        totals = apps.value_counts()
+        linked_by_comp = sub["applicant_display"].replace("", np.nan).dropna() \
+            .value_counts()
+        comps = list(totals.head(12).index) + \
+            [c for c in linked_by_comp.head(10).index
+             if c not in totals.head(12).index]
+        for comp in comps:
+            total = int(totals.get(comp, 0))
+            if total < max(3, min_n if comp in totals.head(12).index else 3):
                 continue
-            n_link = int(linked[df["applicant_display"] == comp].sum())
-            comp_rows.append((str(comp), n_link, int(total),
-                              n_link / float(total)))
+            n_link = int(linked_by_comp.get(comp, 0))
+            comp_rows.append((str(comp), n_link, total, n_link / float(total)))
         if comp_rows:
             comp_rows.sort(key=lambda r: r[3])
             fig_comp = bar_chart(
-                [r[0] for r in comp_rows], [round(r[3], 3) for r in comp_rows],
-                title="기업별 국가연구 과제 연계율 — 높을수록 국책과제 의존 R&D",
+                [r[0] for r in comp_rows], [round(r[3], 4) for r in comp_rows],
+                title="기업별 국가연구 과제 연계율 — 높을수록 국책과제 의존 R&D "
+                      "(막대 클릭 → 그 기업의 연계 특허만 표시)",
                 orientation="h", x_title="연계율",
                 hovertext=["%s — 정부과제 연계 %d건 / 전체 %d건 (%s)"
                            % (r[0], r[1], r[2], fmt_pct(r[3])) for r in comp_rows],
-                customdata=[{"drill": {"type": "applicant", "applicant": r[0]}}
+                customdata=[{"drill": {"applicant": r[0], "gov_linked": True}}
                             for r in comp_rows])
+            fig_comp["layout"]["xaxis"]["tickformat"] = ".0%"
 
     # 기술분류별 연계율 (국가 지원이 집중되는 기술)
     fig_tech = None
@@ -11535,13 +11605,16 @@ def _gov_program_section(df, settings):
         if rows:
             rows.sort(key=lambda r: r[3])
             fig_tech = bar_chart(
-                [r[0] for r in rows], [round(r[3], 3) for r in rows],
-                title="기술분류별 국가과제 연계율 — 국가 지원이 집중되는 기술",
+                [r[0] for r in rows], [round(r[3], 4) for r in rows],
+                title="기술분류별 국가과제 연계율 — 국가 지원이 집중되는 기술 "
+                      "(막대 클릭 → 그 기술의 연계 특허만 표시)",
                 orientation="h", x_title="연계율",
                 hovertext=["%s — 연계 %d건 / 전체 %d건 (%s)"
                            % (r[0], r[1], r[2], fmt_pct(r[3])) for r in rows],
-                customdata=[{"drill": {"type": "tech", "tech": r[0]}}
+                customdata=[{"drill": {"type": "tech", "tech": r[0],
+                                       "gov_linked": True}}
                             for r in rows])
+            fig_tech["layout"]["xaxis"]["tickformat"] = ".0%"
 
     # 정부과제 특허 vs 자체 특허 품질
     quality = None

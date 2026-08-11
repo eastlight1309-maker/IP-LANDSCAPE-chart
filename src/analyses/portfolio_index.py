@@ -34,6 +34,8 @@ analyses/portfolio_index.py — 포트폴리오 가치 지표 (Patent Asset Inde
 Drill-down: 기업 {"type":"applicant"}, 특허 {"type":"ids"}.
 예외처리: 피인용 없으면 disabled(안내), 표본 미달 기업 제외.
 """
+import re as _re_mc
+
 import numpy as np
 import pandas as pd
 
@@ -61,17 +63,47 @@ _GNI_TRILLION = {
 _GNI_DEFAULT = 0.1  # 목록에 없는 국가의 기본 GNI (조 USD)
 
 
+# 한글 국가명 → ISO 코드 (WIPS 국가 목록이 한글로 오는 경우)
+_KO_COUNTRY = {
+    "한국": "KR", "대한민국": "KR", "미국": "US", "일본": "JP", "중국": "CN",
+    "유럽": "EP", "독일": "DE", "프랑스": "FR", "영국": "GB", "대만": "TW",
+    "인도": "IN", "캐나다": "CA", "호주": "AU", "러시아": "RU", "브라질": "BR",
+    "스페인": "ES", "이탈리아": "IT", "네덜란드": "NL", "스위스": "CH",
+    "스웨덴": "SE", "멕시코": "MX", "인도네시아": "ID", "터키": "TR",
+    "싱가포르": "SG", "홍콩": "HK", "이스라엘": "IL", "베트남": "VN", "태국": "TH",
+}
+_CODE_RE = _re_mc.compile(r"\b([A-Za-z]{2})\b")
+
+
+def _country_codes_of(value):
+    """국가 목록 셀 → ISO 코드 집합.
+
+    'KR 3 | US 2'(WIPS 개별국 문헌 수), 'KR;US;JP', '한국(3), 미국(2)' 등
+    코드+건수 혼합·한글 국가명 형식을 모두 처리한다. 숫자만 있으면 무시."""
+    codes = set()
+    for token in parse_multiclass_cell(value):
+        t = str(token).strip()
+        if not t:
+            continue
+        m = _CODE_RE.search(t)
+        if m:
+            codes.add(m.group(1).upper())
+            continue
+        for name, code in _KO_COUNTRY.items():
+            if name in t:
+                codes.add(code)
+                break
+    return codes
+
+
 def _mc_from_country_list(series):
-    """패밀리 국가 목록 → GNI 가중 Market Coverage (US=1). 목록 없으면 NaN."""
+    """패밀리 국가 목록 → GNI 가중 Market Coverage (US=1). 목록 없으면 NaN.
+
+    공개 방법론(Ernst & Omland 2011): MC_i = Σ_j GNI(보호국 j) / GNI(US)."""
     us = _GNI_TRILLION["US"]
 
     def one(value):
-        countries = parse_multiclass_cell(value)
-        codes = set()
-        for c in countries:
-            code = str(c).strip().upper()[:2]
-            if code.isalpha():
-                codes.add(code)
+        codes = _country_codes_of(value)
         if not codes:
             return np.nan
         return sum(_GNI_TRILLION.get(code, _GNI_DEFAULT) for code in codes) / us
@@ -118,7 +150,8 @@ def compute_portfolio_index(df, settings):
     mc, mc_source, mc_exact = None, None, False
     if "family_countries" in work.columns:
         mc_gni = _mc_from_country_list(work["family_countries"])
-        if mc_gni.notna().any():
+        # 파싱 성공률이 낮으면(30% 미만) 형식이 국가 목록이 아닌 것 — 폴백 사용
+        if float(mc_gni.notna().mean()) >= 0.3:
             fill = float(mc_gni.median())
             mc = mc_gni.fillna(fill)
             mc_source = "패밀리 국가 목록 × GNI 가중 (US=1, 공개 방법론)"
@@ -137,6 +170,11 @@ def compute_portfolio_index(df, settings):
     if mc is None:
         mc = pd.Series(1.0, index=work.index)
         mc_source = "미가용 (MC=1 고정)"
+    # 값이 사실상 하나뿐이면(예: 전 문헌이 KR 단일국 패밀리) 그 사실을 명시 —
+    # "모든 기업 MC 동일" 이 계산 오류가 아니라 데이터 특성임을 알 수 있게
+    if float(pd.Series(mc).std() or 0.0) < 1e-9:
+        mc_source += (" — 모든 문헌의 보호국 구성이 동일해 기업 간 MC 차이가 "
+                      "없습니다 (예: 전부 단일국 패밀리)")
     ci = tr * mc
     work["_tr"], work["_mc"], work["_ci"] = tr, mc, ci
 
