@@ -1626,24 +1626,31 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
 
   function plotlyDrill(drill) { Drill.open(drill, '근거 특허'); }
 
+  /* 출원인 선택 컨트롤 (공용) — analysisCard 의 controls 로 사용.
+     선택 시 body 에 company 를 실어 재계산하며, 공동출원 건도 포함 매칭된다. */
+  function companySelectControls(labelText) {
+    return function (c, reload) {
+      var sel = Ui.el('<select><option value="">전체 출원인</option></select>');
+      ((State.filterOptions || {}).applicants || []).slice(0, 60).forEach(function (a) {
+        var o = document.createElement('option'); o.value = a; o.textContent = a;
+        sel.appendChild(o);
+      });
+      sel.addEventListener('change', function () {
+        reload({ company: sel.value || null });
+      });
+      var lbl = Ui.el('<span style="font-size:11.5px;color:#647b8d">' +
+        Ui.esc(labelText || '출원인 선택') + '</span>');
+      c.controls.prepend(sel); c.controls.prepend(lbl);
+    };
+  }
+
   /* ---------- 1.5 Basic Statistics (WIPS·PatentSight 스타일) ---------- */
   Views.basic = function (content) {
     function statsTab(title, help, keys, guide, withCompany) {
       return function (h) {
         analysisCard({
           analysis: 'basic-stats', holder: h, title: title, help: help, guide: guide,
-          controls: withCompany ? function (c, reload) {
-            var sel = Ui.el('<select><option value="">전체 출원인</option></select>');
-            ((State.filterOptions || {}).applicants || []).slice(0, 60).forEach(function (a) {
-              var o = document.createElement('option'); o.value = a; o.textContent = a;
-              sel.appendChild(o);
-            });
-            sel.addEventListener('change', function () {
-              reload({ company: sel.value || null });
-            });
-            var lbl = Ui.el('<span style="font-size:11.5px;color:#647b8d">출원인 선택</span>');
-            c.controls.prepend(sel); c.controls.prepend(lbl);
-          } : undefined,
+          controls: withCompany ? companySelectControls('출원인 선택') : undefined,
           renderOk: function (r, c, setTarget) {
             if (r.kpi && keys.indexOf('annual') >= 0) {
               var k = r.kpi;
@@ -1681,9 +1688,11 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
          인사이트도 그 범위로 한정된다 (백엔드 sections 파라미터). */
       return { label: label, render: function (h) {
         analysisCard({
-          analysis: 'wips-deep', holder: h, title: title,
+          analysis: 'wips-deep', holder: h, title: title + ' (출원인 선택 가능)',
+          controls: companySelectControls('출원인 선택'),
           help: help + ' 해당 컬럼이 매핑된 섹션만 계산되고 나머지는 하단에 사유와 함께 ' +
-            '생략됩니다. 모든 신호는 상관 관찰이며 인과·법률 판단이 아닙니다.',
+            '생략됩니다. 상단에서 출원인을 선택하면 그 회사 문헌(공동출원 포함)만으로 ' +
+            '재계산됩니다. 모든 신호는 상관 관찰이며 인과·법률 판단이 아닙니다.',
           body: { sections: sectionKeys },
           renderOk: renderDeepSections
         });
@@ -1692,8 +1701,10 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
     function deepPlusTab(label, sectionKeys, title, help) {
       return { label: label, render: function (h) {
         analysisCard({
-          analysis: 'deep-plus', holder: h, title: title,
+          analysis: 'deep-plus', holder: h, title: title + ' (출원인 선택 가능)',
+          controls: companySelectControls('출원인 선택'),
           help: help + ' 해당 컬럼이 매핑된 섹션만 계산되고 나머지는 사유와 함께 생략됩니다. ' +
+            '상단에서 출원인을 선택하면 그 회사 문헌(공동출원 포함)만으로 재계산됩니다. ' +
             '모든 신호는 상관 관찰이며 인과·법률 판단이 아닙니다.',
           body: { sections: sectionKeys },
           renderOk: renderDeepPlus
@@ -2481,18 +2492,7 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
         analysisCard({
           analysis: 'emerging-clusters', holder: h,
           title: '신흥 기술 조기 탐지 — Emerging Cluster Detection (출원인 선택 가능)',
-          controls: function (c, reload) {
-            var sel = Ui.el('<select><option value="">전체 출원인</option></select>');
-            ((State.filterOptions || {}).applicants || []).slice(0, 60).forEach(function (a) {
-              var o = document.createElement('option'); o.value = a; o.textContent = a;
-              sel.appendChild(o);
-            });
-            sel.addEventListener('change', function () {
-              reload({ company: sel.value || null });
-            });
-            var lbl = Ui.el('<span style="font-size:11.5px;color:#647b8d">출원인 선택</span>');
-            c.controls.prepend(sel); c.controls.prepend(lbl);
-          },
+          controls: companySelectControls('출원인 선택'),
           help: '전체 문헌 텍스트(요약·독립청구항)를 KR-SBERT 임베딩으로 군집화한 뒤 각 군집의 ' +
             '출원 시점 분포를 봅니다. 최근 3년에 몰려 있고, 신규 출원인이 늘고, 이전에 없던 ' +
             '새 군집이면 신흥 기술 후보입니다. 군집 라벨은 중심에 가까운 특허들의 특징 키워드로 ' +
@@ -2835,8 +2835,9 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
   function renderOpportunity(h) {
     var sliderBox = null;
     var res = analysisCard({
-      analysis: 'opportunity', holder: h, title: 'Actionable White Space Map',
-      help: 'X=매력도(가중 기하평균), Y=진입 가능성(1-권리장벽). 크기=관련 특허 수, 색=권리장벽, ◇=자사 역량 보유. 가중치 슬라이더는 서버 재계산 없이 즉시 반영됩니다.',
+      analysis: 'opportunity', holder: h, title: 'Actionable White Space Map (자사 선택 가능)',
+      controls: companySelectControls('자사(출원인) 선택'),
+      help: 'X=매력도(가중 기하평균), Y=진입 가능성(1-권리장벽). 크기=관련 특허 수, 색=권리장벽. ◇=자사 역량 보유 — "자사"는 상단에서 선택한 출원인(공동출원 포함) 기준이며, 선택하지 않으면 데이터의 \'자사 특허 여부\' 컬럼(없으면 표시 안 함)을 사용합니다. 가중치 슬라이더는 서버 재계산 없이 즉시 반영됩니다.',
       renderOk: function (r, c, setTarget) {
         var holder = Ui.el('<div class="chart-holder tall"></div>');
         c.body.appendChild(holder);
@@ -3098,8 +3099,9 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
     makeTabs(content, [
       { label: '핵심특허 영향력', render: function (h) {
         analysisCard({
-          analysis: 'citation-diffusion', holder: h, title: '핵심특허 영향력 (Influence Score)',
-          help: 'Influence = Σ(표준화 지표×가중치): 직접·간접 피인용, 타 분류/타 기업 확산, 패밀리 확장, 유지·권리범위. 가중치는 Settings 에서 조정.',
+          analysis: 'citation-diffusion', holder: h, title: '핵심특허 영향력 (Influence Score · 출원인 선택 가능)',
+          controls: companySelectControls('출원인 선택'),
+          help: 'Influence = Σ(표준화 지표×가중치): 직접·간접 피인용, 타 분류/타 기업 확산, 패밀리 확장, 유지·권리범위. 가중치는 Settings 에서 조정. 출원인을 선택하면 그 회사 특허(공동출원 포함)만 순위에 표시되며, 점수는 전체 데이터 기준으로 계산되어 비교 가능합니다.',
           renderOk: function (r, c, setTarget) {
             var holder = Ui.el('<div class="chart-holder"></div>');
             c.body.appendChild(holder);

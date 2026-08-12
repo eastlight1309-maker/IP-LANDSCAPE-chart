@@ -137,23 +137,24 @@ def _survival_section(df, settings):
             ["Lapsed", "Abandoned", "Granted-Expired"])
         past = sub["expiry_date"].notna() & (sub["expiry_date"] <= now)
         lapse = sub["expiry_date"].where(dead & past)
-        if lapse.notna().sum() < 5:
-            return None, ("소멸일 컬럼 필요 — 법적상태·만료일 기반 근사도 표본 부족 "
-                          "(권리 종료 특허 5건 미만)")
         lapse_basis = ("법적상태(소멸·포기·만료) × 존속기간(예상)만료일 근사 — "
                        "소멸일 컬럼이 없어 권리 종료 특허의 (예상)만료일(과거)을 "
                        "종료 시점으로 사용")
     else:
-        return None, ("소멸일 컬럼 필요 (또는 법적상태 + 존속기간(예상)만료일 매핑 시 "
-                      "자동 근사 계산)")
+        # 소멸일도 만료일 근사도 불가: 전건을 관측 중단(censored)으로 두고
+        # 생존곡선을 그린다 — 소멸 이벤트가 없으므로 100% 평행선으로 표시되며,
+        # 그 사실을 노트로 명시한다 (값을 지어내지 않음).
+        lapse = pd.Series(pd.NaT, index=sub.index)
+        lapse_basis = ("소멸일·존속기간(예상)만료일 미매핑 — 권리 종료 시점을 알 수 "
+                       "없어 전건을 관측 지속으로 처리")
     dur = np.where(lapse.notna(),
                    (lapse - sub["reg_date"]).dt.days / 365.25,
                    (now - sub["reg_date"]).dt.days / 365.25)
     event = np.where(lapse.notna(), 1, 0)
     ok_mask = (dur > 0) & (dur <= 25)
     sub, dur, event = sub[ok_mask], dur[ok_mask], event[ok_mask]
-    if int(event.sum()) < 5:
-        return None, "소멸(포기) 이벤트 표본 부족 (5건 미만)"
+    if not len(sub):
+        return None, "등록일 기준 관측 기간을 계산할 수 있는 특허 없음"
     sub = sub.reset_index(drop=True)
     sub["_dur"], sub["_event"] = dur, event
     sub["_ptech"] = _primary_tech(sub)
@@ -230,9 +231,18 @@ def _survival_section(df, settings):
             customdata=[{"drill": {"type": "applicant", "applicant": c}}
                         for c, _m, _nr, _n in plot_rows])
     n_events = int(sub["_event"].sum())
+    note = "권리 종료 시점 기준: %s." % lapse_basis
+    if n_events == 0:
+        note += (" 소멸(포기) 이벤트가 0건이라 곡선이 100%% 평행선으로 표시됩니다 — "
+                 "포트폴리오가 아직 젊거나 소멸 정보가 데이터에 없는 경우입니다. "
+                 "소멸일 또는 법적상태+존속기간(예상)만료일을 매핑하면 실제 소멸 "
+                 "시점이 반영됩니다.")
+    elif n_events < 5:
+        note += (" 소멸(포기) 이벤트가 %d건뿐이라 곡선 해석에 주의가 필요합니다 "
+                 "(표본이 늘면 안정됩니다)." % n_events)
     return {"fig": fig, "fig_company": fig_comp, "techs": tech_rows,
             "n": int(len(sub)), "n_events": n_events,
-            "note": "권리 종료 시점 기준: %s." % lapse_basis}, None
+            "note": note}, None
 
 
 # ---------------------------------------------------------------------------
@@ -943,12 +953,19 @@ _SECTIONS = (("survival", _survival_section), ("market_entry", _market_entry_sec
              ("trial", _trial_section), ("gov_program", _gov_program_section))
 
 
-def compute_wips_deep(df, settings, only_sections=None):
+def compute_wips_deep(df, settings, only_sections=None, company=None):
     """심층 시그널 계산 (섹션별 graceful degradation).
 
     only_sections: 계산할 섹션 키 목록 — 지정 시 해당 섹션만 계산하고
     인사이트 문장도 그 범위로 한정된다 (탭 분할 렌더링용). None=전체.
+    company: 지정 시 해당 출원인 문헌(공동출원 포함)만으로 전 섹션을 계산한다.
     """
+    if company:
+        from src.analyses.common import applicant_mask
+        df = df[applicant_mask(df, company, scope="any")]
+        if not len(df):
+            return empty_result("출원인 '%s'의 문헌이 없습니다 (공동출원 포함 검색)."
+                                % company)
     if not len(df):
         return empty_result()
     wanted = set(only_sections) if only_sections else None

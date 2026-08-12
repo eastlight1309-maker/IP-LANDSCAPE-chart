@@ -83,11 +83,16 @@ def _problem_recurrence(sub):
     return 1.0 - probs.nunique() / float(len(probs))
 
 
-def _own_capability(df, tech, settings):
-    """자사 역량 보유 여부·점수 (가용한 방식만, 없으면 None)."""
+def _own_capability(df, tech, settings, own_mask=None):
+    """자사 역량 보유 여부·점수 (가용한 방식만, 없으면 None).
+
+    own_mask 지정 시(출원인 선택) 그 마스크를 '자사 특허'로 사용하고,
+    미지정 시 is_own 컬럼(_is_own_bool)을 사용한다.
+    """
     in_tech = df["_tech_list"].map(lambda lst: tech in (lst or []))
     # ① 자사 특허 분포
-    own_mask = df["_is_own_bool"].map(lambda v: v is True)
+    if own_mask is None:
+        own_mask = df["_is_own_bool"].map(lambda v: v is True)
     if own_mask.any():
         n_own = int((in_tech & own_mask).sum())
         if n_own > 0:
@@ -106,7 +111,7 @@ def _own_capability(df, tech, settings):
         return False, 0.0, None
     # ② 임베딩 거리
     if "_embedding" in df.columns:
-        own_vecs = [v for v, o in zip(df["_embedding"], df["_is_own_bool"]) if o is True and v is not None]
+        own_vecs = [v for v, o in zip(df["_embedding"], own_mask) if o and v is not None]
         area_vecs = [v for v, t in zip(df["_embedding"], in_tech) if t and v is not None]
         if own_vecs and area_vecs:
             sim = cosine_sim_vec(np.mean(own_vecs, axis=0), np.mean(area_vecs, axis=0))
@@ -122,10 +127,22 @@ def _own_capability(df, tech, settings):
     return None, None, None
 
 
-def compute_opportunity(df, settings):
-    """Actionable White Space Map 계산."""
+def compute_opportunity(df, settings, company=None):
+    """Actionable White Space Map 계산.
+
+    company 지정 시 그 출원인의 특허(공동출원 포함)를 '자사'로 보고 ◇(자사
+    역량 보유) 판정을 한다. 미지정 시 is_own 컬럼 → 임베딩 → 보유 기술목록
+    순의 기존 판정을 사용한다.
+    """
     if not len(df):
         return empty_result()
+    own_mask_override = None
+    if company:
+        from src.analyses.common import applicant_mask
+        own_mask_override = applicant_mask(df, company, scope="any")
+        if not own_mask_override.any():
+            return empty_result("출원인 '%s'의 문헌이 없습니다 (공동출원 포함 검색)."
+                                % company)
     mode = settings.get("multiclass_mode", "duplicate")
     mat = tech_year_matrix(df, multiclass_mode=mode)
     if mat.empty:
@@ -187,7 +204,8 @@ def compute_opportunity(df, settings):
         else:
             remain_years = None
 
-        own_flag, own_score, own_reason = _own_capability(df, tech, settings)
+        own_flag, own_score, own_reason = _own_capability(
+            df, tech, settings, own_mask=own_mask_override)
         rows.append({
             "tech": str(tech), "total": round(total, 1),
             "growth": growth if growth is not None else 0.0, "growth_method": g_method,
@@ -288,11 +306,13 @@ def compute_opportunity(df, settings):
                            "line": {"width": 2 if symbol != "circle" else 1,
                                     "color": "#1f5fbf" if symbol != "circle" else "#333"},
                            "opacity": 0.85}}
+    own_label = ("'%s' 역량 보유" % company) if company else "자사 역량 보유"
     traces = [t for t in (_trace(points, "circle", "일반 영역"),
-                          _trace(own_points, "diamond", "자사 역량 보유")) if t]
+                          _trace(own_points, "diamond", own_label)) if t]
     from src.viz_payload import base_layout
     fig = {"data": traces, "layout": base_layout(
-        "Actionable White Space Map (Opportunity Matrix)",
+        "Actionable White Space Map (Opportunity Matrix)"
+        + ((" — 자사=%s" % company) if company else ""),
         xaxis={"title": "매력도 (기회 점수)", "range": [-0.05, 1.05]},
         yaxis={"title": "진입 가능성 (1 - 권리장벽)", "range": [-0.05, 1.05]},
         shapes=[{"type": "line", "x0": 0.5, "x1": 0.5, "y0": -0.05, "y1": 1.05,
@@ -328,6 +348,14 @@ def compute_opportunity(df, settings):
     if high_barrier:
         sentences.append("권리장벽 점수 0.7 초과 영역이 %s개 있어 해당 영역 진입 시 선행 권리 "
                          "검토가 필요합니다." % fmt_num(len(high_barrier)))
+    if company:
+        sentences.append("◇(다이아몬드)=출원인 '%s'(공동출원 포함)의 특허가 해당 분류 "
+                         "또는 인접 분류에 있는 '역량 보유' 영역입니다 — 이 회사 관점의 "
+                         "진출 우선순위로 읽으세요." % company)
+    elif not any(r["own_capability"] is not None for r in shown):
+        sentences.append("◇(자사 역량 보유) 표시는 현재 꺼져 있습니다 — 상단에서 자사로 "
+                         "볼 출원인을 선택하거나, '자사 특허 여부' 컬럼을 매핑하면 "
+                         "표시됩니다.")
     insight = build_insight(sentences, metrics,
                             drills=[{"label": "1위 영역 근거 특허",
                                      "drill": {"type": "tech", "tech": top["tech"]}}] if top else [],

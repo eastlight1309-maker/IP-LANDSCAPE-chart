@@ -37,8 +37,13 @@ from src.viz_payload import ok_result, empty_result, disabled_result, bar_chart,
     sankey, color_for
 
 
-def compute_citation_influence(df, settings, top_n=None):
-    """핵심특허 영향력 전파 계산."""
+def compute_citation_influence(df, settings, top_n=None, company=None):
+    """핵심특허 영향력 전파 계산.
+
+    company 지정 시: 점수는 전체 데이터 기준으로 계산하되(타 기업 확산 등 상대
+    지표가 전체 지형 기준을 유지하도록), 순위·Sankey 는 그 출원인의 특허
+    (공동출원 포함)만 표시한다.
+    """
     if "cites_forward" not in df.columns:
         return disabled_result(
             ["피인용 수"],
@@ -105,7 +110,14 @@ def compute_citation_influence(df, settings, top_n=None):
     work["_influence_parts"] = [
         {k: round(float(parts[k][i]), 3) for k in parts} for i in range(len(work))]
 
-    top = work.nlargest(top_n, "_influence")
+    pool = work
+    if company:
+        from src.analyses.common import applicant_mask
+        pool = work[applicant_mask(work, company, scope="any")]
+        if not len(pool):
+            return empty_result("출원인 '%s'의 피인용 수 보유 문헌이 없습니다 "
+                                "(공동출원 포함 검색)." % company)
+    top = pool.nlargest(top_n, "_influence")
     id_col = "pub_number" if "pub_number" in work.columns else \
         ("app_number" if "app_number" in work.columns else None)
 
@@ -132,7 +144,9 @@ def compute_citation_influence(df, settings, top_n=None):
                             "expiry": str(row["expiry_date"].date())
                             if "expiry_date" in work.columns and pd.notna(row.get("expiry_date")) else None,
                             "drill": {"type": "ids", "ids": [pid]}})
-    fig_bar = bar_chart(bars_labels[::-1], bars_vals[::-1], title="핵심특허 Influence Top %d" % top_n,
+    bar_title = ("핵심특허 Influence Top %d — %s (점수는 전체 데이터 기준)"
+                 % (top_n, company)) if company else "핵심특허 Influence Top %d" % top_n
+    fig_bar = bar_chart(bars_labels[::-1], bars_vals[::-1], title=bar_title,
                         orientation="h", hovertext=hover[::-1], customdata=custom[::-1],
                         x_title="Influence Score")
 
@@ -182,6 +196,10 @@ def compute_citation_influence(df, settings, top_n=None):
             sentences.append("핵심특허 중 %s건이 3년 내 만료 예정으로, 만료 후 해당 영역의 "
                              "설계 자유도가 확대될 수 있습니다 (탐색적 신호)."
                              % fmt_num(len(expiring)))
+    if company:
+        sentences.append("표시 범위: 출원인 '%s'의 특허(공동출원 포함)만 순위에 "
+                         "표시되며, Influence 점수 자체는 전체 데이터 기준으로 "
+                         "계산되어 다른 회사와 비교 가능합니다." % company)
     insight = build_insight(sentences, {"weights": weights},
                             small_sample=check_small_sample(len(work), settings))
     return ok_result({"figure": fig_bar, "sankey": fig_sankey, "top_patents": top_records},

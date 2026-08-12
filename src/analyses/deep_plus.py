@@ -435,8 +435,17 @@ _DP_LABELS = {"license": "실시권(라이선스)", "sep": "표준특허",
               "assignment": "권리변동", "examiner": "심사관"}
 
 
-def compute_deep_plus(df, settings, only_sections=None):
-    """특수 필드 신호 6종 계산 (섹션별 graceful degradation)."""
+def compute_deep_plus(df, settings, only_sections=None, company=None):
+    """특수 필드 신호 6종 계산 (섹션별 graceful degradation).
+
+    company 지정 시 해당 출원인 문헌(공동출원 포함)만으로 계산한다.
+    """
+    if company:
+        from src.analyses.common import applicant_mask
+        df = df[applicant_mask(df, company, scope="any")]
+        if not len(df):
+            return empty_result("출원인 '%s'의 문헌이 없습니다 (공동출원 포함 검색)."
+                                % company)
     if not len(df):
         return empty_result()
     wanted = set(only_sections) if only_sections else None

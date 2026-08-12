@@ -610,6 +610,79 @@ def test_wips_deep_sections_param_and_gov_drill(settings):
     assert cs[0][1] == "#E15759" and cs[-1][1] == "#59A14F"
 
 
+def test_survival_renders_without_lapse_info(settings):
+    """소멸일·만료일이 전혀 없어도 생존곡선은 평행선 + 사유 노트로 표시된다."""
+    from src.analyses.wips_deep import compute_wips_deep
+    df = make_prepared(generate_sample(n=300, seed=7))
+    df = df.drop(columns=[c for c in ("lapse_date", "expiry_date")
+                          if c in df.columns])
+    r = compute_wips_deep(df, settings, only_sections=["survival"])
+    assert r["status"] == "ok" and "survival" in r["sections"]
+    sec = r["sections"]["survival"]
+    assert sec["fig"]["data"], "곡선 trace 없음"
+    assert sec["n_events"] == 0
+    assert "이벤트가 0건" in sec["note"]  # 평행선인 이유가 명시됨
+
+
+def test_deep_suites_company_param(settings):
+    """심층 시그널·특수 신호를 출원인별(공동출원 포함)로 계산할 수 있다."""
+    from src.analyses.wips_deep import compute_wips_deep
+    from src.analyses.deep_plus import compute_deep_plus
+    from src.analyses.common import applicant_mask
+    df = make_prepared(generate_sample(n=600, seed=17))
+    comp = df["applicant_display"].value_counts().index[0]
+    n_any = int(applicant_mask(df, comp, scope="any").sum())
+    r = compute_wips_deep(df, settings, only_sections=["survival", "expedited"],
+                          company=comp)
+    assert r["status"] == "ok" and r["sections"]
+    for sec in r["sections"].values():
+        if "n" in sec:
+            assert sec["n"] <= n_any
+    r2 = compute_deep_plus(df, settings, only_sections=["rejection"], company=comp)
+    assert r2["status"] in ("ok", "empty")  # 해당 회사 데이터 유무에 따라
+    r3 = compute_wips_deep(df, settings, company="없는회사XYZ")
+    assert r3["status"] == "empty" and "없는회사XYZ" in r3["message"]
+
+
+def test_opportunity_company_as_own(settings):
+    """White Space Map: 선택한 출원인이 '자사'로 사용되어 ◇ 판정이 이루어진다."""
+    from src.analyses.whitespace import compute_opportunity
+    df = make_prepared(generate_sample(n=400, seed=21))
+    comp = df["applicant_display"].value_counts().index[0]
+    r = compute_opportunity(df, settings, company=comp)
+    assert r["status"] == "ok"
+    assert comp in r["figure"]["layout"]["title"]["text"]  # 자사=회사명 명시
+    owned = [a for a in r["areas"] if a["own_capability"]]
+    assert owned, "회사 특허가 있는데 자사 역량 영역이 하나도 없음"
+    assert any("자사 특허" in (a["own_reason"] or "") for a in owned)
+    # 미선택 + is_own 미매핑: ◇ 끄기 안내 문장
+    r0 = compute_opportunity(df, settings)
+    assert r0["status"] == "ok"
+
+
+def test_citation_influence_company_scope(settings):
+    """핵심특허 영향력: 회사 선택 시 그 회사 특허만 순위, 점수는 전체 기준."""
+    from src.analyses.citation_influence import compute_citation_influence
+    df = make_prepared(generate_sample(n=400, seed=21))
+    comp = df["applicant_display"].value_counts().index[0]
+    full = compute_citation_influence(df, settings)
+    r = compute_citation_influence(df, settings, company=comp)
+    assert r["status"] == "ok"
+    tops = r["top_patents"]
+    assert tops
+    # 순위의 모든 특허가 실제로 그 회사(공동출원 포함) 소속인지 검증
+    from src.analyses.common import applicant_mask
+    member_ids = set(df.loc[applicant_mask(df, comp, scope="any"),
+                            "pub_number"].astype(str))
+    assert all(t["id"] in member_ids for t in tops)
+    # 같은 특허의 점수는 전체 보기와 동일 (점수가 전체 기준으로 계산됨)
+    full_scores = {t["id"]: t["score"] for t in full["top_patents"]}
+    for t in tops:
+        if t["id"] in full_scores:
+            assert abs(t["score"] - full_scores[t["id"]]) < 1e-9
+    assert comp in r["figure"]["layout"]["title"]["text"]
+
+
 def test_basic_stats_chart_insights(prepared, settings):
     """차트별 인사이트가 각 차트 키로 분리 제공된다."""
     from src.analyses.basic_stats import compute_basic_stats
@@ -765,7 +838,10 @@ def test_wips_deep_graceful_without_deep_fields(settings):
     r = compute_wips_deep(df, settings)
     assert r["status"] == "ok"  # 진입 시차·이상탐지 등 기존 필드 섹션은 계산됨
     skipped_keys = {x["section"] for x in r["skipped"]}
-    assert "survival" in skipped_keys and "agent" in skipped_keys
+    assert "agent" in skipped_keys
+    # 생존곡선은 소멸일이 없어도 항상 표시된다 (근사 또는 평행선 + 사유 노트)
+    assert "survival" in r["sections"]
+    assert "권리 종료 시점 기준" in r["sections"]["survival"]["note"]
     for x in r["skipped"]:
         assert x["reason"]  # 사유 명시
 

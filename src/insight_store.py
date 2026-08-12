@@ -185,9 +185,10 @@ def build_pptx(items, report_title="IP Landscape 인사이트 보고서"):
 def _to_slides(items, report_title):
     """항목 → [{"title","lines","image","ext"}]. 긴 항목은 이어짐 슬라이드로 분할.
 
-    구성: ① 표지(제목) ② 목차(인사이트 목록) ③ 인사이트 슬라이드들.
-    차트 캡처 이미지가 있으면 첫 슬라이드에 차트(좌) + 인사이트(우), 카드에
-    차트가 여러 개면 나머지 차트도 "차트 k/n" 슬라이드로 모두 들어간다.
+    구성: ① 표지(제목) ② 목차(인사이트 목록) ③ 인사이트마다
+    [차트 전체 페이지] → [다음 페이지에 그 차트의 인사이트 텍스트] 순서.
+    카드에 차트가 여러 개인 항목(구버전 카드 단위 캡처)은 나머지 차트도
+    "차트 k/n" 전체 페이지로 이어서 들어간다.
     """
     slides = [{"title": report_title, "image": None, "ext": None,
                "lines": ["생성일: %s" % time.strftime("%Y-%m-%d"),
@@ -222,14 +223,21 @@ def _to_slides(items, report_title):
                                    "png" if path.endswith(".png") else "jpg"))
             except OSError:
                 continue
-        first_img, first_ext = images[0] if images else (None, None)
+        # ① 차트 페이지: 첫 차트를 한 페이지 가득 배치
+        if images:
+            img0, ext0 = images[0]
+            slides.append({"title": title[:120], "lines": [],
+                           "image": img0, "ext": ext0, "image_full": True})
+        # ② 다음 페이지: 그 차트의 인사이트 텍스트 (길면 이어짐 분할)
         for start in range(0, len(lines), _LINES_PER_SLIDE):
             chunk = lines[start:start + _LINES_PER_SLIDE]
-            t = title if start == 0 else title[:60] + " (계속)"
+            if start == 0:
+                t = (title + " — 인사이트") if images else title
+            else:
+                t = title[:60] + (" — 인사이트 (계속)" if images else " (계속)")
             slides.append({"title": t[:120], "lines": chunk,
-                           "image": first_img if start == 0 else None,
-                           "ext": first_ext if start == 0 else None})
-        # 카드에 차트가 여러 개면 나머지 차트도 큰 그림 슬라이드로 모두 포함
+                           "image": None, "ext": None})
+        # ③ 카드에 차트가 여러 개인 항목: 나머지 차트도 전체 페이지로 포함
         for k, (img, ext) in enumerate(images[1:], start=2):
             slides.append({"title": ("%s — 차트 %d/%d" % (title[:100], k,
                                                         len(images)))[:120],

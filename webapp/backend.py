@@ -3571,9 +3571,10 @@ def build_pptx(items, report_title="IP Landscape 인사이트 보고서"):
 def _to_slides(items, report_title):
     """항목 → [{"title","lines","image","ext"}]. 긴 항목은 이어짐 슬라이드로 분할.
 
-    구성: ① 표지(제목) ② 목차(인사이트 목록) ③ 인사이트 슬라이드들.
-    차트 캡처 이미지가 있으면 첫 슬라이드에 차트(좌) + 인사이트(우), 카드에
-    차트가 여러 개면 나머지 차트도 "차트 k/n" 슬라이드로 모두 들어간다.
+    구성: ① 표지(제목) ② 목차(인사이트 목록) ③ 인사이트마다
+    [차트 전체 페이지] → [다음 페이지에 그 차트의 인사이트 텍스트] 순서.
+    카드에 차트가 여러 개인 항목(구버전 카드 단위 캡처)은 나머지 차트도
+    "차트 k/n" 전체 페이지로 이어서 들어간다.
     """
     slides = [{"title": report_title, "image": None, "ext": None,
                "lines": ["생성일: %s" % time.strftime("%Y-%m-%d"),
@@ -3608,14 +3609,21 @@ def _to_slides(items, report_title):
                                    "png" if path.endswith(".png") else "jpg"))
             except OSError:
                 continue
-        first_img, first_ext = images[0] if images else (None, None)
+        # ① 차트 페이지: 첫 차트를 한 페이지 가득 배치
+        if images:
+            img0, ext0 = images[0]
+            slides.append({"title": title[:120], "lines": [],
+                           "image": img0, "ext": ext0, "image_full": True})
+        # ② 다음 페이지: 그 차트의 인사이트 텍스트 (길면 이어짐 분할)
         for start in range(0, len(lines), _LINES_PER_SLIDE):
             chunk = lines[start:start + _LINES_PER_SLIDE]
-            t = title if start == 0 else title[:60] + " (계속)"
+            if start == 0:
+                t = (title + " — 인사이트") if images else title
+            else:
+                t = title[:60] + (" — 인사이트 (계속)" if images else " (계속)")
             slides.append({"title": t[:120], "lines": chunk,
-                           "image": first_img if start == 0 else None,
-                           "ext": first_ext if start == 0 else None})
-        # 카드에 차트가 여러 개면 나머지 차트도 큰 그림 슬라이드로 모두 포함
+                           "image": None, "ext": None})
+        # ③ 카드에 차트가 여러 개인 항목: 나머지 차트도 전체 페이지로 포함
         for k, (img, ext) in enumerate(images[1:], start=2):
             slides.append({"title": ("%s — 차트 %d/%d" % (title[:100], k,
                                                         len(images)))[:120],
@@ -6271,11 +6279,16 @@ def _problem_recurrence(sub):
     return 1.0 - probs.nunique() / float(len(probs))
 
 
-def _own_capability(df, tech, settings):
-    """자사 역량 보유 여부·점수 (가용한 방식만, 없으면 None)."""
+def _own_capability(df, tech, settings, own_mask=None):
+    """자사 역량 보유 여부·점수 (가용한 방식만, 없으면 None).
+
+    own_mask 지정 시(출원인 선택) 그 마스크를 '자사 특허'로 사용하고,
+    미지정 시 is_own 컬럼(_is_own_bool)을 사용한다.
+    """
     in_tech = df["_tech_list"].map(lambda lst: tech in (lst or []))
     # ① 자사 특허 분포
-    own_mask = df["_is_own_bool"].map(lambda v: v is True)
+    if own_mask is None:
+        own_mask = df["_is_own_bool"].map(lambda v: v is True)
     if own_mask.any():
         n_own = int((in_tech & own_mask).sum())
         if n_own > 0:
@@ -6294,7 +6307,7 @@ def _own_capability(df, tech, settings):
         return False, 0.0, None
     # ② 임베딩 거리
     if "_embedding" in df.columns:
-        own_vecs = [v for v, o in zip(df["_embedding"], df["_is_own_bool"]) if o is True and v is not None]
+        own_vecs = [v for v, o in zip(df["_embedding"], own_mask) if o and v is not None]
         area_vecs = [v for v, t in zip(df["_embedding"], in_tech) if t and v is not None]
         if own_vecs and area_vecs:
             sim = cosine_sim_vec(np.mean(own_vecs, axis=0), np.mean(area_vecs, axis=0))
@@ -6310,10 +6323,21 @@ def _own_capability(df, tech, settings):
     return None, None, None
 
 
-def compute_opportunity(df, settings):
-    """Actionable White Space Map 계산."""
+def compute_opportunity(df, settings, company=None):
+    """Actionable White Space Map 계산.
+
+    company 지정 시 그 출원인의 특허(공동출원 포함)를 '자사'로 보고 ◇(자사
+    역량 보유) 판정을 한다. 미지정 시 is_own 컬럼 → 임베딩 → 보유 기술목록
+    순의 기존 판정을 사용한다.
+    """
     if not len(df):
         return empty_result()
+    own_mask_override = None
+    if company:
+        own_mask_override = applicant_mask(df, company, scope="any")
+        if not own_mask_override.any():
+            return empty_result("출원인 '%s'의 문헌이 없습니다 (공동출원 포함 검색)."
+                                % company)
     mode = settings.get("multiclass_mode", "duplicate")
     mat = tech_year_matrix(df, multiclass_mode=mode)
     if mat.empty:
@@ -6375,7 +6399,8 @@ def compute_opportunity(df, settings):
         else:
             remain_years = None
 
-        own_flag, own_score, own_reason = _own_capability(df, tech, settings)
+        own_flag, own_score, own_reason = _own_capability(
+            df, tech, settings, own_mask=own_mask_override)
         rows.append({
             "tech": str(tech), "total": round(total, 1),
             "growth": growth if growth is not None else 0.0, "growth_method": g_method,
@@ -6476,10 +6501,12 @@ def compute_opportunity(df, settings):
                            "line": {"width": 2 if symbol != "circle" else 1,
                                     "color": "#1f5fbf" if symbol != "circle" else "#333"},
                            "opacity": 0.85}}
+    own_label = ("'%s' 역량 보유" % company) if company else "자사 역량 보유"
     traces = [t for t in (_trace(points, "circle", "일반 영역"),
-                          _trace(own_points, "diamond", "자사 역량 보유")) if t]
+                          _trace(own_points, "diamond", own_label)) if t]
     fig = {"data": traces, "layout": base_layout(
-        "Actionable White Space Map (Opportunity Matrix)",
+        "Actionable White Space Map (Opportunity Matrix)"
+        + ((" — 자사=%s" % company) if company else ""),
         xaxis={"title": "매력도 (기회 점수)", "range": [-0.05, 1.05]},
         yaxis={"title": "진입 가능성 (1 - 권리장벽)", "range": [-0.05, 1.05]},
         shapes=[{"type": "line", "x0": 0.5, "x1": 0.5, "y0": -0.05, "y1": 1.05,
@@ -6515,6 +6542,14 @@ def compute_opportunity(df, settings):
     if high_barrier:
         sentences.append("권리장벽 점수 0.7 초과 영역이 %s개 있어 해당 영역 진입 시 선행 권리 "
                          "검토가 필요합니다." % fmt_num(len(high_barrier)))
+    if company:
+        sentences.append("◇(다이아몬드)=출원인 '%s'(공동출원 포함)의 특허가 해당 분류 "
+                         "또는 인접 분류에 있는 '역량 보유' 영역입니다 — 이 회사 관점의 "
+                         "진출 우선순위로 읽으세요." % company)
+    elif not any(r["own_capability"] is not None for r in shown):
+        sentences.append("◇(자사 역량 보유) 표시는 현재 꺼져 있습니다 — 상단에서 자사로 "
+                         "볼 출원인을 선택하거나, '자사 특허 여부' 컬럼을 매핑하면 "
+                         "표시됩니다.")
     insight = build_insight(sentences, metrics,
                             drills=[{"label": "1위 영역 근거 특허",
                                      "drill": {"type": "tech", "tech": top["tech"]}}] if top else [],
@@ -7947,8 +7982,13 @@ import pandas as pd
 
 
 
-def compute_citation_influence(df, settings, top_n=None):
-    """핵심특허 영향력 전파 계산."""
+def compute_citation_influence(df, settings, top_n=None, company=None):
+    """핵심특허 영향력 전파 계산.
+
+    company 지정 시: 점수는 전체 데이터 기준으로 계산하되(타 기업 확산 등 상대
+    지표가 전체 지형 기준을 유지하도록), 순위·Sankey 는 그 출원인의 특허
+    (공동출원 포함)만 표시한다.
+    """
     if "cites_forward" not in df.columns:
         return disabled_result(
             ["피인용 수"],
@@ -8015,7 +8055,13 @@ def compute_citation_influence(df, settings, top_n=None):
     work["_influence_parts"] = [
         {k: round(float(parts[k][i]), 3) for k in parts} for i in range(len(work))]
 
-    top = work.nlargest(top_n, "_influence")
+    pool = work
+    if company:
+        pool = work[applicant_mask(work, company, scope="any")]
+        if not len(pool):
+            return empty_result("출원인 '%s'의 피인용 수 보유 문헌이 없습니다 "
+                                "(공동출원 포함 검색)." % company)
+    top = pool.nlargest(top_n, "_influence")
     id_col = "pub_number" if "pub_number" in work.columns else \
         ("app_number" if "app_number" in work.columns else None)
 
@@ -8042,7 +8088,9 @@ def compute_citation_influence(df, settings, top_n=None):
                             "expiry": str(row["expiry_date"].date())
                             if "expiry_date" in work.columns and pd.notna(row.get("expiry_date")) else None,
                             "drill": {"type": "ids", "ids": [pid]}})
-    fig_bar = bar_chart(bars_labels[::-1], bars_vals[::-1], title="핵심특허 Influence Top %d" % top_n,
+    bar_title = ("핵심특허 Influence Top %d — %s (점수는 전체 데이터 기준)"
+                 % (top_n, company)) if company else "핵심특허 Influence Top %d" % top_n
+    fig_bar = bar_chart(bars_labels[::-1], bars_vals[::-1], title=bar_title,
                         orientation="h", hovertext=hover[::-1], customdata=custom[::-1],
                         x_title="Influence Score")
 
@@ -8092,6 +8140,10 @@ def compute_citation_influence(df, settings, top_n=None):
             sentences.append("핵심특허 중 %s건이 3년 내 만료 예정으로, 만료 후 해당 영역의 "
                              "설계 자유도가 확대될 수 있습니다 (탐색적 신호)."
                              % fmt_num(len(expiring)))
+    if company:
+        sentences.append("표시 범위: 출원인 '%s'의 특허(공동출원 포함)만 순위에 "
+                         "표시되며, Influence 점수 자체는 전체 데이터 기준으로 "
+                         "계산되어 다른 회사와 비교 가능합니다." % company)
     insight = build_insight(sentences, {"weights": weights},
                             small_sample=check_small_sample(len(work), settings))
     return ok_result({"figure": fig_bar, "sankey": fig_sankey, "top_patents": top_records},
@@ -11344,23 +11396,24 @@ def _survival_section(df, settings):
             ["Lapsed", "Abandoned", "Granted-Expired"])
         past = sub["expiry_date"].notna() & (sub["expiry_date"] <= now)
         lapse = sub["expiry_date"].where(dead & past)
-        if lapse.notna().sum() < 5:
-            return None, ("소멸일 컬럼 필요 — 법적상태·만료일 기반 근사도 표본 부족 "
-                          "(권리 종료 특허 5건 미만)")
         lapse_basis = ("법적상태(소멸·포기·만료) × 존속기간(예상)만료일 근사 — "
                        "소멸일 컬럼이 없어 권리 종료 특허의 (예상)만료일(과거)을 "
                        "종료 시점으로 사용")
     else:
-        return None, ("소멸일 컬럼 필요 (또는 법적상태 + 존속기간(예상)만료일 매핑 시 "
-                      "자동 근사 계산)")
+        # 소멸일도 만료일 근사도 불가: 전건을 관측 중단(censored)으로 두고
+        # 생존곡선을 그린다 — 소멸 이벤트가 없으므로 100% 평행선으로 표시되며,
+        # 그 사실을 노트로 명시한다 (값을 지어내지 않음).
+        lapse = pd.Series(pd.NaT, index=sub.index)
+        lapse_basis = ("소멸일·존속기간(예상)만료일 미매핑 — 권리 종료 시점을 알 수 "
+                       "없어 전건을 관측 지속으로 처리")
     dur = np.where(lapse.notna(),
                    (lapse - sub["reg_date"]).dt.days / 365.25,
                    (now - sub["reg_date"]).dt.days / 365.25)
     event = np.where(lapse.notna(), 1, 0)
     ok_mask = (dur > 0) & (dur <= 25)
     sub, dur, event = sub[ok_mask], dur[ok_mask], event[ok_mask]
-    if int(event.sum()) < 5:
-        return None, "소멸(포기) 이벤트 표본 부족 (5건 미만)"
+    if not len(sub):
+        return None, "등록일 기준 관측 기간을 계산할 수 있는 특허 없음"
     sub = sub.reset_index(drop=True)
     sub["_dur"], sub["_event"] = dur, event
     sub["_ptech"] = _primary_tech(sub)
@@ -11437,9 +11490,18 @@ def _survival_section(df, settings):
             customdata=[{"drill": {"type": "applicant", "applicant": c}}
                         for c, _m, _nr, _n in plot_rows])
     n_events = int(sub["_event"].sum())
+    note = "권리 종료 시점 기준: %s." % lapse_basis
+    if n_events == 0:
+        note += (" 소멸(포기) 이벤트가 0건이라 곡선이 100%% 평행선으로 표시됩니다 — "
+                 "포트폴리오가 아직 젊거나 소멸 정보가 데이터에 없는 경우입니다. "
+                 "소멸일 또는 법적상태+존속기간(예상)만료일을 매핑하면 실제 소멸 "
+                 "시점이 반영됩니다.")
+    elif n_events < 5:
+        note += (" 소멸(포기) 이벤트가 %d건뿐이라 곡선 해석에 주의가 필요합니다 "
+                 "(표본이 늘면 안정됩니다)." % n_events)
     return {"fig": fig, "fig_company": fig_comp, "techs": tech_rows,
             "n": int(len(sub)), "n_events": n_events,
-            "note": "권리 종료 시점 기준: %s." % lapse_basis}, None
+            "note": note}, None
 
 
 # ---------------------------------------------------------------------------
@@ -12150,12 +12212,18 @@ _SECTIONS = (("survival", _survival_section), ("market_entry", _market_entry_sec
              ("trial", _trial_section), ("gov_program", _gov_program_section))
 
 
-def compute_wips_deep(df, settings, only_sections=None):
+def compute_wips_deep(df, settings, only_sections=None, company=None):
     """심층 시그널 계산 (섹션별 graceful degradation).
 
     only_sections: 계산할 섹션 키 목록 — 지정 시 해당 섹션만 계산하고
     인사이트 문장도 그 범위로 한정된다 (탭 분할 렌더링용). None=전체.
+    company: 지정 시 해당 출원인 문헌(공동출원 포함)만으로 전 섹션을 계산한다.
     """
+    if company:
+        df = df[applicant_mask(df, company, scope="any")]
+        if not len(df):
+            return empty_result("출원인 '%s'의 문헌이 없습니다 (공동출원 포함 검색)."
+                                % company)
     if not len(df):
         return empty_result()
     wanted = set(only_sections) if only_sections else None
@@ -13303,8 +13371,16 @@ _DP_LABELS = {"license": "실시권(라이선스)", "sep": "표준특허",
               "assignment": "권리변동", "examiner": "심사관"}
 
 
-def compute_deep_plus(df, settings, only_sections=None):
-    """특수 필드 신호 6종 계산 (섹션별 graceful degradation)."""
+def compute_deep_plus(df, settings, only_sections=None, company=None):
+    """특수 필드 신호 6종 계산 (섹션별 graceful degradation).
+
+    company 지정 시 해당 출원인 문헌(공동출원 포함)만으로 계산한다.
+    """
+    if company:
+        df = df[applicant_mask(df, company, scope="any")]
+        if not len(df):
+            return empty_result("출원인 '%s'의 문헌이 없습니다 (공동출원 포함 검색)."
+                                % company)
     if not len(df):
         return empty_result()
     wanted = set(only_sections) if only_sections else None
@@ -14578,7 +14654,9 @@ def register_routes(app):
         "lifecycle": _analysis_route(
             "lifecycle", lambda df, s, b: compute_lifecycle(df, s)),
         "opportunity": _analysis_route(
-            "opportunity", lambda df, s, b: compute_opportunity(df, s)),
+            "opportunity",
+            lambda df, s, b: compute_opportunity(df, s, company=b.get("company")),
+            extra_key_fields=("company",)),
         "problem-solution": _analysis_route(
             "problem-solution",
             lambda df, s, b: (cell_detail(df, s, b.get("problem"), b.get("solution"))
@@ -14612,8 +14690,9 @@ def register_routes(app):
             extra_key_fields=("tech",)),
         "citation-diffusion": _analysis_route(
             "citation-diffusion",
-            lambda df, s, b: compute_citation_influence(df, s, top_n=b.get("top_n")),
-            extra_key_fields=("top_n",)),
+            lambda df, s, b: compute_citation_influence(df, s, top_n=b.get("top_n"),
+                                                        company=b.get("company")),
+            extra_key_fields=("top_n", "company")),
         "inventor-mobility": _analysis_route(
             "inventor-mobility",
             lambda df, s, b: compute_inventor_mobility(
@@ -14650,8 +14729,9 @@ def register_routes(app):
         "wips-deep": _analysis_route(
             "wips-deep",
             lambda df, s, b: compute_wips_deep(df, s,
-                                               only_sections=b.get("sections")),
-            extra_key_fields=("sections",)),
+                                               only_sections=b.get("sections"),
+                                               company=b.get("company")),
+            extra_key_fields=("sections", "company")),
         "exec-plus": _analysis_route(
             "exec-plus",
             lambda df, s, b: compute_exec_plus(df, s, company=b.get("company"),
@@ -14672,8 +14752,9 @@ def register_routes(app):
         "deep-plus": _analysis_route(
             "deep-plus",
             lambda df, s, b: compute_deep_plus(df, s,
-                                               only_sections=b.get("sections")),
-            extra_key_fields=("sections",)),
+                                               only_sections=b.get("sections"),
+                                               company=b.get("company")),
+            extra_key_fields=("sections", "company")),
         "ownership": _analysis_route(
             "ownership", lambda df, s, b: compute_ownership(df, s)),
     }

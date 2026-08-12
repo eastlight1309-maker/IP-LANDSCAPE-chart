@@ -137,8 +137,8 @@ def test_multiple_chart_images_all_in_pptx(tmp_path, monkeypatch):
     assert get_image(iid, 3) == (None, None)
     slides = _to_slides([it], "보고서")
     with_img = [s for s in slides if s.get("image")]
-    assert len(with_img) == 3  # 첫 슬라이드 1 + 추가 차트 슬라이드 2
-    assert sum(1 for s in slides if s.get("image_full")) == 2
+    assert len(with_img) == 3  # 차트 페이지 3장 (모두 전체 페이지)
+    assert sum(1 for s in slides if s.get("image_full")) == 3
     assert any("차트 2/3" in s["title"] for s in slides)
     data2 = _minimal_pptx(slides)
     with zipfile.ZipFile(io.BytesIO(data2)) as z:
@@ -211,6 +211,21 @@ def test_slides_cover_and_toc():
     slides2 = _to_slides(many, "보고서")
     toc_titles = [s["title"] for s in slides2 if s["title"].startswith("목차")]
     assert toc_titles == ["목차", "목차 (계속)"]
+
+
+def test_chart_page_then_insight_page(tmp_path, monkeypatch):
+    """차트가 있는 인사이트: 한 페이지=차트(전체), 다음 페이지=그 차트의 인사이트."""
+    monkeypatch.setenv("IP_LANDSCAPE_UPLOAD_DIR", str(tmp_path))
+    add_insight("basic-stats", "연도별 출원 동향", _SENTS, chart_image=_DATA_URL)
+    slides = _to_slides(list_insights(), "보고서")
+    # 표지·목차 다음: 차트 전체 페이지 → 인사이트 텍스트 페이지
+    chart_idx = next(i for i, s in enumerate(slides) if s.get("image"))
+    chart = slides[chart_idx]
+    assert chart.get("image_full") and not chart["lines"]  # 차트만 한 페이지
+    nxt = slides[chart_idx + 1]
+    assert nxt["image"] is None and "인사이트" in nxt["title"]
+    assert "패키징" in nxt["title"]  # [슬라이드 제목] 헤드라인 승격 유지
+    assert any("핵심 메시지" in str(l) for l in nxt["lines"])  # 본문이 다음 페이지에
 
 
 def test_insights_endpoints(client, monkeypatch):

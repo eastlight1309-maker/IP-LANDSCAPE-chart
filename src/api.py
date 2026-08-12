@@ -480,7 +480,9 @@ def register_routes(app):
         "lifecycle": _analysis_route(
             "lifecycle", lambda df, s, b: compute_lifecycle(df, s)),
         "opportunity": _analysis_route(
-            "opportunity", lambda df, s, b: compute_opportunity(df, s)),
+            "opportunity",
+            lambda df, s, b: compute_opportunity(df, s, company=b.get("company")),
+            extra_key_fields=("company",)),
         "problem-solution": _analysis_route(
             "problem-solution",
             lambda df, s, b: (cell_detail(df, s, b.get("problem"), b.get("solution"))
@@ -514,8 +516,9 @@ def register_routes(app):
             extra_key_fields=("tech",)),
         "citation-diffusion": _analysis_route(
             "citation-diffusion",
-            lambda df, s, b: compute_citation_influence(df, s, top_n=b.get("top_n")),
-            extra_key_fields=("top_n",)),
+            lambda df, s, b: compute_citation_influence(df, s, top_n=b.get("top_n"),
+                                                        company=b.get("company")),
+            extra_key_fields=("top_n", "company")),
         "inventor-mobility": _analysis_route(
             "inventor-mobility",
             lambda df, s, b: compute_inventor_mobility(
@@ -552,8 +555,9 @@ def register_routes(app):
         "wips-deep": _analysis_route(
             "wips-deep",
             lambda df, s, b: compute_wips_deep(df, s,
-                                               only_sections=b.get("sections")),
-            extra_key_fields=("sections",)),
+                                               only_sections=b.get("sections"),
+                                               company=b.get("company")),
+            extra_key_fields=("sections", "company")),
         "exec-plus": _analysis_route(
             "exec-plus",
             lambda df, s, b: compute_exec_plus(df, s, company=b.get("company"),
@@ -574,8 +578,9 @@ def register_routes(app):
         "deep-plus": _analysis_route(
             "deep-plus",
             lambda df, s, b: compute_deep_plus(df, s,
-                                               only_sections=b.get("sections")),
-            extra_key_fields=("sections",)),
+                                               only_sections=b.get("sections"),
+                                               company=b.get("company")),
+            extra_key_fields=("sections", "company")),
         "ownership": _analysis_route(
             "ownership", lambda df, s, b: compute_ownership(df, s)),
     }
