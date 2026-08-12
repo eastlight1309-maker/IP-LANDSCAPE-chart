@@ -3577,7 +3577,7 @@ def _to_slides(items, report_title):
     카드에 차트가 여러 개인 항목(구버전 카드 단위 캡처)은 나머지 차트도
     "차트 k/n" 전체 페이지로 이어서 들어간다.
     """
-    slides = [{"title": report_title, "image": None, "ext": None,
+    slides = [{"title": report_title, "image": None, "ext": None, "kind": "cover",
                "lines": ["생성일: %s" % time.strftime("%Y-%m-%d"),
                          "포함 인사이트: %d건" % len(items),
                          "", "본 보고서의 지표는 특허 데이터 기반 통계 신호이며 "
@@ -3589,7 +3589,7 @@ def _to_slides(items, report_title):
     for start in range(0, len(toc_lines), _LINES_PER_SLIDE):
         slides.append({"title": "목차" if start == 0 else "목차 (계속)",
                        "lines": toc_lines[start:start + _LINES_PER_SLIDE],
-                       "image": None, "ext": None})
+                       "image": None, "ext": None, "kind": "toc"})
     for it in items:
         title = str(it.get("title") or it.get("analysis") or "인사이트")
         # 첫 줄이 [슬라이드 제목] 헤드라인이면 그 내용을 슬라이드 제목으로 사용
@@ -3614,7 +3614,8 @@ def _to_slides(items, report_title):
         if images:
             img0, ext0 = images[0]
             slides.append({"title": title[:120], "lines": [],
-                           "image": img0, "ext": ext0, "image_full": True})
+                           "image": img0, "ext": ext0, "image_full": True,
+                           "kind": "chart"})
         # ② 다음 페이지: 그 차트의 인사이트 텍스트 (길면 이어짐 분할)
         for start in range(0, len(lines), _LINES_PER_SLIDE):
             chunk = lines[start:start + _LINES_PER_SLIDE]
@@ -3623,60 +3624,197 @@ def _to_slides(items, report_title):
             else:
                 t = title[:60] + (" — 인사이트 (계속)" if images else " (계속)")
             slides.append({"title": t[:120], "lines": chunk,
-                           "image": None, "ext": None})
+                           "image": None, "ext": None, "kind": "insight"})
         # ③ 카드에 차트가 여러 개인 항목: 나머지 차트도 전체 페이지로 포함
         for k, (img, ext) in enumerate(images[1:], start=2):
             slides.append({"title": ("%s — 차트 %d/%d" % (title[:100], k,
                                                         len(images)))[:120],
                            "lines": [], "image": img, "ext": ext,
-                           "image_full": True})
+                           "image_full": True, "kind": "chart"})
     return slides
 
 
 def _pptx_via_library(slides):
+    """python-pptx 기반 임원 보고용 디자인.
+
+    구성 원칙: 표지=네이비 풀배경, 본문=흰 배경 + 상단 타이틀 밴드(악센트 룰),
+    차트 페이지=이미지 비율 유지 중앙 배치, 인사이트 페이지=[섹션] 머리글
+    악센트 컬러 + 불릿 들여쓰기, 전 페이지 하단 푸터(보고서명 · 페이지 번호).
+    """
     from pptx import Presentation  # noqa — 미설치 시 ImportError → 내장 생성기
-    from pptx.util import Inches, Pt
+    from pptx.util import Inches, Pt, Emu
+    from pptx.dml.color import RGBColor
+    from pptx.enum.shapes import MSO_SHAPE
+    from pptx.enum.text import PP_ALIGN
+    from pptx.oxml.ns import qn
+
+    NAVY = RGBColor(0x1F, 0x38, 0x64)     # 표지·제목
+    ACCENT = RGBColor(0x2E, 0x74, 0xB5)   # 악센트(룰·섹션 머리글)
+    TEXT = RGBColor(0x33, 0x3F, 0x4E)     # 본문
+    SOFT = RGBColor(0x8A, 0x99, 0xA8)     # 메타·푸터
+    COVER_SUB = RGBColor(0xC9, 0xD7, 0xEA)
+    PAGE_W, PAGE_H = Inches(13.333), Inches(7.5)
+    KOR_FONT = "맑은 고딕"
+
+    def _font(run, size, bold=False, color=TEXT, name=KOR_FONT):
+        run.font.size = Pt(size)
+        run.font.bold = bold
+        run.font.color.rgb = color
+        run.font.name = name
+        # 한글은 eastAsia typeface 를 별도 지정해야 적용된다
+        rpr = run._r.get_or_add_rPr()
+        ea = rpr.find(qn("a:ea"))
+        if ea is None:
+            ea = rpr.makeelement(qn("a:ea"), {})
+            rpr.append(ea)
+        ea.set("typeface", name)
+
+    def _para(tf, first_used):
+        return tf.paragraphs[0] if not first_used[0] else tf.add_paragraph()
+
+    def _rect(slide, x, y, w, h, color):
+        shp = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, x, y, w, h)
+        shp.fill.solid()
+        shp.fill.fore_color.rgb = color
+        shp.line.fill.background()
+        shp.shadow.inherit = False
+        return shp
+
+    def _footer(slide, report_title, page_no):
+        _rect(slide, Inches(0.55), Inches(7.12), Inches(12.23), Emu(9525), SOFT)
+        fb = slide.shapes.add_textbox(Inches(0.55), Inches(7.14),
+                                      Inches(10.0), Inches(0.32))
+        p = fb.text_frame.paragraphs[0]
+        r = p.add_run()
+        r.text = str(report_title)[:70]
+        _font(r, 9, color=SOFT)
+        nb = slide.shapes.add_textbox(Inches(12.0), Inches(7.14),
+                                      Inches(0.8), Inches(0.32))
+        p2 = nb.text_frame.paragraphs[0]
+        p2.alignment = PP_ALIGN.RIGHT
+        r2 = p2.add_run()
+        r2.text = str(page_no)
+        _font(r2, 9, color=SOFT)
+
+    def _title_band(slide, title):
+        # 좌측 악센트 블록 + 제목 + 하단 얇은 룰
+        _rect(slide, Inches(0.55), Inches(0.42), Inches(0.12), Inches(0.62), ACCENT)
+        tb = slide.shapes.add_textbox(Inches(0.85), Inches(0.32),
+                                      Inches(11.9), Inches(0.95))
+        tf = tb.text_frame
+        tf.word_wrap = True
+        r = tf.paragraphs[0].add_run()
+        r.text = str(title)
+        _font(r, _title_size(title), bold=True, color=NAVY)
+        _rect(slide, Inches(0.55), Inches(1.18), Inches(12.23), Emu(12700), ACCENT)
+
+    def _add_picture_fit(slide, img_bytes, box_x, box_y, box_w, box_h):
+        """이미지를 비율 유지로 상자 안에 최대 크기 배치 (왜곡 방지)."""
+        pic = slide.shapes.add_picture(io.BytesIO(img_bytes), box_x, box_y,
+                                       width=box_w)  # 폭 기준 → 높이 자동
+        if pic.height > box_h:  # 세로가 넘치면 높이 기준으로 재조정
+            ratio = box_h / float(pic.height)
+            pic.width = int(pic.width * ratio)
+            pic.height = int(box_h)
+        pic.left = int(box_x + (box_w - pic.width) / 2)
+        pic.top = int(box_y + (box_h - pic.height) / 2)
+        return pic
+
     prs = Presentation()
-    prs.slide_width = Inches(13.333)
-    prs.slide_height = Inches(7.5)
+    prs.slide_width, prs.slide_height = PAGE_W, PAGE_H
     blank = prs.slide_layouts[6]
-    for sl in slides:
+    report_title = slides[0]["title"] if slides else "IP Landscape 보고서"
+
+    for idx, sl in enumerate(slides):
         slide = prs.slides.add_slide(blank)
-        tbox = slide.shapes.add_textbox(Inches(0.5), Inches(0.3),
-                                        Inches(12.3), Inches(1.1))
-        tbox.text_frame.word_wrap = True
-        p = tbox.text_frame.paragraphs[0]
-        p.text = sl["title"]
-        p.font.size = Pt(_title_size(sl["title"]))
-        p.font.bold = True
-        has_img = bool(sl.get("image"))
-        if has_img and sl.get("image_full"):
-            # 추가 차트 슬라이드: 그림을 크게 중앙 배치 (텍스트 없음)
-            slide.shapes.add_picture(io.BytesIO(sl["image"]),
-                                     Inches(1.82), Inches(1.5),
-                                     width=Inches(9.7), height=Inches(5.66))
+        kind = sl.get("kind") or ("cover" if idx == 0 else "insight")
+
+        if kind == "cover":
+            _rect(slide, 0, 0, PAGE_W, PAGE_H, NAVY)
+            _rect(slide, Inches(0.9), Inches(2.55), Inches(1.6), Emu(38100), ACCENT)
+            tb = slide.shapes.add_textbox(Inches(0.9), Inches(2.75),
+                                          Inches(11.5), Inches(1.8))
+            tb.text_frame.word_wrap = True
+            r = tb.text_frame.paragraphs[0].add_run()
+            r.text = str(sl["title"])
+            _font(r, 36, bold=True, color=RGBColor(0xFF, 0xFF, 0xFF))
+            sb = slide.shapes.add_textbox(Inches(0.92), Inches(4.6),
+                                          Inches(11.5), Inches(2.2))
+            stf = sb.text_frame
+            stf.word_wrap = True
+            used = [False]
+            for line in sl["lines"]:
+                s = str(line)
+                if not s:
+                    continue
+                p = _para(stf, used)
+                used[0] = True
+                r = p.add_run()
+                r.text = s
+                small = s.startswith("본 보고서")
+                _font(r, 11 if small else 15,
+                      color=SOFT if small else COVER_SUB)
+                p.space_after = Pt(6)
             continue
-        if has_img:
-            slide.shapes.add_picture(io.BytesIO(sl["image"]),
-                                     Inches(0.4), Inches(1.55),
-                                     width=Inches(6.9), height=Inches(4.03))
-            body_x, body_w, fsize = Inches(7.5), Inches(5.5), 12
+
+        _title_band(slide, sl["title"])
+        has_img = bool(sl.get("image"))
+
+        if has_img and sl.get("image_full"):
+            # 차트 페이지: 비율 유지 최대 배치
+            _add_picture_fit(slide, sl["image"], Inches(0.7), Inches(1.4),
+                             Inches(11.93), Inches(5.55))
+            _footer(slide, report_title, idx + 1)
+            continue
+        if has_img:  # (구버전 좌图우문 레이아웃 항목 호환)
+            _add_picture_fit(slide, sl["image"], Inches(0.55), Inches(1.5),
+                             Inches(6.9), Inches(5.3))
+            body_x, body_w, fsize = Inches(7.7), Inches(5.1), 12
         else:
-            body_x, body_w, fsize = Inches(0.6), Inches(12.1), 13
-        body = slide.shapes.add_textbox(body_x, Inches(1.55), body_w, Inches(5.5))
+            body_x, body_w, fsize = Inches(0.85), Inches(11.9), 13
+
+        body = slide.shapes.add_textbox(body_x, Inches(1.5), body_w, Inches(5.45))
         tf = body.text_frame
         tf.word_wrap = True
+        used = [False]
         for i, line in enumerate(sl["lines"]):
             s = str(line)
-            para = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
-            para.text = s
+            p = _para(tf, used)
+            used[0] = True
+            r = p.add_run()
+            if kind == "toc":
+                num, _, rest = s.partition(". ")
+                if rest:
+                    r.text = num + "."
+                    _font(r, 14, bold=True, color=ACCENT)
+                    r2 = p.add_run()
+                    r2.text = "  " + rest
+                    _font(r2, 14, color=TEXT)
+                else:
+                    r.text = s
+                    _font(r, 14, color=TEXT)
+                p.space_after = Pt(9)
+                continue
             if i == 0 and s.startswith("·"):
-                para.font.size = Pt(9)
+                r.text = s  # 메타 줄 (분석명·생성일)
+                _font(r, 9, color=SOFT)
+                p.space_after = Pt(6)
+            elif s.startswith("["):
+                r.text = s.strip("[]").strip() if s.endswith("]") else s
+                _font(r, fsize + 2, bold=True, color=ACCENT)
+                p.space_before = Pt(12)
+                p.space_after = Pt(3)
+            elif s.startswith(("-", "·", "•")):
+                r.text = "•  " + s.lstrip("-·• ").strip()
+                _font(r, fsize, color=TEXT)
+                p.level = 1
+                p.space_after = Pt(4)
             else:
-                para.font.size = Pt((fsize + 2) if s.startswith("[") else fsize)
-                para.font.bold = s.startswith("[")
-                if s.startswith("["):
-                    para.space_before = Pt(8)
+                r.text = s
+                _font(r, fsize, color=TEXT)
+                p.space_after = Pt(4)
+        _footer(slide, report_title, idx + 1)
+
     buf = io.BytesIO()
     prs.save(buf)
     return buf.getvalue()

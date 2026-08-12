@@ -228,6 +228,42 @@ def test_chart_page_then_insight_page(tmp_path, monkeypatch):
     assert any("핵심 메시지" in str(l) for l in nxt["lines"])  # 본문이 다음 페이지에
 
 
+def test_pptx_executive_styling(tmp_path, monkeypatch):
+    """임원 보고용 디자인: 표지 네이비, 섹션 머리글 악센트, 푸터 페이지 번호."""
+    pptx = pytest.importorskip("pptx")
+    from pptx.dml.color import RGBColor
+    monkeypatch.setenv("IP_LANDSCAPE_UPLOAD_DIR", str(tmp_path))
+    add_insight("basic-stats", "연도별 출원 동향", _SENTS, chart_image=_DATA_URL)
+    data = build_pptx(list_insights(), "IP 보고서")
+    prs = pptx.Presentation(io.BytesIO(data))
+    assert len(prs.slides) >= 4  # 표지+목차+차트+인사이트
+    # 표지: 네이비 풀배경 사각형 + 흰색 제목
+    cover = prs.slides[0]
+    fills = [sh.fill.fore_color.rgb for sh in cover.shapes
+             if sh.shape_type == 1 and sh.fill.type == 1]  # AUTO_SHAPE & solid
+    assert RGBColor(0x1F, 0x38, 0x64) in fills
+    title_runs = [r for sh in cover.shapes if sh.has_text_frame
+                  for p in sh.text_frame.paragraphs for r in p.runs
+                  if "IP 보고서" in r.text]
+    assert title_runs and title_runs[0].font.color.rgb == RGBColor(0xFF, 0xFF, 0xFF)
+    assert title_runs[0].font.name == "맑은 고딕"
+    # 인사이트 페이지: [섹션] 머리글이 악센트 컬러 볼드, 불릿 변환
+    ins = prs.slides[3]
+    heads = [r for sh in ins.shapes if sh.has_text_frame
+             for p in sh.text_frame.paragraphs for r in p.runs
+             if r.text == "핵심 메시지"]
+    assert heads and heads[0].font.bold \
+        and heads[0].font.color.rgb == RGBColor(0x2E, 0x74, 0xB5)
+    bullets = [r.text for sh in ins.shapes if sh.has_text_frame
+               for p in sh.text_frame.paragraphs for r in p.runs
+               if r.text.startswith("•")]
+    assert bullets
+    # 푸터: 페이지 번호 텍스트 존재 (표지 제외)
+    nums = [r.text for sh in prs.slides[2].shapes if sh.has_text_frame
+            for p in sh.text_frame.paragraphs for r in p.runs]
+    assert "3" in nums
+
+
 def test_insights_endpoints(client, monkeypatch):
     # LLM 생성 시 자동 저장 (버튼 경로)
     from src import insights as ins_mod
