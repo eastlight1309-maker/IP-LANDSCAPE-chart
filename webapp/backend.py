@@ -1107,6 +1107,7 @@ ANALYSIS_REQUIREMENTS = {
     "axis-cross":            {"required": [{"any": ANY_TECH}], "optional": ["tech_b_l1", "tech_b_l2", "tech_b_l3", "tech_c_l1", "tech_c_l2", "tech_c_l3", {"any": ANY_DATE}] + ANY_APPLICANT},
     "tech-year-bubble":      {"required": [{"any": ANY_TECH}, {"any": ANY_DATE}], "optional": ANY_APPLICANT},
     "company-focus":         {"required": [{"any": ANY_TECH}, {"any": ANY_DATE}, {"any": ANY_APPLICANT}], "optional": []},
+    "tech-tree":             {"required": [{"any": ANY_TECH}], "optional": ANY_APPLICANT},
     "deep-plus":             {"required": [{"any": ANY_APPLICANT + ["pub_number", "app_number"]}], "optional": ["license_flag", "licensee_count", "sep_org", "sep_number", "sep_date", "rejection_reason", "rejection_flag", "reexam_flag", "npl_count", "recent_assignee", "recent_assignor", "assign_date", "assign_type", "examiner", "oa_count", "cites_forward", "is_granted", "legal_status", {"any": ANY_TECH}, {"any": ANY_DATE}]},
     "ownership":             {"required": [{"any": ANY_APPLICANT}, "assignee"], "optional": [{"any": ANY_TECH}, {"any": ANY_DATE}, "cites_forward", "is_active", "legal_status", "reg_date"]},
 }
@@ -5403,6 +5404,11 @@ def select_patents(df, drill):
         if drill.get("solutions") and "solution" in df.columns:
             wanted_s = set(map(str, drill["solutions"]))
             mask &= df["solution"].astype(str).str.strip().isin(wanted_s)
+    for _lk, _lc in (("tech_l1", "_tech_l1_list"), ("tech_l2", "_tech_l2_list"),
+                     ("tech_l3", "_tech_l3_list")):
+        if drill.get(_lk) and _lc in df.columns:
+            _lv = str(drill[_lk])
+            mask &= df[_lc].map(lambda lst, v=_lv: v in (lst or []))
     if drill.get("npl_cited") is not None and "npl_count" in df.columns:
         _pnum = parse_numeric  # [merged import alias]
         npl = _pnum(df["npl_count"]).fillna(0)
@@ -9118,6 +9124,141 @@ def compute_basic_stats(df, settings, company=None):
         "tech": fig_tech, "tech_year": fig_tech_year,
         "chart_insights": chart_insights,
     }, insight=insight)
+
+
+# ---------------------------------------------------------------------------
+# 기술분류 트리맵 (대·중·소)
+# ---------------------------------------------------------------------------
+def _lighten(hex_color, factor):
+    """#RRGGBB 를 흰색 쪽으로 factor(0~1)만큼 밝게."""
+    h = hex_color.lstrip("#")
+    r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+    r = int(r + (255 - r) * factor)
+    g = int(g + (255 - g) * factor)
+    b = int(b + (255 - b) * factor)
+    return "#%02x%02x%02x" % (r, g, b)
+
+
+def compute_tech_tree(df, settings, company=None):
+    """대·중·소 기술분류 트리맵.
+
+    각 문헌의 레벨별 대표(첫) 분류로 경로(대>중>소)를 만들어 문헌 수를
+    집계한다. 하위 레벨이 없는 문헌은 있는 레벨까지만 집계되므로 부모
+    면적이 자식 합보다 클 수 있다 (남는 면적 = 하위 분류 미기재 문헌).
+    company 지정 시 그 출원인(공동출원 포함) 문헌만 집계.
+    """
+    if company:
+        df = df[applicant_mask(df, company, scope="any")]
+        if not len(df):
+            return empty_result("출원인 '%s'의 문헌이 없습니다 (공동출원 포함 검색)."
+                                % company)
+    if not len(df):
+        return empty_result()
+    level_cols = [c for c in ("_tech_l1_list", "_tech_l2_list", "_tech_l3_list")
+                  if c in df.columns and df[c].map(lambda v: bool(v)).any()]
+    drill_keys = {"_tech_l1_list": "tech_l1", "_tech_l2_list": "tech_l2",
+                  "_tech_l3_list": "tech_l3"}
+    single = False
+    if not level_cols:
+        if df["_tech_list"].map(lambda v: bool(v)).any():
+            level_cols, single = ["_tech_list"], True
+        else:
+            return empty_result("기술분류(대/중/소 또는 통합) 값이 없습니다 — "
+                                "Settings → 컬럼 매핑에서 기술분류를 매핑하세요.")
+
+    # 문헌별 경로 (레벨별 첫 분류, 값이 끊기면 거기까지)
+    node_vals = {}
+    total_docs = 0
+    for vals in zip(*[df[c] for c in level_cols]):
+        path = []
+        for lst in vals:
+            v = (lst or [None])[0]
+            s = "" if v is None else str(v).strip()
+            if not s or s.lower() in ("nan", "none", "-"):
+                break
+            path.append(s)
+        if not path:
+            continue
+        total_docs += 1
+        for i in range(1, len(path) + 1):
+            node_vals[tuple(path[:i])] = node_vals.get(tuple(path[:i]), 0) + 1
+    if not node_vals:
+        return empty_result("기술분류 경로를 구성할 수 있는 문헌이 없습니다.")
+
+    # 너무 작은 잎 노드는 표시에서 제외 (부모의 무라벨 여백으로 남음 — 값 왜곡 없음)
+    min_leaf = max(1, int(total_docs * 0.002))
+    keep = {p for p, v in node_vals.items()
+            if len(p) == 1 or v >= min_leaf}
+    keep |= {p[:i] for p in keep for i in range(1, len(p))}  # 조상 보존
+    nodes = sorted(keep, key=lambda p: (len(p), -node_vals[p]))
+    if len(nodes) > 400:
+        leaves = sorted((p for p in nodes if len(p) > 1),
+                        key=lambda p: -node_vals[p])[:400 - sum(1 for p in nodes
+                                                                if len(p) == 1)]
+        keep = set(leaves) | {p for p in nodes if len(p) == 1}
+        keep |= {p[:i] for p in keep for i in range(1, len(p))}
+        nodes = sorted(keep, key=lambda p: (len(p), -node_vals[p]))
+
+    l1_order = [p[0] for p in nodes if len(p) == 1]
+    l1_color = {name: PALETTE[i % len(PALETTE)] for i, name in enumerate(l1_order)}
+    parent_set = {p[:-1] for p in nodes if len(p) > 1}
+    ids, labels, parents, values, colors, customs = [], [], [], [], [], []
+    for p in nodes:
+        ids.append(" > ".join(p))
+        labels.append(p[-1])
+        parents.append(" > ".join(p[:-1]) if len(p) > 1 else "")
+        values.append(int(node_vals[p]))
+        colors.append(_lighten(l1_color.get(p[0], "#8aa0b2"),
+                               (len(p) - 1) * 0.28))
+        if single:
+            drill = {"type": "tech", "tech": p[0]}
+        else:
+            drill = {drill_keys[level_cols[i]]: seg for i, seg in enumerate(p)}
+        # leaf=하위 칸 없음 → 클릭 시 근거 특허 (하위가 있으면 클릭=확대만)
+        customs.append({"drill": drill, "leaf": p not in parent_set,
+                        "m": {"경로": " > ".join(p), "문헌 수": int(node_vals[p]),
+                              "전체 대비": round(node_vals[p] / float(total_docs), 4)}})
+
+    level_names = {"_tech_l1_list": "대", "_tech_l2_list": "중",
+                   "_tech_l3_list": "소", "_tech_list": "기술분류"}
+    depth_label = "·".join(level_names[c] for c in level_cols)
+    title = "기술분류 트리맵 (%s)%s" % (depth_label,
+                                    (" — %s" % company) if company else "")
+    fig = {"data": [{
+        "type": "treemap", "ids": ids, "labels": labels, "parents": parents,
+        "values": values, "branchvalues": "total", "customdata": customs,
+        "hovertemplate": "<b>%{id}</b><br>%{value}건 · 전체의 %{percentRoot:.1%}"
+                         "<extra></extra>",
+        "texttemplate": "%{label}<br>%{value}건", "textfont": {"size": 12},
+        "marker": {"colors": colors, "line": {"width": 1.5, "color": "#ffffff"}},
+        "pathbar": {"visible": True, "thickness": 24},
+        "tiling": {"pad": 2}}],
+        "layout": base_layout(title, height=640,
+                              margin={"t": 70, "l": 8, "r": 8, "b": 8})}
+
+    l1_counts = sorted(((p[0], node_vals[p]) for p in nodes if len(p) == 1),
+                       key=lambda kv: -kv[1])
+    sentences = []
+    if l1_counts:
+        top1 = l1_counts[0]
+        sentences.append("%s 최대 분류는 '%s'(%s건, 전체의 %s)입니다."
+                         % (("'%s' 기준" % company) if company else period_label(df),
+                            top1[0], fmt_num(top1[1]),
+                            fmt_pct(top1[1] / float(total_docs))))
+    deep = [p for p in nodes if len(p) == len(level_cols) and len(p) > 1]
+    if deep:
+        best = max(deep, key=lambda p: node_vals[p])
+        sentences.append("최하위 레벨에서 가장 큰 영역은 '%s'(%s건)입니다 — 하위가 "
+                         "있는 칸은 클릭하면 확대되고, 최하위 칸을 클릭하면 근거 "
+                         "특허가 열립니다." % (" > ".join(best), fmt_num(node_vals[best])))
+    sentences.append("면적=문헌 수(각 문헌의 레벨별 대표 분류 기준). 부모 칸의 남는 "
+                     "여백은 하위 분류가 기재되지 않은 문헌입니다.")
+    insight = build_insight(
+        sentences, {"levels": depth_label, "n_docs": total_docs,
+                    "n_nodes": len(nodes)},
+        small_sample=check_small_sample(total_docs, settings))
+    return ok_result({"figure": fig, "levels": depth_label,
+                      "n_docs": int(total_docs)}, insight=insight)
 
 
 # ---------------------------------------------------------------------------
@@ -15069,6 +15210,10 @@ def register_routes(app):
         "company-focus": _analysis_route(
             "company-focus",
             lambda df, s, b: compute_company_focus(df, s, company=b.get("company")),
+            extra_key_fields=("company",)),
+        "tech-tree": _analysis_route(
+            "tech-tree",
+            lambda df, s, b: compute_tech_tree(df, s, company=b.get("company")),
             extra_key_fields=("company",)),
         "deep-plus": _analysis_route(
             "deep-plus",

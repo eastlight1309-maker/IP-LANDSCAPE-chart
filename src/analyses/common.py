@@ -241,6 +241,11 @@ def select_patents(df, drill):
         if drill.get("solutions") and "solution" in df.columns:
             wanted_s = set(map(str, drill["solutions"]))
             mask &= df["solution"].astype(str).str.strip().isin(wanted_s)
+    for _lk, _lc in (("tech_l1", "_tech_l1_list"), ("tech_l2", "_tech_l2_list"),
+                     ("tech_l3", "_tech_l3_list")):
+        if drill.get(_lk) and _lc in df.columns:
+            _lv = str(drill[_lk])
+            mask &= df[_lc].map(lambda lst, v=_lv: v in (lst or []))
     if drill.get("npl_cited") is not None and "npl_count" in df.columns:
         from src.preprocessing import parse_numeric as _pnum
         npl = _pnum(df["npl_count"]).fillna(0)

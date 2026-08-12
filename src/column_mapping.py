@@ -524,6 +524,7 @@ ANALYSIS_REQUIREMENTS = {
     "axis-cross":            {"required": [{"any": ANY_TECH}], "optional": ["tech_b_l1", "tech_b_l2", "tech_b_l3", "tech_c_l1", "tech_c_l2", "tech_c_l3", {"any": ANY_DATE}] + ANY_APPLICANT},
     "tech-year-bubble":      {"required": [{"any": ANY_TECH}, {"any": ANY_DATE}], "optional": ANY_APPLICANT},
     "company-focus":         {"required": [{"any": ANY_TECH}, {"any": ANY_DATE}, {"any": ANY_APPLICANT}], "optional": []},
+    "tech-tree":             {"required": [{"any": ANY_TECH}], "optional": ANY_APPLICANT},
     "deep-plus":             {"required": [{"any": ANY_APPLICANT + ["pub_number", "app_number"]}], "optional": ["license_flag", "licensee_count", "sep_org", "sep_number", "sep_date", "rejection_reason", "rejection_flag", "reexam_flag", "npl_count", "recent_assignee", "recent_assignor", "assign_date", "assign_type", "examiner", "oa_count", "cites_forward", "is_granted", "legal_status", {"any": ANY_TECH}, {"any": ANY_DATE}]},
     "ownership":             {"required": [{"any": ANY_APPLICANT}, "assignee"], "optional": [{"any": ANY_TECH}, {"any": ANY_DATE}, "cites_forward", "is_active", "legal_status", "reg_date"]},
 }

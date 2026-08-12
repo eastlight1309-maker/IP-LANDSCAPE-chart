@@ -743,6 +743,50 @@ def test_company_focus(settings):
     assert compute_company_focus(df, settings, company="없는회사X")["status"] == "empty"
 
 
+def test_tech_tree(settings):
+    """대·중·소 기술분류 트리맵: 계층 구조·값 정합·drill·회사 필터."""
+    from src.analyses.basic_stats import compute_tech_tree
+    from src.analyses.common import select_patents, applicant_mask
+    df = make_prepared(generate_sample(n=400, seed=21))
+    r = compute_tech_tree(df, settings)
+    assert r["status"] == "ok"
+    tr = r["figure"]["data"][0]
+    assert tr["type"] == "treemap" and tr["branchvalues"] == "total"
+    ids, parents, values = tr["ids"], tr["parents"], tr["values"]
+    assert len(ids) == len(set(ids))          # id 유일
+    idset = set(ids)
+    by_id = dict(zip(ids, values))
+    child_sum = {}
+    for i, p in enumerate(parents):
+        assert p == "" or p in idset          # 부모 존재
+        if p:
+            child_sum[p] = child_sum.get(p, 0) + values[i]
+    for p, s in child_sum.items():
+        assert by_id[p] >= s                  # 부모 ≥ 자식 합 (미기재 여백 허용)
+    # 최하위 칸 drill: 대·중·소 조건이 모두 걸린 특허만
+    leaf_i = next(i for i, cd in enumerate(tr["customdata"]) if cd["leaf"])
+    drill = tr["customdata"][leaf_i]["drill"]
+    picked = select_patents(df, drill)
+    assert len(picked) > 0
+    for key, col in (("tech_l1", "_tech_l1_list"), ("tech_l2", "_tech_l2_list"),
+                     ("tech_l3", "_tech_l3_list")):
+        if drill.get(key):
+            assert picked[col].map(lambda lst, v=drill[key]: v in (lst or [])).all()
+    # 회사 선택: 노드 값이 그 회사 문헌 수 이하
+    comp = df["applicant_display"].value_counts().index[0]
+    rc = compute_tech_tree(df, settings, company=comp)
+    assert rc["status"] == "ok"
+    n_comp = int(applicant_mask(df, comp, scope="any").sum())
+    assert max(rc["figure"]["data"][0]["values"]) <= n_comp
+    assert comp in rc["figure"]["layout"]["title"]["text"]
+    # 레벨 컬럼이 없으면 통합 기술분류 단일 레벨로 폴백
+    df2 = df.drop(columns=[c for c in ("_tech_l1_list", "_tech_l2_list",
+                                       "_tech_l3_list") if c in df.columns])
+    r2 = compute_tech_tree(df2, settings)
+    assert r2["status"] == "ok"
+    assert all(p == "" for p in r2["figure"]["data"][0]["parents"])
+
+
 def test_basic_stats_chart_insights(prepared, settings):
     """차트별 인사이트가 각 차트 키로 분리 제공된다."""
     from src.analyses.basic_stats import compute_basic_stats

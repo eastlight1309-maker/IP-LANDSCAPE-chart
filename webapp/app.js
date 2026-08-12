@@ -309,6 +309,7 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
       addValueLabels(fig);
       Plotly.newPlot(holder, fig.data, fig.layout, {
         responsive: true, displaylogo: false,
+        scrollZoom: false,  // 마우스 휠 스크롤이 차트 확대/축소로 먹히지 않도록
         modeBarButtonsToRemove: ['lasso2d', 'select2d']
       });
       if (onDrill) {
@@ -330,6 +331,9 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
       var cy = holder.__iplsCy = cytoscape({
         container: holder,
         elements: network,
+        // 페이지 스크롤 중 휠이 네트워크 확대/축소로 먹히는 사고 방지 —
+        // 확대는 우상단 PNG 저장 전 브라우저 확대나 드래그 패닝으로 대체
+        userZoomingEnabled: false,
         layout: { name: 'cose', animate: false, nodeRepulsion: 9000, idealEdgeLength: 90 },
         style: [
           { selector: 'node', style: {
@@ -451,6 +455,13 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
             var labels = (tr.node && tr.node.label) || [];
             ((tr.link && tr.link.source) || []).forEach(function (s, i) {
               rows.push([labels[s], labels[tr.link.target[i]], tr.link.value[i]]);
+            });
+          } else if (tr.type === 'treemap') {
+            columns = ['분류 경로 (대 > 중 > 소)', '문헌 수', '전체 대비 비율'];
+            (tr.ids || []).forEach(function (id, i) {
+              var m = tr.customdata && tr.customdata[i] && tr.customdata[i].m;
+              rows.push([id, (tr.values || [])[i],
+                         m ? m['전체 대비'] : null]);
             });
           } else if (tr.type === 'scatterpolar') {
             if (!columns) columns = ['시리즈'].concat((tr.theta || []).map(String));
@@ -2118,6 +2129,30 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
           '기술분류별 누적 건수 순위와 분류×연도 동향 매트릭스입니다. 상단에서 출원인을 선택하면 그 회사의 기술 포트폴리오만 표시됩니다. 다중분류는 Settings 의 처리방식을 따르지 않고 각 분류에 1건씩 계산합니다.',
           ['tech', 'tech_year'],
           '순위: X축=건수, Y축=기술분류 — 포트폴리오가 집중된 기술. 동향 매트릭스: X축=연도, Y축=기술분류, 색=그 해 건수. 읽는 법: 오른쪽(최근)으로 갈수록 진해지는 분류=성장 기술, 왼쪽만 진하고 최근이 옅은 분류=쇠퇴 기술입니다. 출원인을 선택하면 그 회사 기준으로 같은 해석을 적용하세요.', true) },
+      { label: '기술분류 트리', render: function (h) {
+        analysisCard({
+          analysis: 'tech-tree', holder: h,
+          title: '기술분류 트리맵 — 대·중·소 계층 (출원인 선택 가능)',
+          controls: companySelectControls('출원인 선택'),
+          help: '대분류>중분류>소분류 계층을 면적=문헌 수인 트리맵으로 봅니다. ' +
+            '각 문헌의 레벨별 대표(첫) 분류로 경로를 만들며, 하위 분류가 없는 문헌은 ' +
+            '있는 레벨까지만 집계됩니다. 상단에서 출원인을 선택하면 그 회사(공동출원 ' +
+            '포함) 포트폴리오의 트리가 됩니다.',
+          guide: '색=대분류(하위로 갈수록 연해짐), 면적=문헌 수. 읽는 법: 큰 칸=포트폴리오가 ' +
+            '집중된 기술, 부모 칸의 남는 여백=하위 분류 미기재 문헌입니다. 하위가 있는 칸을 ' +
+            '클릭하면 그 분류로 확대되고(상단 경로 바로 복귀), 최하위 칸을 클릭하면 근거 특허 ' +
+            '목록이 열립니다. 대/중/소 컬럼이 일부만 매핑된 경우 있는 레벨까지만 그려집니다.',
+          renderOk: function (r, c, setTarget) {
+            var holder = Ui.el('<div class="chart-holder tall"></div>');
+            c.body.appendChild(holder);
+            Render.plotly(holder, r.figure, function (drill, cd) {
+              if (cd && cd.leaf === false) return; // 상위 칸 클릭=확대만
+              plotlyDrill(drill);
+            });
+            setTarget({ kind: 'plotly', el: holder });
+          }
+        });
+      } },
       { label: '기술×연도 버블', render: function (h) {
         var sel1, sel2, sel3;
         function selectedCompanies() {
@@ -3806,7 +3841,7 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
     section('🗺️ 메뉴 안내',
       '<table class="ipls-table"><thead><tr><th>메뉴</th><th>내용</th></tr></thead><tbody>' +
       '<tr><td>📊 Executive Overview</td><td>경영 요약(KPI·경보·BCG 매트릭스·경쟁 포지션) + 경영 차트 6종: 📅만료 절벽 / 💰R&amp;D 효율 사분면 / 👤키맨 리스크 / ⏱️추격 시계 / 🚨위협 레이더 / ✂️포트폴리오 다이어트 (탭마다 자사 기준 선택 가능)</td></tr>' +
-      '<tr><td>📈 Basic Statistics</td><td>연도/국가/출원인/기술분류 기본 통계(차트별 인사이트 포함), 출원인×연도 버블, 기술×연도 버블(최대 3사 비교), 출원인 포커스(선택한 회사의 집중 기술 + 작지만 최근 급부상하는 아이템 탐지), 심화 분석, 심층 시그널 4개 탭(수명·시장 / 심사 이력 / 출원 행태 / 분쟁·국가과제), 특수 신호 2개 탭(실시권·표준특허·권리변동 / 거절 사유·과학 연계성·심사관), Patent Asset Index(공식 방법론 기반 TR·MC·CI·PAI + 공식 지수와의 차이 명시) — 출원 동향·기술분류 동향·심층 시그널·특수 신호는 출원인 선택 가능</td></tr>' +
+      '<tr><td>📈 Basic Statistics</td><td>연도/국가/출원인/기술분류 기본 통계(차트별 인사이트 포함), 기술분류 트리맵(대·중·소 계층, 면적=문헌 수), 출원인×연도 버블, 기술×연도 버블(최대 3사 비교),출원인 포커스(선택한 회사의 집중 기술 + 작지만 최근 급부상하는 아이템 탐지), 심화 분석, 심층 시그널 4개 탭(수명·시장 / 심사 이력 / 출원 행태 / 분쟁·국가과제), 특수 신호 2개 탭(실시권·표준특허·권리변동 / 거절 사유·과학 연계성·심사관), Patent Asset Index(공식 방법론 기반 TR·MC·CI·PAI + 공식 지수와의 차이 명시) — 출원 동향·기술분류 동향·심층 시그널·특수 신호는 출원인 선택 가능</td></tr>' +
       '<tr><td>🧬 Technology Evolution</td><td>기술 생애주기, 전이 Sankey, Emerging Radar, 조합 네트워크, 분류축 교차(A·B·C), 신흥 기술 탐지(임베딩)</td></tr>' +
       '<tr><td>🏢 Competitor Intelligence</td><td>기업 DNA, 기술 궤적, 선도–추종, 권리범위 엔트로피, 전략 유사도·중첩도</td></tr>' +
       '<tr><td>🎯 White Space &amp; R&amp;D</td><td>Opportunity Matrix(자사=출원인 선택 가능, ◇=자사 역량 보유), 미점유 조합 UpSet, 문제–해결수단 매트릭스(C축=해결과제 × B축=해결수단 분류 기반 — 두 축 매핑 시 활성), 추천 R&amp;D 테마</td></tr>' +
@@ -3824,6 +3859,7 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
       '<li><b>👤 내 작업만 보기</b>: 업로드 작업·분석 스냅샷 목록에서 작업자 드롭다운으로 고르거나 이름/팀명을 직접 입력하면 내 작업만 날짜별로 표시됩니다. 이름은 브라우저에 기억되어 다음 방문 때 자동 적용되고, "전체 보기"로 다른 사람 작업도 볼 수 있습니다 (편의 필터 — 접근 차단은 Dataiku 권한으로 관리).</li>' +
       '<li><b>비차단 로딩</b>: 계산이 오래 걸리는 분석은 우하단 배지로 진행 상태만 표시됩니다 — 기다리는 동안 다른 탭을 자유롭게 볼 수 있고, 돌아오면 캐시에서 바로 열립니다.</li>' +
       '<li><b>📖 차트 해석</b>: 각 차트 아래 회색 박스에 축 의미와 읽는 법이 항상 표시됩니다.</li>' +
+      '<li><b>🖱️ 휠 스크롤 보호</b>: 차트 영역은 흐린 테두리로 구분되어 있고, 차트 위에서 마우스 휠을 굴려도 차트가 확대/축소되지 않습니다 (페이지 스크롤만 동작). 확대가 필요하면 차트 우상단 도구 모음의 줌 버튼을 사용하세요.</li>' +
       '<li><b>🤝 공동출원 처리</b>: 출원인별 차트(순위·매트릭스·버블)는 Settings → 분석 설정의 "공동출원 집계"를 따릅니다 — 기본 "각각 집계"는 공동출원 1건을 각 공동출원인에게 1건씩 세고(합계가 전체 건수를 넘을 수 있음, 차트 아래에 안내 표시), "대표 출원인만"은 첫 출원인에게만 셉니다. 출원 동향·기술분류 동향·신흥 기술 탐지의 <b>출원인 선택</b>과 기업 필터는 어느 모드에서든 공동출원 건을 포함해 그 회사 문헌을 찾습니다. 협력 네트워크·공동출원 비율 등 공동출원 자체 분석은 이 설정과 무관합니다.</li></ul>');
     section('🧠 임베딩·군집·LLM 안내',
       '<ul style="padding-left:18px;line-height:1.9">' +
