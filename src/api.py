@@ -102,7 +102,8 @@ from src.analyses.claim_density import compute_claim_density
 from src.analyses.citation_influence import compute_citation_influence
 from src.analyses.inventor_mobility import compute_inventor_mobility
 from src.analyses.classification_quality import compute_classification_quality
-from src.analyses.basic_stats import compute_basic_stats, compute_tech_year_bubble
+from src.analyses.basic_stats import compute_basic_stats, compute_tech_year_bubble, \
+    compute_company_focus
 from src.analyses.portfolio_index import compute_portfolio_index
 from src.analyses.advanced_stats import compute_advanced_stats
 from src.analyses.scope_entropy import compute_scope_entropy
@@ -575,6 +576,10 @@ def register_routes(app):
             lambda df, s, b: compute_tech_year_bubble(df, s,
                                                       companies=b.get("companies")),
             extra_key_fields=("companies",)),
+        "company-focus": _analysis_route(
+            "company-focus",
+            lambda df, s, b: compute_company_focus(df, s, company=b.get("company")),
+            extra_key_fields=("company",)),
         "deep-plus": _analysis_route(
             "deep-plus",
             lambda df, s, b: compute_deep_plus(df, s,

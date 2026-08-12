@@ -683,6 +683,66 @@ def test_citation_influence_company_scope(settings):
     assert comp in r["figure"]["layout"]["title"]["text"]
 
 
+def test_science_section_alignment_and_npl_drill(settings):
+    """과학 연계성: Y축 category 고정(라벨-막대 정렬) + NPL 인용 특허만 drill."""
+    from src.analyses.deep_plus import compute_deep_plus
+    from src.analyses.common import select_patents
+    from src.preprocessing import parse_numeric
+    df = make_prepared(generate_sample(n=400, seed=21))
+    r = compute_deep_plus(df, settings, only_sections=["science"])
+    sc = r["sections"]["science"]
+    # 수평 막대: Y축이 명시적 category — 숫자형 라벨이어도 위치가 어긋나지 않음
+    for fig in (sc["fig_tech"], sc["fig_comp"]):
+        lay = fig["layout"]["yaxis"]
+        assert lay["type"] == "category"
+        assert lay["categoryarray"] == fig["data"][0]["y"]
+        assert fig["layout"]["height"] >= 340
+    # 기업 막대 drill: 그 회사(공동출원 포함)의 NPL 인용(>0) 특허만
+    cd = sc["fig_comp"]["data"][0]["customdata"][0]["drill"]
+    comp = cd["applicant"]
+    assert cd["npl_cited"] is True and cd["applicant_scope"] == "any"
+    picked = select_patents(df, cd)
+    assert len(picked) > 0
+    npl = parse_numeric(picked["npl_count"]).fillna(0)
+    assert (npl > 0).all()  # 전부 NPL 인용 특허
+    from src.analyses.common import applicant_mask
+    n_all = int(applicant_mask(df, comp, scope="any").sum())
+    assert len(picked) < n_all  # '그 회사 전체'보다 좁게 나옴
+    # Excel 용 기업별 데이터 행 제공
+    assert sc["by_comp"] and {"company", "mean_npl", "n", "n_cited"} <= \
+        set(sc["by_comp"][0].keys())
+
+
+def test_company_focus(settings):
+    """출원인 포커스: 집중 기술 + 소규모·급부상 아이템 탐지."""
+    from src.analyses.basic_stats import compute_company_focus
+    from src.analyses.common import select_patents, applicant_mask
+    df = make_prepared(generate_sample(n=500, seed=11))
+    # 미선택 → 안내 empty
+    r0 = compute_company_focus(df, settings)
+    assert r0["status"] == "empty" and "선택" in r0["message"]
+    comp = df["applicant_display"].value_counts().index[0]
+    r = compute_company_focus(df, settings, company=comp)
+    assert r["status"] == "ok"
+    assert comp in r["figure"]["layout"]["title"]["text"]
+    pts = r["figure"]["data"][0]
+    assert pts["x"] and len(pts["x"]) == len(pts["customdata"])
+    # 급부상 후보의 판정 규칙 검증 (값을 지어내지 않음 — 규칙 그대로)
+    for it in r["rising"]:
+        assert it["recent"] >= 2 and it["recent_share"] >= 0.5
+        assert it["recent"] > it["prev"]
+    # drill 은 그 회사(공동출원 포함) × 해당 분류로 좁혀짐
+    cd = pts["customdata"][0]["drill"]
+    picked = select_patents(df, cd)
+    n_comp = int(applicant_mask(df, comp, scope="any").sum())
+    assert 0 < len(picked) <= n_comp
+    assert picked["_tech_list"].map(lambda lst: cd["tech"] in (lst or [])).all()
+    # 집중 기술 Top 막대 존재
+    assert r["fig_top"]["data"][0]["y"]
+    # 없는 회사 → empty
+    assert compute_company_focus(df, settings, company="없는회사X")["status"] == "empty"
+
+
 def test_basic_stats_chart_insights(prepared, settings):
     """차트별 인사이트가 각 차트 키로 분리 제공된다."""
     from src.analyses.basic_stats import compute_basic_stats

@@ -1106,6 +1106,7 @@ ANALYSIS_REQUIREMENTS = {
     "executive-summary":     {"required": [{"any": ANY_TECH}, {"any": ANY_DATE}, {"any": ANY_APPLICANT}], "optional": ["cites_forward", "is_active", "legal_status", "expiry_date", "is_own"]},
     "axis-cross":            {"required": [{"any": ANY_TECH}], "optional": ["tech_b_l1", "tech_b_l2", "tech_b_l3", "tech_c_l1", "tech_c_l2", "tech_c_l3", {"any": ANY_DATE}] + ANY_APPLICANT},
     "tech-year-bubble":      {"required": [{"any": ANY_TECH}, {"any": ANY_DATE}], "optional": ANY_APPLICANT},
+    "company-focus":         {"required": [{"any": ANY_TECH}, {"any": ANY_DATE}, {"any": ANY_APPLICANT}], "optional": []},
     "deep-plus":             {"required": [{"any": ANY_APPLICANT + ["pub_number", "app_number"]}], "optional": ["license_flag", "licensee_count", "sep_org", "sep_number", "sep_date", "rejection_reason", "rejection_flag", "reexam_flag", "npl_count", "recent_assignee", "recent_assignor", "assign_date", "assign_type", "examiner", "oa_count", "cites_forward", "is_granted", "legal_status", {"any": ANY_TECH}, {"any": ANY_DATE}]},
     "ownership":             {"required": [{"any": ANY_APPLICANT}, "assignee"], "optional": [{"any": ANY_TECH}, {"any": ANY_DATE}, "cites_forward", "is_active", "legal_status", "reg_date"]},
 }
@@ -4729,13 +4730,25 @@ def line_chart(series_list, x_title, y_title, title=None, year_axis=False):
 
 
 def bar_chart(x, y, title=None, orientation="v", hovertext=None, colors=None,
-              customdata=None, x_title=None, y_title=None):
-    """막대차트 payload (수평/수직)."""
+              customdata=None, x_title=None, y_title=None, height=None):
+    """막대차트 payload (수평/수직).
+
+    수평(orientation="h")일 때 Y축을 명시적 category 로 고정한다 — 라벨이
+    숫자형(분류코드 등)이면 Plotly 가 축을 수치축으로 해석해 막대와 라벨
+    위치가 어긋나는 문제 방지. 높이도 행 수에 맞춰 자동 산정해 라벨
+    솎아내기(막대-라벨 어긋나 보임)를 막는다.
+    """
     trace = {"type": "bar", "orientation": orientation}
     if orientation == "h":
-        trace["x"], trace["y"] = y, x
+        labels = [str(v) for v in x]
+        trace["x"], trace["y"] = y, labels
+        yaxis = {"title": y_title or "", "automargin": True, "type": "category",
+                 "categoryorder": "array", "categoryarray": labels}
+        if height is None:
+            height = max(340, min(900, 120 + 28 * len(labels)))
     else:
         trace["x"], trace["y"] = x, y
+        yaxis = {"title": y_title or "", "automargin": True}
     if hovertext is not None:
         trace["hovertext"] = hovertext
         trace["hoverinfo"] = "text"
@@ -4743,9 +4756,11 @@ def bar_chart(x, y, title=None, orientation="v", hovertext=None, colors=None,
         trace["marker"] = {"color": colors}
     if customdata is not None:
         trace["customdata"] = customdata
-    return {"data": [trace], "layout": base_layout(
-        title, xaxis={"title": x_title or "", "automargin": True},
-        yaxis={"title": y_title or "", "automargin": True})}
+    layout = base_layout(title, xaxis={"title": x_title or "", "automargin": True},
+                         yaxis=yaxis)
+    if height:
+        layout["height"] = height
+    return {"data": [trace], "layout": layout}
 
 
 def radar_chart(categories, series_list, title=None):
@@ -5250,6 +5265,10 @@ def select_patents(df, drill):
         if drill.get("solutions") and "solution" in df.columns:
             wanted_s = set(map(str, drill["solutions"]))
             mask &= df["solution"].astype(str).str.strip().isin(wanted_s)
+    if drill.get("npl_cited") is not None and "npl_count" in df.columns:
+        _pnum = parse_numeric  # [merged import alias]
+        npl = _pnum(df["npl_count"]).fillna(0)
+        mask &= (npl > 0) if drill["npl_cited"] else (npl <= 0)
     if drill.get("licensed") is not None and "license_flag" in df.columns:
         _pb = parse_bool  # [merged import alias]
         lic = df["license_flag"].map(_pb)
@@ -8961,6 +8980,150 @@ def compute_basic_stats(df, settings, company=None):
         "tech": fig_tech, "tech_year": fig_tech_year,
         "chart_insights": chart_insights,
     }, insight=insight)
+
+
+# ---------------------------------------------------------------------------
+# 출원인 포커스 — 집중 기술 · 소규모 급부상 아이템
+# ---------------------------------------------------------------------------
+def compute_company_focus(df, settings, company=None):
+    """선택한 출원인의 기술 집중도와 '작지만 최근 급부상하는 아이템' 탐지.
+
+    - 기술분류별로 그 회사(공동출원 포함)의 누적 건수 vs 최근 N년 비중을 버블로
+      배치: 좌상단(누적은 적은데 최근 비중 높음)=새로 힘을 싣기 시작한 아이템.
+    - 급부상 판정(값을 지어내지 않는 규칙): 최근 N년 건수 ≥ 2, 최근 비중 ≥ 50%,
+      최근 N년 건수 > 그 직전 N년 건수, 누적 건수는 회사 내 중앙값 이하.
+    """
+    if not company:
+        return empty_result("상단에서 출원인을 선택하면 그 회사의 집중 기술과 "
+                            "급부상 아이템을 분석합니다.")
+    sub = df[applicant_mask(df, company, scope="any")]
+    if not len(sub):
+        return empty_result("출원인 '%s'의 문헌이 없습니다 (공동출원 포함 검색)."
+                            % company)
+    if not sub["_base_year"].notna().any():
+        return empty_result(diagnose_year_tech(sub))
+    if not sub["_tech_list"].map(lambda v: bool(v)).any():
+        return empty_result("출원인 '%s' 문헌에 기술분류 값이 없습니다." % company)
+    recent = int(get_threshold(settings, "recent_years"))
+    y_max = int(df["_base_year"].dropna().max())  # 기준 연도는 전체 데이터 최신
+    recent_from = y_max - recent + 1
+    prev_from = recent_from - recent
+
+    stats = {}
+    for lst, y in zip(sub["_tech_list"], sub["_base_year"]):
+        yv = None if (y is None or (isinstance(y, float) and np.isnan(y))) else int(y)
+        for t in set(lst or []):
+            st = stats.setdefault(t, {"total": 0, "recent": 0, "prev": 0})
+            st["total"] += 1
+            if yv is not None and yv >= recent_from:
+                st["recent"] += 1
+            elif yv is not None and prev_from <= yv < recent_from:
+                st["prev"] += 1
+    if not stats:
+        return empty_result("기술분류 값이 없습니다.")
+    market = pd.Series([t for lst in df["_tech_list"] for t in (lst or [])]) \
+        .value_counts()
+    totals = sorted(st["total"] for st in stats.values())
+    median_total = float(totals[len(totals) // 2])
+
+    rows = []
+    for t, st in stats.items():
+        share_recent = st["recent"] / float(st["total"])
+        rising = (st["recent"] >= 2 and share_recent >= 0.5
+                  and st["recent"] > st["prev"] and st["total"] <= median_total)
+        rows.append({
+            "tech": str(t), "total": int(st["total"]),
+            "recent": int(st["recent"]), "prev": int(st["prev"]),
+            "recent_share": round(share_recent, 3),
+            "market_total": int(market.get(t, 0)),
+            "market_share": round(st["total"] / float(market.get(t, 1) or 1), 3),
+            "rising": bool(rising),
+            "drill": {"type": "tech", "tech": str(t), "applicant": str(company),
+                      "applicant_scope": "any"},
+        })
+    rows.sort(key=lambda r: (-r["rising"], -(r["recent_share"] * r["recent"]),
+                             -r["total"]))
+
+    xs, ys, sizes, colors, hovers, customs, texts = [], [], [], [], [], [], []
+    for r in rows:
+        xs.append(r["total"])
+        ys.append(r["recent_share"])
+        sizes.append(float(max(9.0, min(44.0, 8 + 9 * np.sqrt(r["recent"])))))
+        colors.append("#E15759" if r["rising"] else "#4E79A7")
+        texts.append(r["tech"][:14] if r["rising"] else "")
+        hovers.append(
+            "<b>%s</b><br>누적 %d건 · 최근 %d년 %d건 (비중 %s)<br>직전 %d년 %d건 · "
+            "전체 시장 %d건 중 점유 %s%s"
+            % (r["tech"], r["total"], recent, r["recent"],
+               fmt_pct(r["recent_share"]), recent, r["prev"], r["market_total"],
+               fmt_pct(r["market_share"]),
+               "<br>★ 급부상 아이템 후보" if r["rising"] else ""))
+        customs.append({"drill": r["drill"],
+                        "m": {"기술분류": r["tech"], "누적 건수": r["total"],
+                              "최근 %d년 건수" % recent: r["recent"],
+                              "직전 %d년 건수" % recent: r["prev"],
+                              "최근 비중": r["recent_share"],
+                              "전체 시장 건수": r["market_total"],
+                              "급부상": "예" if r["rising"] else ""}})
+    x_max = max(xs)
+    fig = {"data": [{
+        "type": "scatter", "mode": "markers+text",
+        "x": xs, "y": ys, "text": texts, "textposition": "top center",
+        "textfont": {"size": 9.5, "color": "#c0392b"},
+        "hovertext": hovers, "hoverinfo": "text", "customdata": customs,
+        "marker": {"size": sizes, "color": colors, "opacity": 0.85,
+                   "line": {"width": 0.8, "color": "#5b7a8a"}}}],
+        "layout": base_layout(
+            "'%s' 기술 포커스 맵 — X=누적 출원, Y=최근 %d년 비중 (빨강=급부상 후보)"
+            % (company, recent),
+            xaxis={"title": "누적 출원 건수 (로그축)", "type": "log"},
+            yaxis={"title": "최근 %d년 출원 비중" % recent,
+                   "range": [-0.05, 1.08], "tickformat": ".0%"},
+            annotations=[
+                {"x": np.log10(max(1.5, median_total * 0.35)), "y": 1.04,
+                 "xref": "x", "yref": "y", "showarrow": False,
+                 "text": "◀ 작지만 최근에 몰림 = 새 베팅", "xanchor": "left",
+                 "font": {"size": 11, "color": "#c0392b"}},
+                {"x": np.log10(max(2.0, x_max)), "y": 1.04, "xref": "x",
+                 "yref": "y", "showarrow": False, "xanchor": "right",
+                 "text": "주력 기술 ▶", "font": {"size": 11, "color": "#2e5f8a"}}],
+            height=520)}
+
+    top10 = sorted(rows, key=lambda r: -r["total"])[:10]
+    fig_top = bar_chart(
+        [r["tech"] for r in top10][::-1], [r["total"] for r in top10][::-1],
+        title="'%s' 집중 기술 Top %d (누적 건수)" % (company, len(top10)),
+        orientation="h", x_title="누적 출원 건수",
+        hovertext=["%s — 누적 %d건 · 최근 %d년 %d건 · 시장 점유 %s"
+                   % (r["tech"], r["total"], recent, r["recent"],
+                      fmt_pct(r["market_share"])) for r in top10][::-1],
+        customdata=[{"drill": r["drill"]} for r in top10][::-1])
+
+    rising_rows = [r for r in rows if r["rising"]][:15]
+    sentences = []
+    if top10:
+        t0 = top10[0]
+        sentences.append("'%s'의 최대 집중 기술은 '%s'(누적 %s건, 시장 점유 %s)입니다."
+                         % (company, t0["tech"], fmt_num(t0["total"]),
+                            fmt_pct(t0["market_share"])))
+    if rising_rows:
+        names = ", ".join("'%s'" % r["tech"] for r in rising_rows[:3])
+        sentences.append("급부상 아이템 후보는 %s 등 %s개 — 누적 건수는 회사 중앙값 "
+                         "이하지만 출원의 절반 이상이 최근 %d년에 몰렸고 직전 %d년보다 "
+                         "늘었습니다. 규모가 작을 때 잡히는 신호이므로 초기 베팅 "
+                         "관찰 대상입니다."
+                         % (names, fmt_num(len(rising_rows)), recent, recent))
+    else:
+        sentences.append("급부상 판정 기준(최근 %d년 ≥2건, 최근 비중 ≥50%%, 직전 대비 "
+                         "증가, 누적은 중앙값 이하)을 만족하는 분류가 없습니다 — 이 "
+                         "회사의 신규 베팅 신호는 아직 약합니다." % recent)
+    insight = build_insight(
+        sentences, {"company": company, "n_techs": len(rows),
+                    "n_rising": len(rising_rows), "recent_years": recent},
+        small_sample=check_small_sample(len(sub), settings))
+    return ok_result({"figure": fig, "fig_top": fig_top, "rising": rising_rows,
+                      "company": company, "recent_years": recent,
+                      "n_docs": int(len(sub))}, insight=insight)
 
 
 # ---------------------------------------------------------------------------
@@ -13220,11 +13383,16 @@ def _science_section(df, settings):
                 hovertext=["%s — 평균 %.1f건 (표본 %d)" % (t, m, n)
                            for t, m, n in zip(by_tech.index, by_tech["mean"],
                                               by_tech["size"])],
-                customdata=[{"drill": {"type": "tech", "tech": str(t)}}
+                # drill: 해당 분류에서 실제 NPL 을 인용한 특허만
+                customdata=[{"drill": {"type": "tech", "tech": str(t),
+                                       "npl_cited": True}}
                             for t in by_tech.index])
     fig_comp = None
-    by_comp = work[work["applicant_display"].astype(str) != ""] \
-        .groupby("applicant_display")["_npl"].agg(["mean", "size"])
+    comp_rows = []
+    grp = work[work["applicant_display"].astype(str) != ""] \
+        .groupby("applicant_display")["_npl"]
+    by_comp = grp.agg(["mean", "size"])
+    by_comp["cited"] = grp.apply(lambda s: int((s > 0).sum()))
     by_comp = by_comp[by_comp["size"] >= 5].sort_values("mean").tail(10)
     if len(by_comp):
         fig_comp = bar_chart(
@@ -13232,7 +13400,17 @@ def _science_section(df, settings):
             [round(float(v), 2) for v in by_comp["mean"]],
             title="기업별 과학 근접도 — 평균 NPL 인용 (원천 연구형 vs 응용형)",
             orientation="h", x_title="평균 비특허문헌 인용 수",
-            customdata=[{"drill": {"applicant": str(c)}} for c in by_comp.index])
+            hovertext=["%s — 평균 %.1f건 (표본 %d건 중 NPL 인용 %d건)"
+                       % (c, m, n, cn)
+                       for c, m, n, cn in zip(by_comp.index, by_comp["mean"],
+                                              by_comp["size"], by_comp["cited"])],
+            # drill: 그 회사(공동출원 포함)의 NPL 인용 특허만
+            customdata=[{"drill": {"applicant": str(c), "applicant_scope": "any",
+                                   "npl_cited": True}} for c in by_comp.index])
+        comp_rows = [{"company": str(c), "mean_npl": round(float(m), 2),
+                      "n": int(n), "n_cited": int(cn)}
+                     for c, m, n, cn in zip(by_comp.index, by_comp["mean"],
+                                            by_comp["size"], by_comp["cited"])]
     top = work.sort_values("_npl", ascending=False).head(15)
     rows = []
     for _i, r in top.iterrows():
@@ -13244,6 +13422,7 @@ def _science_section(df, settings):
                      "npl": int(r["_npl"]),
                      "drill": {"type": "ids", "ids": ids}})
     return {"fig_tech": fig_tech, "fig_comp": fig_comp, "rows": rows,
+            "by_comp": comp_rows,
             "avg_all": round(avg_all, 2),
             "note": "NPL 인용 수는 과학 연계성(science linkage)의 프록시입니다 — "
                     "높다고 반드시 가치가 큰 것은 아니며 분야별 관행 차이가 "
@@ -14749,6 +14928,10 @@ def register_routes(app):
             lambda df, s, b: compute_tech_year_bubble(df, s,
                                                       companies=b.get("companies")),
             extra_key_fields=("companies",)),
+        "company-focus": _analysis_route(
+            "company-focus",
+            lambda df, s, b: compute_company_focus(df, s, company=b.get("company")),
+            extra_key_fields=("company",)),
         "deep-plus": _analysis_route(
             "deep-plus",
             lambda df, s, b: compute_deep_plus(df, s,

@@ -267,13 +267,25 @@ def line_chart(series_list, x_title, y_title, title=None, year_axis=False):
 
 
 def bar_chart(x, y, title=None, orientation="v", hovertext=None, colors=None,
-              customdata=None, x_title=None, y_title=None):
-    """막대차트 payload (수평/수직)."""
+              customdata=None, x_title=None, y_title=None, height=None):
+    """막대차트 payload (수평/수직).
+
+    수평(orientation="h")일 때 Y축을 명시적 category 로 고정한다 — 라벨이
+    숫자형(분류코드 등)이면 Plotly 가 축을 수치축으로 해석해 막대와 라벨
+    위치가 어긋나는 문제 방지. 높이도 행 수에 맞춰 자동 산정해 라벨
+    솎아내기(막대-라벨 어긋나 보임)를 막는다.
+    """
     trace = {"type": "bar", "orientation": orientation}
     if orientation == "h":
-        trace["x"], trace["y"] = y, x
+        labels = [str(v) for v in x]
+        trace["x"], trace["y"] = y, labels
+        yaxis = {"title": y_title or "", "automargin": True, "type": "category",
+                 "categoryorder": "array", "categoryarray": labels}
+        if height is None:
+            height = max(340, min(900, 120 + 28 * len(labels)))
     else:
         trace["x"], trace["y"] = x, y
+        yaxis = {"title": y_title or "", "automargin": True}
     if hovertext is not None:
         trace["hovertext"] = hovertext
         trace["hoverinfo"] = "text"
@@ -281,9 +293,11 @@ def bar_chart(x, y, title=None, orientation="v", hovertext=None, colors=None,
         trace["marker"] = {"color": colors}
     if customdata is not None:
         trace["customdata"] = customdata
-    return {"data": [trace], "layout": base_layout(
-        title, xaxis={"title": x_title or "", "automargin": True},
-        yaxis={"title": y_title or "", "automargin": True})}
+    layout = base_layout(title, xaxis={"title": x_title or "", "automargin": True},
+                         yaxis=yaxis)
+    if height:
+        layout["height"] = height
+    return {"data": [trace], "layout": layout}
 
 
 def radar_chart(categories, series_list, title=None):

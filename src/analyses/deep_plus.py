@@ -284,11 +284,16 @@ def _science_section(df, settings):
                 hovertext=["%s — 평균 %.1f건 (표본 %d)" % (t, m, n)
                            for t, m, n in zip(by_tech.index, by_tech["mean"],
                                               by_tech["size"])],
-                customdata=[{"drill": {"type": "tech", "tech": str(t)}}
+                # drill: 해당 분류에서 실제 NPL 을 인용한 특허만
+                customdata=[{"drill": {"type": "tech", "tech": str(t),
+                                       "npl_cited": True}}
                             for t in by_tech.index])
     fig_comp = None
-    by_comp = work[work["applicant_display"].astype(str) != ""] \
-        .groupby("applicant_display")["_npl"].agg(["mean", "size"])
+    comp_rows = []
+    grp = work[work["applicant_display"].astype(str) != ""] \
+        .groupby("applicant_display")["_npl"]
+    by_comp = grp.agg(["mean", "size"])
+    by_comp["cited"] = grp.apply(lambda s: int((s > 0).sum()))
     by_comp = by_comp[by_comp["size"] >= 5].sort_values("mean").tail(10)
     if len(by_comp):
         fig_comp = bar_chart(
@@ -296,7 +301,17 @@ def _science_section(df, settings):
             [round(float(v), 2) for v in by_comp["mean"]],
             title="기업별 과학 근접도 — 평균 NPL 인용 (원천 연구형 vs 응용형)",
             orientation="h", x_title="평균 비특허문헌 인용 수",
-            customdata=[{"drill": {"applicant": str(c)}} for c in by_comp.index])
+            hovertext=["%s — 평균 %.1f건 (표본 %d건 중 NPL 인용 %d건)"
+                       % (c, m, n, cn)
+                       for c, m, n, cn in zip(by_comp.index, by_comp["mean"],
+                                              by_comp["size"], by_comp["cited"])],
+            # drill: 그 회사(공동출원 포함)의 NPL 인용 특허만
+            customdata=[{"drill": {"applicant": str(c), "applicant_scope": "any",
+                                   "npl_cited": True}} for c in by_comp.index])
+        comp_rows = [{"company": str(c), "mean_npl": round(float(m), 2),
+                      "n": int(n), "n_cited": int(cn)}
+                     for c, m, n, cn in zip(by_comp.index, by_comp["mean"],
+                                            by_comp["size"], by_comp["cited"])]
     top = work.sort_values("_npl", ascending=False).head(15)
     rows = []
     for _i, r in top.iterrows():
@@ -308,6 +323,7 @@ def _science_section(df, settings):
                      "npl": int(r["_npl"]),
                      "drill": {"type": "ids", "ids": ids}})
     return {"fig_tech": fig_tech, "fig_comp": fig_comp, "rows": rows,
+            "by_comp": comp_rows,
             "avg_all": round(avg_all, 2),
             "note": "NPL 인용 수는 과학 연계성(science linkage)의 프록시입니다 — "
                     "높다고 반드시 가치가 큰 것은 아니며 분야별 관행 차이가 "

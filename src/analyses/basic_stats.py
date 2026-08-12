@@ -342,6 +342,151 @@ def compute_basic_stats(df, settings, company=None):
 
 
 # ---------------------------------------------------------------------------
+# 출원인 포커스 — 집중 기술 · 소규모 급부상 아이템
+# ---------------------------------------------------------------------------
+def compute_company_focus(df, settings, company=None):
+    """선택한 출원인의 기술 집중도와 '작지만 최근 급부상하는 아이템' 탐지.
+
+    - 기술분류별로 그 회사(공동출원 포함)의 누적 건수 vs 최근 N년 비중을 버블로
+      배치: 좌상단(누적은 적은데 최근 비중 높음)=새로 힘을 싣기 시작한 아이템.
+    - 급부상 판정(값을 지어내지 않는 규칙): 최근 N년 건수 ≥ 2, 최근 비중 ≥ 50%,
+      최근 N년 건수 > 그 직전 N년 건수, 누적 건수는 회사 내 중앙값 이하.
+    """
+    if not company:
+        return empty_result("상단에서 출원인을 선택하면 그 회사의 집중 기술과 "
+                            "급부상 아이템을 분석합니다.")
+    from src.analyses.common import applicant_mask
+    sub = df[applicant_mask(df, company, scope="any")]
+    if not len(sub):
+        return empty_result("출원인 '%s'의 문헌이 없습니다 (공동출원 포함 검색)."
+                            % company)
+    if not sub["_base_year"].notna().any():
+        return empty_result(diagnose_year_tech(sub))
+    if not sub["_tech_list"].map(lambda v: bool(v)).any():
+        return empty_result("출원인 '%s' 문헌에 기술분류 값이 없습니다." % company)
+    recent = int(get_threshold(settings, "recent_years"))
+    y_max = int(df["_base_year"].dropna().max())  # 기준 연도는 전체 데이터 최신
+    recent_from = y_max - recent + 1
+    prev_from = recent_from - recent
+
+    stats = {}
+    for lst, y in zip(sub["_tech_list"], sub["_base_year"]):
+        yv = None if (y is None or (isinstance(y, float) and np.isnan(y))) else int(y)
+        for t in set(lst or []):
+            st = stats.setdefault(t, {"total": 0, "recent": 0, "prev": 0})
+            st["total"] += 1
+            if yv is not None and yv >= recent_from:
+                st["recent"] += 1
+            elif yv is not None and prev_from <= yv < recent_from:
+                st["prev"] += 1
+    if not stats:
+        return empty_result("기술분류 값이 없습니다.")
+    market = pd.Series([t for lst in df["_tech_list"] for t in (lst or [])]) \
+        .value_counts()
+    totals = sorted(st["total"] for st in stats.values())
+    median_total = float(totals[len(totals) // 2])
+
+    rows = []
+    for t, st in stats.items():
+        share_recent = st["recent"] / float(st["total"])
+        rising = (st["recent"] >= 2 and share_recent >= 0.5
+                  and st["recent"] > st["prev"] and st["total"] <= median_total)
+        rows.append({
+            "tech": str(t), "total": int(st["total"]),
+            "recent": int(st["recent"]), "prev": int(st["prev"]),
+            "recent_share": round(share_recent, 3),
+            "market_total": int(market.get(t, 0)),
+            "market_share": round(st["total"] / float(market.get(t, 1) or 1), 3),
+            "rising": bool(rising),
+            "drill": {"type": "tech", "tech": str(t), "applicant": str(company),
+                      "applicant_scope": "any"},
+        })
+    rows.sort(key=lambda r: (-r["rising"], -(r["recent_share"] * r["recent"]),
+                             -r["total"]))
+
+    xs, ys, sizes, colors, hovers, customs, texts = [], [], [], [], [], [], []
+    for r in rows:
+        xs.append(r["total"])
+        ys.append(r["recent_share"])
+        sizes.append(float(max(9.0, min(44.0, 8 + 9 * np.sqrt(r["recent"])))))
+        colors.append("#E15759" if r["rising"] else "#4E79A7")
+        texts.append(r["tech"][:14] if r["rising"] else "")
+        hovers.append(
+            "<b>%s</b><br>누적 %d건 · 최근 %d년 %d건 (비중 %s)<br>직전 %d년 %d건 · "
+            "전체 시장 %d건 중 점유 %s%s"
+            % (r["tech"], r["total"], recent, r["recent"],
+               fmt_pct(r["recent_share"]), recent, r["prev"], r["market_total"],
+               fmt_pct(r["market_share"]),
+               "<br>★ 급부상 아이템 후보" if r["rising"] else ""))
+        customs.append({"drill": r["drill"],
+                        "m": {"기술분류": r["tech"], "누적 건수": r["total"],
+                              "최근 %d년 건수" % recent: r["recent"],
+                              "직전 %d년 건수" % recent: r["prev"],
+                              "최근 비중": r["recent_share"],
+                              "전체 시장 건수": r["market_total"],
+                              "급부상": "예" if r["rising"] else ""}})
+    x_max = max(xs)
+    fig = {"data": [{
+        "type": "scatter", "mode": "markers+text",
+        "x": xs, "y": ys, "text": texts, "textposition": "top center",
+        "textfont": {"size": 9.5, "color": "#c0392b"},
+        "hovertext": hovers, "hoverinfo": "text", "customdata": customs,
+        "marker": {"size": sizes, "color": colors, "opacity": 0.85,
+                   "line": {"width": 0.8, "color": "#5b7a8a"}}}],
+        "layout": base_layout(
+            "'%s' 기술 포커스 맵 — X=누적 출원, Y=최근 %d년 비중 (빨강=급부상 후보)"
+            % (company, recent),
+            xaxis={"title": "누적 출원 건수 (로그축)", "type": "log"},
+            yaxis={"title": "최근 %d년 출원 비중" % recent,
+                   "range": [-0.05, 1.08], "tickformat": ".0%"},
+            annotations=[
+                {"x": np.log10(max(1.5, median_total * 0.35)), "y": 1.04,
+                 "xref": "x", "yref": "y", "showarrow": False,
+                 "text": "◀ 작지만 최근에 몰림 = 새 베팅", "xanchor": "left",
+                 "font": {"size": 11, "color": "#c0392b"}},
+                {"x": np.log10(max(2.0, x_max)), "y": 1.04, "xref": "x",
+                 "yref": "y", "showarrow": False, "xanchor": "right",
+                 "text": "주력 기술 ▶", "font": {"size": 11, "color": "#2e5f8a"}}],
+            height=520)}
+
+    top10 = sorted(rows, key=lambda r: -r["total"])[:10]
+    fig_top = bar_chart(
+        [r["tech"] for r in top10][::-1], [r["total"] for r in top10][::-1],
+        title="'%s' 집중 기술 Top %d (누적 건수)" % (company, len(top10)),
+        orientation="h", x_title="누적 출원 건수",
+        hovertext=["%s — 누적 %d건 · 최근 %d년 %d건 · 시장 점유 %s"
+                   % (r["tech"], r["total"], recent, r["recent"],
+                      fmt_pct(r["market_share"])) for r in top10][::-1],
+        customdata=[{"drill": r["drill"]} for r in top10][::-1])
+
+    rising_rows = [r for r in rows if r["rising"]][:15]
+    sentences = []
+    if top10:
+        t0 = top10[0]
+        sentences.append("'%s'의 최대 집중 기술은 '%s'(누적 %s건, 시장 점유 %s)입니다."
+                         % (company, t0["tech"], fmt_num(t0["total"]),
+                            fmt_pct(t0["market_share"])))
+    if rising_rows:
+        names = ", ".join("'%s'" % r["tech"] for r in rising_rows[:3])
+        sentences.append("급부상 아이템 후보는 %s 등 %s개 — 누적 건수는 회사 중앙값 "
+                         "이하지만 출원의 절반 이상이 최근 %d년에 몰렸고 직전 %d년보다 "
+                         "늘었습니다. 규모가 작을 때 잡히는 신호이므로 초기 베팅 "
+                         "관찰 대상입니다."
+                         % (names, fmt_num(len(rising_rows)), recent, recent))
+    else:
+        sentences.append("급부상 판정 기준(최근 %d년 ≥2건, 최근 비중 ≥50%%, 직전 대비 "
+                         "증가, 누적은 중앙값 이하)을 만족하는 분류가 없습니다 — 이 "
+                         "회사의 신규 베팅 신호는 아직 약합니다." % recent)
+    insight = build_insight(
+        sentences, {"company": company, "n_techs": len(rows),
+                    "n_rising": len(rising_rows), "recent_years": recent},
+        small_sample=check_small_sample(len(sub), settings))
+    return ok_result({"figure": fig, "fig_top": fig_top, "rising": rising_rows,
+                      "company": company, "recent_years": recent,
+                      "n_docs": int(len(sub))}, insight=insight)
+
+
+# ---------------------------------------------------------------------------
 # 기술분류 × 출원연도 버블 (출원인 선택·다사 비교)
 # ---------------------------------------------------------------------------
 def compute_tech_year_bubble(df, settings, companies=None):

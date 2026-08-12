@@ -1721,12 +1721,13 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
           Ui.esc(txt) + '</div>'));
       }
       function addFig(fig, capText) {
-        if (!fig) return;
+        if (!fig) return null;
         var holder = Ui.el('<div class="chart-holder"></div>');
         c.body.appendChild(holder);
         Render.plotly(holder, fig, plotlyDrill);
         if (first) { setTarget({ kind: 'plotly', el: holder }); first = false; }
         if (capText) c.body.appendChild(chartCap(capText));
+        return holder;
       }
       function addTable(headers, trs) {
         if (!trs.length) return;
@@ -1814,8 +1815,24 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
         head('🔬 과학 연계성 (Science Linkage) — 평균 NPL 인용 ' + Ui.num(sc.avg_all, 1) + '건');
         addFig(sc.fig_tech,
           'X축=평균 비특허문헌(논문 등) 인용 수, Y축=기술분류. 읽는 법: NPL 인용이 많은 기술은 ' +
-          '기초연구에서 갓 나온 신기술 신호 — 장기 관점의 원천 기술 후보입니다.');
-        addFig(sc.fig_comp, null);
+          '기초연구에서 갓 나온 신기술 신호 — 장기 관점의 원천 기술 후보입니다. ' +
+          '막대 클릭 시 그 분류에서 NPL 을 실제 인용한 특허만 열립니다.');
+        var scHolder = addFig(sc.fig_comp,
+          'X축=평균 비특허문헌 인용 수, Y축=출원인. 읽는 법: 평균이 높은 회사=논문 기반 ' +
+          '원천 연구형, 낮은 회사=응용·개량형. 막대 클릭 시 그 회사(공동출원 포함)의 ' +
+          'NPL 인용 특허만 열립니다.');
+        if (scHolder && (sc.by_comp || []).length) {
+          scHolder.__iplsExtraSheets = [{
+            name: '기업별 과학 근접도',
+            columns: ['출원인', '평균 NPL 인용 수', '표본 특허 수', 'NPL 인용(1건 이상) 특허 수'],
+            rows: sc.by_comp.map(function (x) {
+              return [x.company, x.mean_npl, x.n, x.n_cited];
+            }),
+            desc: '기업별 과학 근접도 차트의 원천 데이터 — 평균 NPL 인용 수(비특허문헌 ' +
+              '수 컬럼 기준), 표본=NPL 값이 해석된 그 회사 특허 수, 마지막 열=그중 ' +
+              'NPL 을 1건 이상 인용한 특허 수.'
+          }];
+        }
         addTable(['특허', '명칭', '출원인', '기술분류', 'NPL 인용'],
           (sc.rows || []).map(function (x) {
             return idRow(x, '<td>' + Ui.esc(x.title) + '</td><td>' + Ui.esc(x.applicant) +
@@ -2138,6 +2155,55 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
             c.body.appendChild(holder);
             Render.plotly(holder, r.figure, plotlyDrill);
             setTarget({ kind: 'plotly', el: holder });
+          }
+        });
+      } },
+      { label: '출원인 포커스', render: function (h) {
+        analysisCard({
+          analysis: 'company-focus', holder: h,
+          title: '출원인 포커스 — 집중 기술 · 급부상 아이템 (출원인 선택 필수)',
+          controls: companySelectControls('출원인 선택'),
+          help: '한 회사를 골라 그 회사가 어떤 기술에 집중하는지, 그리고 누적 건수는 ' +
+            '작지만 최근 몇 년에 출원이 몰리기 시작한 "급부상 아이템"이 무엇인지 봅니다. ' +
+            '공동출원 건도 그 회사 것으로 포함됩니다.',
+          guide: '포커스 맵: X축=누적 출원 건수(로그축, 오른쪽=주력 기술), Y축=최근 3년 출원 ' +
+            '비중(위=최근에 몰림). 빨간 버블=급부상 후보 — 판정 규칙은 최근 3년 2건 이상, ' +
+            '출원의 절반 이상이 최근 3년, 직전 3년보다 증가, 누적은 회사 중앙값 이하로 ' +
+            '화면에 명시된 규칙만 사용합니다. 좌상단의 빨간 버블이 "작지만 새로 힘을 싣는 ' +
+            '아이템"입니다. 버블·막대 클릭 시 그 회사의 해당 분류 특허가 열립니다.',
+          renderOk: function (r, c, setTarget) {
+            var holder = Ui.el('<div class="chart-holder tall"></div>');
+            c.body.appendChild(holder);
+            Render.plotly(holder, r.figure, plotlyDrill);
+            setTarget({ kind: 'plotly', el: holder });
+            var h2 = Ui.el('<div class="chart-holder"></div>');
+            c.body.appendChild(h2);
+            Render.plotly(h2, r.fig_top, plotlyDrill);
+            var rows = (r.rising || []).map(function (x) {
+              var tr = document.createElement('tr');
+              var td0 = document.createElement('td');
+              td0.appendChild(drillCell(x.tech, x.drill));
+              tr.appendChild(td0);
+              tr.insertAdjacentHTML('beforeend',
+                '<td class="num">' + Ui.num(x.total, 0) + '</td>' +
+                '<td class="num">' + Ui.num(x.recent, 0) + '</td>' +
+                '<td class="num">' + Ui.num(x.prev, 0) + '</td>' +
+                '<td class="num">' + Ui.pct(x.recent_share) + '</td>' +
+                '<td class="num">' + Ui.num(x.market_total, 0) + '</td>' +
+                '<td class="num">' + Ui.pct(x.market_share) + '</td>');
+              return tr;
+            });
+            if (rows.length) {
+              c.body.appendChild(Ui.el('<div style="font-weight:700;font-size:13px;' +
+                'margin:12px 0 4px">★ 급부상 아이템 후보 (' + rows.length + '개)</div>'));
+              var tbl = Ui.el(simpleTable(
+                ['기술분류', '누적', '최근 ' + (r.recent_years || 3) + '년',
+                 '직전 ' + (r.recent_years || 3) + '년', '최근 비중', '시장 전체', '시장 점유'], []));
+              rows.forEach(function (tr) { tbl.querySelector('tbody').appendChild(tr); });
+              var wrap = Ui.el('<div style="overflow-x:auto;max-height:280px;overflow-y:auto"></div>');
+              wrap.appendChild(tbl);
+              c.body.appendChild(wrap);
+            }
           }
         });
       } },
@@ -3740,7 +3806,7 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
     section('🗺️ 메뉴 안내',
       '<table class="ipls-table"><thead><tr><th>메뉴</th><th>내용</th></tr></thead><tbody>' +
       '<tr><td>📊 Executive Overview</td><td>경영 요약(KPI·경보·BCG 매트릭스·경쟁 포지션) + 경영 차트 6종: 📅만료 절벽 / 💰R&amp;D 효율 사분면 / 👤키맨 리스크 / ⏱️추격 시계 / 🚨위협 레이더 / ✂️포트폴리오 다이어트 (탭마다 자사 기준 선택 가능)</td></tr>' +
-      '<tr><td>📈 Basic Statistics</td><td>연도/국가/출원인/기술분류 기본 통계(차트별 인사이트 포함), 출원인×연도 버블, 기술×연도 버블(최대 3사 비교), 심화 분석, 심층 시그널 4개 탭(수명·시장 / 심사 이력 / 출원 행태 / 분쟁·국가과제), 특수 신호 2개 탭(실시권·표준특허·권리변동 / 거절 사유·과학 연계성·심사관), Patent Asset Index(공식 방법론 기반 TR·MC·CI·PAI + 공식 지수와의 차이 명시) — 출원 동향·기술분류 동향·심층 시그널·특수 신호는 출원인 선택 가능</td></tr>' +
+      '<tr><td>📈 Basic Statistics</td><td>연도/국가/출원인/기술분류 기본 통계(차트별 인사이트 포함), 출원인×연도 버블, 기술×연도 버블(최대 3사 비교), 출원인 포커스(선택한 회사의 집중 기술 + 작지만 최근 급부상하는 아이템 탐지), 심화 분석, 심층 시그널 4개 탭(수명·시장 / 심사 이력 / 출원 행태 / 분쟁·국가과제), 특수 신호 2개 탭(실시권·표준특허·권리변동 / 거절 사유·과학 연계성·심사관), Patent Asset Index(공식 방법론 기반 TR·MC·CI·PAI + 공식 지수와의 차이 명시) — 출원 동향·기술분류 동향·심층 시그널·특수 신호는 출원인 선택 가능</td></tr>' +
       '<tr><td>🧬 Technology Evolution</td><td>기술 생애주기, 전이 Sankey, Emerging Radar, 조합 네트워크, 분류축 교차(A·B·C), 신흥 기술 탐지(임베딩)</td></tr>' +
       '<tr><td>🏢 Competitor Intelligence</td><td>기업 DNA, 기술 궤적, 선도–추종, 권리범위 엔트로피, 전략 유사도·중첩도</td></tr>' +
       '<tr><td>🎯 White Space &amp; R&amp;D</td><td>Opportunity Matrix(자사=출원인 선택 가능, ◇=자사 역량 보유), 미점유 조합 UpSet, 문제–해결수단 매트릭스(C축=해결과제 × B축=해결수단 분류 기반 — 두 축 매핑 시 활성), 추천 R&amp;D 테마</td></tr>' +
@@ -3749,7 +3815,7 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
     section('🖱️ 차트 공통 기능',
       '<ul style="padding-left:18px;line-height:1.9">' +
       '<li><b>드릴다운</b>: 차트의 점·막대·셀·노드를 클릭하면 근거 특허 목록이 열립니다. 표의 파란 텍스트도 클릭 가능합니다.</li>' +
-      '<li><b>👥 출원인 선택</b>: 출원 동향 · 기술분류 동향 · 신흥 기술 탐지 · 기술×연도 버블 · 심층 시그널 4개 탭 · 특수 신호 2개 탭 · 핵심특허 영향력 카드 상단의 드롭다운으로 특정 출원인만 골라 볼 수 있습니다 (공동출원 건 포함 매칭). White Space Map 에서는 선택한 출원인이 <b>자사</b>가 되어 ◇(자사 역량 보유) 판정 기준이 됩니다.</li>' +
+      '<li><b>👥 출원인 선택</b>: 출원 동향 · 기술분류 동향 · 출원인 포커스 · 신흥 기술 탐지 · 기술×연도 버블 · 심층 시그널 4개 탭 · 특수 신호 2개 탭(심사관 인텔리전스 포함) · 핵심특허 영향력 카드 상단의 드롭다운으로 특정 출원인만 골라 볼 수 있습니다 (공동출원 건 포함 매칭). White Space Map 에서는 선택한 출원인이 <b>자사</b>가 되어 ◇(자사 역량 보유) 판정 기준이 됩니다. 출원인 포커스 탭은 선택한 회사의 집중 기술과 "작지만 최근 3년에 급부상한 아이템"을 찾아줍니다.</li>' +
       '<li><b>Excel</b>: 카드 우상단 Excel 버튼 — 화면 차트의 집계 데이터를 시트별로 다운로드합니다. 첫 시트 "설명"에 카드 설명·각 시트의 축/색 의미·차트 해석·인사이트가 함께 들어가 파일만 열어도 데이터 의미를 알 수 있습니다.</li>' +
       '<li><b>PNG/SVG</b>: 보고서용 이미지 저장.</li>' +
       '<li><b>🤖 AI 인사이트 (차트별)</b>: "LLM 인사이트 생성 (차트별)" 버튼은 카드 안의 <b>각 차트마다 개별로</b> 그 차트의 수치·읽는 법을 근거로 슬라이드 형식([슬라이드 제목]→[핵심 메시지]→[근거 데이터]→[시사점·제언]) 인사이트를 만듭니다 (진행 표시 n/m). 각 차트 아래의 "💡 이 차트의 인사이트"는 LLM 없이 항상 표시되는 규칙 기반 요약입니다. AI 패널에서는 추가 질문(챗)이 가능하고 "웹 검색 포함"을 켜면 출처 링크와 함께 외부 검색을 참고합니다.</li>' +
