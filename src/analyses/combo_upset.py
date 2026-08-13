@@ -12,7 +12,7 @@ analyses/combo_upset.py — 미점유 조합 UpSet 차트 (3개 이상 요소 �
 UpSet 차트 (Plotly 단일 figure, 위 막대 + 아래 도트 매트릭스):
   - 세로 막대: 특정 요소 조합(문헌의 추적 요소 집합이 정확히 일치)의 특허 수
   - 점·연결선: 조합에 포함된 요소 (아래 매트릭스)
-  - 막대 색: 조합 내 유효특허 비율 (RdYlGn)
+  - 막대 색: 조합 내 유효특허 비율 (빨강=낮음→초록=높음, 회색=판정 불가)
   - 막대 테두리: 최근 3년 출원이 있는 조합 (굵은 테두리)
 
 미점유 조합 (white space) 점수:
@@ -33,7 +33,7 @@ import numpy as np
 
 from src.config import get_limit, get_threshold
 from src.insights import build_insight, fmt_num, fmt_pct, check_small_sample
-from src.viz_payload import RDYLGN, ok_result, empty_result, base_layout
+from src.viz_payload import ok_result, empty_result, base_layout
 
 
 def compute_combo_upset(df, settings):
@@ -111,7 +111,7 @@ def compute_combo_upset(df, settings):
         bar_y.append(rec["n"])
         ratio = (rec["active_true"] / rec["active_known"]) \
             if rec["active_known"] else None
-        bar_colors.append(ratio if ratio is not None else 0.5)
+        bar_colors.append(ratio)  # None=미상 → 아래에서 회색 고정
         bar_lines.append(2.5 if rec["recent"] > 0 else 0.4)
         top_apps = sorted(rec["applicants"].items(), key=lambda kv: -kv[1])[:3]
         hovers.append("<b>%s</b><br>%d건 · 유효 %s · 최근 %d년 출원 %d건<br>주요: %s"
@@ -120,12 +120,24 @@ def compute_combo_upset(df, settings):
                          recent_years, rec["recent"],
                          ", ".join(a for a, _c in top_apps) or "-"))
         customs.append({"drill": {"type": "ids", "ids": rec["ids"]}})
+    # 유효비율 미상 막대는 중간색(0.5=절반 유효처럼 오독)이 아닌 회색으로 —
+    # 명시적 색상 배열로 변환 (RDYLGN: 0=빨강, 0.5=노랑, 1=초록 보간)
+    def _ratio_color(r):
+        if r is None:
+            return "#b9c4cd"  # 미상
+        stops = [(0.0, (0xE1, 0x57, 0x59)), (0.5, (0xF5, 0xC9, 0x5C)),
+                 (1.0, (0x59, 0xA1, 0x4F))]
+        r = max(0.0, min(1.0, float(r)))
+        for (p0, c0), (p1, c1) in zip(stops, stops[1:]):
+            if r <= p1:
+                f = (r - p0) / (p1 - p0) if p1 > p0 else 0.0
+                return "#%02x%02x%02x" % tuple(
+                    int(a + (b - a) * f) for a, b in zip(c0, c1))
+        return "#59A14F"
     traces = [{
         "type": "bar", "x": xs, "y": bar_y, "name": "특허 수",
         "hovertext": hovers, "hoverinfo": "text", "customdata": customs,
-        "marker": {"color": bar_colors, "colorscale": RDYLGN, "cmin": 0, "cmax": 1,
-                   "colorbar": {"title": "유효특허 비율", "thickness": 12, "y": 0.8,
-                                "len": 0.45},
+        "marker": {"color": [_ratio_color(r) for r in bar_colors],
                    "line": {"width": bar_lines, "color": "#1a2733"}},
         "yaxis": "y"}]
     # 매트릭스: 회색 배경 도트 + 멤버 도트 + 조합 연결선

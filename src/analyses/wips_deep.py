@@ -17,9 +17,10 @@ analyses/wips_deep.py — 심층 시그널: 잘 활용되지 않는 WIPS 필드 
                  + 국가 [+우선일])
   ③ agent        대리인 전환 시그널 — 신규 대리인 등장·비중 급증 감지.
                  상관 신호이지 인과가 아니므로 "관찰된 변화"로만 표현. (대리인)
-  ④ examiner_eye 심사관의 눈 — OA(심사관) 인용 vs 출원인 자발 인용 밀도 산점도.
-                 대각선 위쪽(심사관≫자발)은 출원인들이 선행기술을 과소평가하는
-                 영역 → 무효 리스크 신호. (심사관/출원인 인용문헌 수)
+  ④ examiner_eye 심사관의 눈 — OA(심사관) 인용 vs 출원인측 인용 밀도 산점도.
+                 출원인측 인용은 WIPS '자기인용 문헌번호'(자사 선행 인용) 기준.
+                 대각선 위쪽(심사관≫출원인측)은 심사관이 별도 선행기술을 다수
+                 발굴한 영역 → 무효 리스크 신호. (심사관/출원인측 인용문헌 수)
   ⑤ expedited    우선심사·조기공개 — 사업화 긴급도의 자기 신고. 기술×연도 버블
                  (크기=출원, 색=우선심사 비율) + 급등 영역. (우선심사 여부)
   ⑥ divisional   분할·계속출원 타이밍 — 기업별 분할출원 타임라인과 단기 집중
@@ -191,7 +192,7 @@ def _survival_section(df, settings):
             "surv_10y": round(_km_at(times, probs, 10.0), 3),
             "surv_18y": round(_km_at(times, probs, 18.0), 3),
             "median": _km_median(times, probs),
-            "drill": {"type": "tech", "tech": str(tech)}})
+            "drill": {"type": "tech", "tech": str(tech), "tech_primary": True}})
     if not traces:
         # 분류가 부족하면 전체 곡선 하나
         trace, _t, _p = _km_trace(sub, "전체")
@@ -401,7 +402,7 @@ def _agent_section(df, settings):
 
 
 # ---------------------------------------------------------------------------
-# ④ 심사관의 눈 (OA 인용 vs 자발 인용)
+# ④ 심사관의 눈 (OA 인용 vs 출원인측 인용)
 # ---------------------------------------------------------------------------
 def _examiner_eye_section(df, settings):
     if "examiner_citations" not in df.columns:
@@ -425,7 +426,7 @@ def _examiner_eye_section(df, settings):
                      "applicant_avg": round(float(g["_apl"].mean()), 2)
                      if has_apl and g.get("_apl") is not None
                      and g["_apl"].notna().any() else None,
-                     "drill": {"type": "tech", "tech": str(tech)}})
+                     "drill": {"type": "tech", "tech": str(tech), "tech_primary": True}})
     if not rows:
         return None, "기술분류별 표본 부족"
     if has_apl and any(r["applicant_avg"] is not None for r in rows):
@@ -441,7 +442,7 @@ def _examiner_eye_section(df, settings):
             {"type": "scatter", "mode": "markers+text", "x": xs, "y": ys,
              "text": [r["tech"][:14] for r in rows], "textposition": "top center",
              "textfont": {"size": 9},
-             "hovertext": ["%s — 심사관 평균 %.2f vs 자발 평균 %.2f (%d건)"
+             "hovertext": ["%s — 심사관 평균 %.2f vs 출원인측 평균 %.2f (%d건)"
                            % (r["tech"], r["examiner_avg"], r["applicant_avg"] or 0,
                               r["n"]) for r in rows],
              "hoverinfo": "text",
@@ -451,8 +452,8 @@ def _examiner_eye_section(df, settings):
                         "color": ["#E15759" if r in risky else "#4E79A7"
                                   for r in rows]}}],
             "layout": base_layout(
-                "심사관의 눈 — OA 인용 vs 출원인 자발 인용 (대각선 위=선행기술 과소평가 영역)",
-                xaxis={"title": "출원인 자발 인용 평균 (건)", "range": [0, lim]},
+                "심사관의 눈 — OA 인용 vs 출원인측 인용 (대각선 위=심사관이 별도 선행기술 다수 발굴)",
+                xaxis={"title": "출원인측 인용 평균 (건 · WIPS 자기인용 기준)", "range": [0, lim]},
                 yaxis={"title": "심사관(OA) 인용 평균 (건)", "range": [0, lim]})}
         return {"fig": fig, "rows": rows,
                 "risky": [r["tech"] for r in risky]}, None
@@ -495,7 +496,7 @@ def _expedited_section(df, settings):
         pts["color"].append(round(ratio, 3))
         pts["hover"].append("%s %d년: 출원 %d건, 우선심사 %s"
                             % (tech, y, n, fmt_pct(ratio)))
-        pts["custom"].append({"drill": {"type": "tech", "tech": str(tech),
+        pts["custom"].append({"drill": {"type": "tech", "tech": str(tech), "tech_primary": True,
                                         "year": int(y)}})
     fig = {"data": [{"type": "scatter", "mode": "markers",
                      "x": pts["x"], "y": pts["y"],
@@ -522,14 +523,18 @@ def _expedited_section(df, settings):
         if len(rec) < 5:
             continue
         r_rec = float(pd.Series([v is True for v in rec["_exp"]]).mean())
+        # 이전 구간 표본이 부족하면 0%로 가장하지 않고 '표본 부족'으로 구분
+        # (0.0 강제 시 delta 가 인위적으로 부풀어 급등 순위가 왜곡됨)
         r_old = float(pd.Series([v is True for v in old["_exp"]]).mean()) \
-            if len(old) >= 5 else 0.0
+            if len(old) >= 5 else None
         surge.append({"tech": str(tech), "recent_ratio": round(r_rec, 3),
-                      "prior_ratio": round(r_old, 3),
-                      "delta": round(r_rec - r_old, 3),
+                      "prior_ratio": round(r_old, 3) if r_old is not None else None,
+                      "prior_note": None if r_old is not None else "이전 구간 표본 부족",
+                      "delta": round(r_rec - r_old, 3) if r_old is not None else None,
                       "n_recent": int(len(rec)),
-                      "drill": {"type": "tech", "tech": str(tech)}})
-    surge.sort(key=lambda s: -s["delta"])
+                      "drill": {"type": "tech", "tech": str(tech),
+                                "tech_primary": True}})
+    surge.sort(key=lambda s: -(s["delta"] if s["delta"] is not None else -9))
     return {"fig": fig, "surge": surge[:10],
             "overall_ratio": round(float(pd.Series(
                 [v is True for v in sub["_exp"]]).mean()), 3)}, None
@@ -764,7 +769,8 @@ def _trial_section(df, settings):
                             title="기술분류별 심판 건수 — 심판이 몰린 분류가 상업적 격전지",
                             orientation="h", x_title="심판 건수",
                             hovertext=hover[::-1],
-                            customdata=[{"drill": {"type": "tech", "tech": str(t)}}
+                            customdata=[{"drill": {"type": "tech", "tech": str(t),
+                                                   "tech_primary": True}}
                                         for t in by_tech.index][::-1])
     network = None
     top_target = None
@@ -1038,12 +1044,12 @@ def compute_wips_deep(df, settings, only_sections=None, company=None):
                          % (s0["company"], s0["year"], s0["new_agent"],
                             fmt_pct(s0["share"])))
     if "examiner_eye" in sections and sections["examiner_eye"]["risky"]:
-        sentences.append("심사관 인용이 자발 인용보다 훨씬 많은 분류(%s)는 출원인들이 "
+        sentences.append("심사관 인용이 출원인측 인용보다 훨씬 많은 분류(%s)는 출원인들이 "
                          "선행기술을 과소평가하는 영역으로, 무효 리스크 검토 후보입니다."
                          % ", ".join(sections["examiner_eye"]["risky"][:3]))
     if "expedited" in sections and sections["expedited"]["surge"]:
         s0 = sections["expedited"]["surge"][0]
-        if s0["delta"] > 0.05:
+        if s0["delta"] is not None and s0["delta"] > 0.05:
             sentences.append("우선심사 비율이 가장 급등한 분류는 '%s'(%s→%s)로, 향후 "
                              "1~2년 내 제품화 가능성이 높은 영역입니다."
                              % (s0["tech"], fmt_pct(s0["prior_ratio"]),

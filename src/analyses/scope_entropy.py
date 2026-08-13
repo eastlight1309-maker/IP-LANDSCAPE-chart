@@ -279,10 +279,12 @@ def compute_scope_entropy(df, settings, companies=None):
 
     country_lists = None
     if "family_countries" in work.columns:
+        # WIPS '한국-1 | 미국-0 | PCT-1' 형식 파싱: 건수 0 국가 제외, 한글
+        # 국가명→ISO 코드 변환 (portfolio_index 와 동일 파서 공유 — 단순
+        # 구분자 분리로는 '미국-0'을 보유국으로 오인하고 PCT 가 'PC'로 잘림)
+        from src.analyses.portfolio_index import _country_codes_of
         country_lists = work["family_countries"].map(
-            lambda v: sorted({str(c).strip().upper()[:2]
-                              for c in parse_multiclass_cell(v)
-                              if str(c).strip()}))
+            lambda v: sorted(set(_country_codes_of(v))))
     elif "country" in work.columns:
         country_lists = work["country"].map(
             lambda v: [str(v).strip().upper()] if str(v).strip() else [])
@@ -313,13 +315,19 @@ def compute_scope_entropy(df, settings, companies=None):
     entropy_by_company = {}
     for company in picked:
         values, hovers = [], []
+        valid = {}
         for d in dims:
             e = _norm_entropy(d["per"].get(company, {}), d["k"])
-            values.append(e if e is not None else 0.0)
+            values.append(e if e is not None else 0.0)  # 레이더 꼭짓점 (없음=0 표시)
+            if e is not None:
+                valid[d["key"]] = e
             hovers.append("%s: %s (범주 %d개 사용 / 전역 %d개)"
                           % (d["label"], "%.2f" % e if e is not None else "계산 불가",
                              len(d["per"].get(company, {})), d["k"]))
-        entropy_by_company[company] = {d["key"]: v for d, v in zip(dims, values)}
+        # 전체 다양성 평균은 계산 가능한 차원만 사용 — '데이터 없음'이
+        # '다양성 0'으로 평균을 끌어내리지 않게
+        entropy_by_company[company] = valid if valid else \
+            {d["key"]: 0.0 for d in dims}
         radar_traces.append({
             "type": "scatterpolar", "name": company,
             "r": values + values[:1],

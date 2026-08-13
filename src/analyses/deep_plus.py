@@ -285,7 +285,7 @@ def _science_section(df, settings):
                            for t, m, n in zip(by_tech.index, by_tech["mean"],
                                               by_tech["size"])],
                 # drill: 해당 분류에서 실제 NPL 을 인용한 특허만
-                customdata=[{"drill": {"type": "tech", "tech": str(t),
+                customdata=[{"drill": {"type": "tech", "tech": str(t), "tech_primary": True,
                                        "npl_cited": True}}
                             for t in by_tech.index])
     fig_comp = None

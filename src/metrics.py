@@ -187,7 +187,10 @@ def winsorize(arr, pct=0.02):
 
 
 def normalize_series(values, log=True, winsor_pct=0.02, method="robust"):
-    """정규화 파이프라인: log1p → winsorize → robust(IQR) 또는 minmax → [0,1] 클립.
+    """정규화 파이프라인: log1p → winsorize → min-max [0,1].
+
+    참고: method="robust"는 IQR 스케일 후 다시 min-max 를 적용하므로 결과가
+    min-max 와 동일하다 (아핀 변환 불변) — 두 방식은 실질적으로 같다.
 
     상수 시리즈(분모 0)는 전체 0.5. NaN 은 0.0 으로 치환.
     """

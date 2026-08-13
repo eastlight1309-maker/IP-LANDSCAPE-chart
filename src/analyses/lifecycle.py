@@ -18,7 +18,7 @@ analyses/lifecycle.py — 4.7 기술 생애주기 Phase Map.
   - combo_growth: 해당 분류가 참여한 신규 조합 수 증가율
   - avg_citations: 등록특허 평균 피인용도 (있을 때)
   - maturity(X축) = 정규화( age ) 와 정규화( 누적건수 ) 의 평균
-  - momentum(Y축) = 정규화( growth ) 와 정규화( new_entrant_growth ) 의 평균
+  - momentum(Y축) = 정규화(성장률) 와 정규화(최근 신규 출원인 수) 의 평균
 
 단계 판정 규칙 (임계값은 Settings thresholds 로 조정 가능):
   Re-emerging: 과거 reemerging_decline_years 간 감소·정체(합계 기울기<=0) AND
@@ -30,7 +30,7 @@ analyses/lifecycle.py — 4.7 기술 생애주기 Phase Map.
                AND 신규 출원인 유입 지속
   Mature     : 그 외
 
-그래프: X=성숙도, Y=모멘텀, 크기=유효 패밀리 수, 색상=경쟁 강도(출원인 수),
+그래프: X=성숙도, Y=모멘텀, 크기=유효 문헌 수(0이면 전체), 색상=경쟁 강도(출원인 수),
         화살표=전년 대비 (성숙도, 모멘텀) 이동 방향.
 Drill-down: 버블 클릭 {"type":"tech"}.
 자동 인사이트: 단계별 분포, Re-emerging 탐지 결과.
@@ -64,7 +64,9 @@ def detect_reemerging(series, new_entrants_recent, combo_growth,
     recent_part = s.iloc[-recent_increase_years:]
     past_part = s.iloc[-(need):-recent_increase_years]
     past_slope = linreg_slope(past_part)
-    if past_slope is None or past_slope > 0:
+    # 완전 평탄한 과거는 부동소수 오차로 +4e-16 이 나올 수 있어 '정체'로
+    # 인정되도록 미세 양수 임계 사용 (문서 규칙: 감소·정체 모두 재부상 후보)
+    if past_slope is None or past_slope > 1e-9:
         return False
     diffs = np.diff(recent_part.values)
     if not (len(diffs) > 0 and all(d > 0 for d in diffs)):
@@ -181,16 +183,30 @@ def compute_lifecycle(df, settings):
                 continue
             g, _ = robust_growth(series, recent_years=recent)
             first_year = int(series[series > 0].index.min()) if (series > 0).any() else None
+            # 직전 기간의 신규 출원인 수 — 현재 시점과 같은 정의로 계산해
+            # 화살표의 세로 이동이 정의 차이의 인공물이 되지 않게 한다
+            prev_y_max = int(mat_prev.columns.max())
+            prev_recent_from = prev_y_max - recent + 1
+            in_tech_p = df["_tech_list"].map(lambda lst, t=tech: t in (lst or []))
+            sub_p = df[in_tech_p & (df["_base_year"] <= prev_y_max)]
+            rec_apps = set(sub_p.loc[sub_p["_base_year"] >= prev_recent_from,
+                                     "applicant_display"].replace("", np.nan).dropna())
+            old_apps = set(sub_p.loc[sub_p["_base_year"] < prev_recent_from,
+                                     "applicant_display"].replace("", np.nan).dropna())
             prev_metrics[str(tech)] = {
-                "age": (int(mat_prev.columns.max()) - first_year) if first_year else 0,
-                "total": float(series.sum()), "growth": g if g is not None else 0.0}
+                "age": (prev_y_max - first_year) if first_year else 0,
+                "total": float(series.sum()), "growth": g if g is not None else 0.0,
+                "new_entrants": len(rec_apps - old_apps)}
         if prev_metrics:
             p_ages = normalize_series([m["age"] for m in prev_metrics.values()], log=False)
             p_totals = normalize_series([m["total"] for m in prev_metrics.values()], log=True)
             p_growth = normalize_series([m["growth"] for m in prev_metrics.values()], log=False)
+            p_entrants = normalize_series([m["new_entrants"] for m in prev_metrics.values()],
+                                          log=True)
             for i, (tech, m) in enumerate(prev_metrics.items()):
                 m["maturity"] = float((p_ages[i] + p_totals[i]) / 2)
-                m["momentum"] = float(p_growth[i])
+                # 현재 momentum 과 동일 공식: (성장 + 신규 출원인) / 2
+                m["momentum"] = float((p_growth[i] + p_entrants[i]) / 2)
             for r in rows:
                 pm = prev_metrics.get(r["tech"])
                 if pm:

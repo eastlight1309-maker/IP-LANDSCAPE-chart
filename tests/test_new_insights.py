@@ -822,6 +822,156 @@ def test_embedding_file_feeds_semantic_analysis(tmp_path, monkeypatch, settings)
     assert "column" in str(out["methods"].get("embedding", ""))
 
 
+# ---------------------------------------------------------------------------
+# 전수 감사(계산식·매핑 검증)에서 발견된 버그의 회귀 테스트
+# ---------------------------------------------------------------------------
+def test_audit_nan_guards_survive_real_uploads(settings):
+    """실제 업로드(NaN 결측)에서 문자열 가드가 깨지지 않는다 — pandas 3 대응."""
+    import numpy as np
+    from src.analyses.wips_deep import compute_wips_deep
+    from src.analyses.deep_plus import compute_deep_plus
+    raw = generate_sample(n=600, seed=17).replace("", np.nan)
+    df = make_prepared(raw)
+    r = compute_wips_deep(df, settings,
+                          only_sections=["trial", "gov_program", "divisional",
+                                         "agent"])
+    sec = r["sections"]
+    assert sec["trial"]["n_trials"] < 100          # 과거: 600(전건 오인)
+    assert sec["gov_program"]["linked_ratio"] < 0.5  # 과거: 1.0
+    assert sec["divisional"]["n_divisionals"] < 100
+    assert "agent" in sec                          # 과거: NaN crash
+    r2 = compute_deep_plus(df, settings,
+                           only_sections=["sep", "rejection", "assignment"])
+    sec2 = r2["sections"]
+    assert sec2["sep"]["n_sep"] < 100              # 과거: 600
+    assert "rejection" in sec2                     # 과거: crash
+    assert sec2["assignment"]["n_assign"] == 50
+
+
+def test_audit_split_names_and_suffix():
+    """법인명 쉼표 오분리·영문 접미사 오절단 방지."""
+    from src.preprocessing import split_names, auto_standardize_name
+    assert split_names("SAMSUNG ELECTRONICS CO., LTD.") == \
+        ["SAMSUNG ELECTRONICS CO., LTD."]
+    assert split_names("삼성전자; LG전자") == ["삼성전자", "LG전자"]
+    assert split_names("삼성전자|LG전자") == ["삼성전자", "LG전자"]
+    assert auto_standardize_name("POSCO") == "POSCO"      # 과거: POS
+    assert auto_standardize_name("SUMCO") == "SUMCO"      # 과거: SUM
+    assert auto_standardize_name("Samsung Electronics Co., Ltd.") == \
+        "SAMSUNG ELECTRONICS"
+    assert auto_standardize_name("삼성전자 주식회사") == "삼성전자"
+
+
+def test_audit_family_fuzzy_guard():
+    """'출원인 수'가 패밀리 국가 수로 퍼지 매핑되지 않는다."""
+    from src.column_mapping import suggest_mapping
+    m = suggest_mapping(["출원번호", "출원일", "출원인", "출원인 수", "발명자 수"])
+    assert "family_country_count" not in m
+    assert "family_size" not in m
+
+
+def test_audit_scope_entropy_market_dim(settings):
+    """시장 다양성: WIPS '한국-1|미국-0' 형식에서 건수 0 국가 제외."""
+    from src.analyses.scope_entropy import compute_scope_entropy
+    df = make_prepared(generate_sample(n=400, seed=21))
+    df["family_countries"] = "한국-1 | 미국-0 | 일본-2 | PCT-1"
+    r = compute_scope_entropy(df, settings)
+    assert r["status"] == "ok"
+    market = next((d for d in r.get("dimensions", [])
+                   if d.get("key") == "market"), None)
+    if market is not None:  # 시장 차원이 계산된 경우 검증
+        assert market["k"] == 3  # KR, JP, WO — 미국(0건) 제외, PC 잘림 없음
+
+
+def test_audit_lead_lag_rejects_anticorrelation(settings):
+    """선행-추종: 역상관(A증가→B감소)은 선행 관계로 채택하지 않는다."""
+    import pandas as pd
+    from src.analyses.lead_lag import compute_lead_lag
+    rows = []
+    for y in range(2014, 2025):
+        a = 5 + (y - 2014)          # A: 증가
+        b = 20 - (y - 2015)         # B: 1년 뒤 감소 (역상관)
+        for _ in range(a):
+            rows.append({"출원번호": "A%d" % y, "출원일": "%d-01-01" % y,
+                         "출원인": "A_corp", "기술분류": "T1"})
+        for _ in range(max(b, 1)):
+            rows.append({"출원번호": "B%d" % y, "출원일": "%d-01-01" % y,
+                         "출원인": "B_corp", "기술분류": "T1"})
+    df = make_prepared(pd.DataFrame(rows))
+    r = compute_lead_lag(df, settings)
+    if r["status"] == "ok":
+        for rel in r.get("relations", []):
+            assert rel["avg_corr"] >= 0  # 역상관이 1.0 으로 둔갑하지 않음
+
+
+def test_audit_lifecycle_flat_past_reemerging():
+    """재부상 탐지: 완전 평탄('정체')한 과거도 후보로 인정 (부동소수 오차)."""
+    from src.analyses.lifecycle import detect_reemerging
+    assert detect_reemerging([5, 5, 5, 6, 7, 8], 2, 0.5) is True
+
+
+def test_audit_ps_cell_growth_not_degenerate(settings):
+    """PS 셀 Opportunity: 성장률이 실제로 점수에 반영 (1-원소 정규화 퇴화 수정)."""
+    from src.analyses.problem_solution import cell_detail
+    df = make_prepared(generate_sample(n=500, seed=42))
+    if "_tech_c_list" not in df.columns:
+        pytest.skip("B/C축 없음")
+    cells = {}
+    for c_lst, b_lst in zip(df["_tech_c_list"], df["_tech_b_list"]):
+        for p in (c_lst or []):
+            for s_ in (b_lst or []):
+                cells[(p, s_)] = cells.get((p, s_), 0) + 1
+    (p, s_), _n = max(cells.items(), key=lambda kv: kv[1])
+    r = cell_detail(df, settings, p, s_)
+    assert r["status"] == "ok"
+    g = r["growth"]
+    if g is not None and g > 0:
+        expect = (g / (1 + g)) * (1 - (r["active_ratio"] or 0))
+        assert abs(r["opportunity_score"] - expect) < 1e-3
+    if g is not None and g <= 0:
+        assert r["opportunity_score"] == 0.0  # 음수 성장은 기회 0
+
+
+def test_audit_primary_tech_drill_matches_chart(settings):
+    """대표 분류 기준 차트의 drill 은 상위집합이 아닌 정확한 부분집합."""
+    from src.analyses.wips_deep import compute_wips_deep
+    from src.analyses.common import select_patents
+    df = make_prepared(generate_sample(n=600, seed=17))
+    r = compute_wips_deep(df, settings, only_sections=["examiner_eye"])
+    rows = r["sections"]["examiner_eye"]["rows"]
+    row = rows[0]
+    picked = select_patents(df, row["drill"])
+    # 대표 분류 일치만 — 전부 그 분류가 첫 분류여야 하고, 포함 매칭 상위집합보다 좁다
+    assert picked["_tech_list"].map(
+        lambda lst: bool(lst) and str(lst[0]) == row["tech"]).all()
+    member_n = int(df["_tech_list"].map(
+        lambda lst: row["tech"] in (lst or [])).sum())
+    assert row["n"] <= len(picked) <= member_n and len(picked) < member_n
+
+
+def test_audit_keyman_patent_share(settings):
+    """키맨 리스크: 상위 10% 발명자 '특허 점유율'이 특허 기준으로 계산된다."""
+    from src.analyses.exec_plus import _keyman_section
+    df = make_prepared(generate_sample(n=600, seed=17))
+    focal = df["applicant_display"].value_counts().index[0]
+    sec, reason = _keyman_section(df, {}, focal)
+    assert sec is not None, reason
+    g = df[df["applicant_display"] == focal]
+    inv_counts = {}
+    for lst in g["_inventor_list"]:
+        for i in (lst or []):
+            if str(i).strip():
+                inv_counts[str(i).strip()] = inv_counts.get(str(i).strip(), 0) + 1
+    s = pd.Series(inv_counts).sort_values(ascending=False)
+    import numpy as np
+    top = set(s.head(max(1, int(np.ceil(len(s) * 0.10)))).index)
+    with_inv = g[g["_inventor_list"].map(lambda lst: any(str(i).strip()
+                                                         for i in (lst or [])))]
+    manual = with_inv["_inventor_list"].map(
+        lambda lst: bool(top & {str(i).strip() for i in (lst or [])})).mean()
+    assert abs(sec["top10_share"] - manual) < 1e-3
+
+
 def test_km_curve_verified_against_manual():
     """Kaplan-Meier 곡선: product-limit 공식 수기 계산과 일치."""
     from src.analyses.wips_deep import _km_curve, _km_at, _km_median

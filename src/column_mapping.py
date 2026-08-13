@@ -425,7 +425,7 @@ CONCEPTS = {
                      "examiner citation", "심사관인용", "심사관 제시 문헌"],
     },
     "applicant_citations": {
-        "label": "출원인(자발) 인용문헌 수", "dtype": "숫자 또는 문헌번호 목록 (건수로 자동 집계)",
+        "label": "출원인측 인용문헌 수 (WIPS 기본: 자기인용 문헌번호)", "dtype": "숫자 또는 문헌번호 목록 (건수로 자동 집계)",
         "preferred": ["자기인용 문헌번호"],  # 기본 매핑 (WIPS 문헌번호 목록 컬럼)
         "variants": ["출원인 인용문헌 수", "출원인 인용 수", "자발 인용", "출원인 인용문헌",
                      "자기인용 문헌번호", "자기 인용 문헌번호", "자기인용문헌번호", "자기인용",
@@ -663,6 +663,15 @@ def suggest_mapping(actual_columns, cutoff=None):
                 form_all = (nalt or "") + ncol
                 if not any(kw in form_all for kw in
                            ("인용", "citation", "cited", "citing", "reference")):
+                    best = None
+            # 패밀리 계열 개념도 비완전일치 시 패밀리/국가류 단어 필수
+            # ('출원인 수' 같은 인원수 컬럼이 '국가 수' 변형에 퍼지 매칭되는 것 방지)
+            if best and best[1] != "exact" and concept in (
+                    "family_size", "family_country_count", "family_countries",
+                    "family_id"):
+                form_all = (nalt or "") + ncol
+                if not any(kw in form_all for kw in
+                           ("패밀리", "family", "국가", "개별국", "지정국", "패밀리국")):
                     best = None
             # 형식 가드는 접미사 제거형 기준 ('횟수[KR]' 가 'kr' 로 끝나도 건수 인식)
             if best and _kind_compatible(concept, best[1], nalt or ncol):

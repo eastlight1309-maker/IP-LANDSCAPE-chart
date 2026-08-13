@@ -13,7 +13,8 @@ analyses/problem_solution.py — 문제–해결수단 매트릭스 (1단계).
 계산식:
   셀 값 = 특허 수 / 셀 색상 = 최근 성장률(robust_growth) / 셀 테두리 = 권리장벽
   (유효등록 비율 — hover 로 제공). 행·열은 빈도 상위 matrix_max_rows/cols 로 제한.
-  Opportunity Score(셀) = 정규화(성장률) × (1 - 유효등록비율) — 경량 산식.
+  Opportunity Score(셀) = [max(성장률,0) ÷ (1+max(성장률,0))] × (1 - 유효비율)
+  — 경량 산식 (성장 0=0, +100%≈0.5, 음수 성장은 0).
 
 그래프: Plotly 히트맵 (셀 수가 heatmap_max_cells 초과 시 ECharts 옵션 반환).
 Drill-down: 셀 클릭 → {"type":"cell","problem":…,"solution":…} → 패널에
@@ -184,7 +185,14 @@ def compute_problem_solution(df, settings):
         small_sample=check_small_sample(len(sub), settings))
     return ok_result({"figure": fig, "problems": top_problems, "solutions": top_solutions,
                       "problem_labels": prob_labels, "solution_labels": sol_labels,
-                      "cells": cell_meta, "engine": "echarts" if use_echarts else "plotly"},
+                      "cells": cell_meta,
+                      # engine 은 실제로 만들어진 figure 종류와 일치해야 한다 —
+                      # heatmap_max_cells 초과 + echarts 임계 미만 구간에서
+                      # Plotly figure 에 engine:"echarts" 가 붙던 불일치 방지
+                      "engine": ("echarts" if (use_echarts and n_cells >
+                                               get_limit(settings,
+                                                         "echarts_threshold_cells"))
+                                 else "plotly")},
                      insight=insight,
                      meta={"n_with_ps": int(len(work)), "truncated":
                            len(work["problem"].unique()) > len(top_problems)
@@ -223,7 +231,11 @@ def cell_detail(df, settings, problem, solution):
         claims = claims[claims.str.strip() != ""]
         if len(claims):
             rep_claim = claims.iloc[0][:600]
-    norm_growth = float(normalize_series([max(growth or 0, 0)], log=False)[0]) if growth else 0.0
+    # 성장 성분: 단일 값이라 분포 정규화가 불가능하므로 (1-원소 정규화는 항상
+    # 0.5가 되는 퇴화) 유계 변환 g/(1+g) 사용 — 0=정체, 음수 성장=0,
+    # +100%≈0.5, 커질수록 1에 수렴. 화면 문구도 이 산식을 그대로 표기한다.
+    g_pos = max(growth or 0.0, 0.0)
+    norm_growth = g_pos / (1.0 + g_pos)
     opp = round(norm_growth * (1 - (active_ratio or 0)), 4)
     sentences = ["'%s × %s' 조합은 총 %s건이며 최근 성장률 %s, 유효특허 비율 %s입니다."
                  % (str(problem)[:40], str(solution)[:40], fmt_num(len(cell)),

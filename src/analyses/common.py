@@ -178,7 +178,13 @@ def select_patents(df, drill):
     if dtype == "tech" or "tech" in drill:
         t = drill.get("tech")
         if t:
-            mask &= has_tech(str(t))
+            if drill.get("tech_primary"):
+                # 대표(첫) 분류 기준으로 집계한 차트의 drill — 포함 매칭을 쓰면
+                # 차트 건수보다 많은 상위집합이 열리므로 대표 분류 일치로 제한
+                mask &= df["_tech_list"].map(
+                    lambda lst, tv=str(t): bool(lst) and str(lst[0]) == tv)
+            else:
+                mask &= has_tech(str(t))
     if dtype == "combo":
         a, b = drill.get("a"), drill.get("b")
         if a:

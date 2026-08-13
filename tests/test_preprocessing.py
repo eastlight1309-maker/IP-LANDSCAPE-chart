@@ -59,7 +59,9 @@ def test_missing_legal_status_graceful():
     df = with_missing_legal_status(generate_sample(n=100, seed=5))
     prep = make_prepared(df)
     assert "Unknown" in set(prep["legal_status_norm"])
-    assert prep["legal_status_raw"].isna().any()  # 원본값 보존
+    raw = prep["legal_status_raw"]
+    # 결측은 NaN 또는 빈 문자열로 보존 (텍스트 결측은 프레임에서 "" 통일)
+    assert (raw.isna() | (raw.astype(str).str.strip() == "")).any()
 
 
 # --- 출원인 표준화 (케이스 ⑦) ---

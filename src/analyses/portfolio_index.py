@@ -346,7 +346,9 @@ def compute_portfolio_index(df, settings):
         [r["company"] for r in mc_sorted][::-1],
         [r["avg_mc"] for r in mc_sorted][::-1],
         title="Market Coverage (평균 MC — %s 표준화)" % mc_source, orientation="h",
-        x_title="평균 Market Coverage (1.0 = 전체 평균)",
+        x_title=("평균 Market Coverage (1.0 = 미국 단독 보호 수준)"
+                 if "GNI" in str(mc_source) else
+                 "평균 Market Coverage (1.0 = 전체 평균)"),
         hovertext=["%s — 평균 MC %s / 패밀리 %s건 / PAI %s"
                    % (r["company"], r["avg_mc"], fmt_num(r["families"]),
                       fmt_num(r["portfolio_index"])) for r in mc_sorted][::-1],

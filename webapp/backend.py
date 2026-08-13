@@ -1011,7 +1011,7 @@ CONCEPTS = {
                      "examiner citation", "심사관인용", "심사관 제시 문헌"],
     },
     "applicant_citations": {
-        "label": "출원인(자발) 인용문헌 수", "dtype": "숫자 또는 문헌번호 목록 (건수로 자동 집계)",
+        "label": "출원인측 인용문헌 수 (WIPS 기본: 자기인용 문헌번호)", "dtype": "숫자 또는 문헌번호 목록 (건수로 자동 집계)",
         "preferred": ["자기인용 문헌번호"],  # 기본 매핑 (WIPS 문헌번호 목록 컬럼)
         "variants": ["출원인 인용문헌 수", "출원인 인용 수", "자발 인용", "출원인 인용문헌",
                      "자기인용 문헌번호", "자기 인용 문헌번호", "자기인용문헌번호", "자기인용",
@@ -1249,6 +1249,15 @@ def suggest_mapping(actual_columns, cutoff=None):
                 form_all = (nalt or "") + ncol
                 if not any(kw in form_all for kw in
                            ("인용", "citation", "cited", "citing", "reference")):
+                    best = None
+            # 패밀리 계열 개념도 비완전일치 시 패밀리/국가류 단어 필수
+            # ('출원인 수' 같은 인원수 컬럼이 '국가 수' 변형에 퍼지 매칭되는 것 방지)
+            if best and best[1] != "exact" and concept in (
+                    "family_size", "family_country_count", "family_countries",
+                    "family_id"):
+                form_all = (nalt or "") + ncol
+                if not any(kw in form_all for kw in
+                           ("패밀리", "family", "국가", "개별국", "지정국", "패밀리국")):
                     best = None
             # 형식 가드는 접미사 제거형 기준 ('횟수[KR]' 가 'kr' 로 끝나도 건수 인식)
             if best and _kind_compatible(concept, best[1], nalt or ncol):
@@ -1712,7 +1721,13 @@ def auto_standardize_name(name):
         changed = False
         low = s.lower()
         for suf in _CORP_SUFFIXES:
-            if low.endswith(" " + suf) or low == suf or low.endswith(suf):
+            # 영문(ASCII) 접미사는 단어 경계 필수 — 경계 없이 자르면
+            # POSCO→POS, SUMCO→SUM 같은 오절단이 생긴다. 한글 접미사는
+            # 붙여쓰기 관행(삼성전자주식회사)이 있어 경계 없이도 허용.
+            ascii_suf = bool(re.fullmatch(r"[\x00-\x7F]+", suf))
+            hit = (low == suf or low.endswith(" " + suf)
+                   or (not ascii_suf and low.endswith(suf)))
+            if hit:
                 cut = len(s) - len(suf)
                 trimmed = s[:cut].strip(" ,.-·")
                 if trimmed:
@@ -1745,11 +1760,23 @@ def split_names(value):
     for sep in ("|", ";", "\n"):
         if sep in s:
             return [p.strip() for p in s.split(sep) if p.strip()]
-    # 쉼표는 "성, 이름" 오분리 위험이 있어 ', ' + 대문자/한글 시작 패턴만 분리
-    if ", " in s and len(s.split(", ")) > 1 and all(len(p.strip()) > 1 for p in s.split(", ")):
-        return [p.strip() for p in s.split(", ") if p.strip()]
+    # 쉼표 분리: "SAMSUNG ELECTRONICS CO., LTD." 같은 단일 영문 법인명이
+    # 유령 공동출원인("LTD.")으로 쪼개지지 않도록, 분리 결과에 법인 접미사
+    # 토큰이 있으면 분리하지 않는다.
+    if ", " in s:
+        parts = [p.strip() for p in s.split(", ") if p.strip()]
+        if len(parts) > 1 and all(len(p) > 1 for p in parts):
+            lows = {p.lower().strip(" .").strip() for p in parts}
+            if not (lows & _COMMA_CORP_TOKENS):
+                return parts
     return [s]
 
+
+# 쉼표 분리 금지 판정용 법인 접미사 토큰 (split_names)
+_COMMA_CORP_TOKENS = frozenset([
+    "ltd", "ltd.", "inc", "inc.", "llc", "l.l.c", "co", "co.", "corp", "corp.",
+    "limited", "plc", "gmbh", "ag", "sa", "s.a", "spa", "s.p.a", "bv", "b.v",
+    "nv", "n.v", "kk", "k.k", "kg"])
 
 _NUMERIC_ONLY_RE = re.compile(r"^[+-]?\d+(\.\d+)?$")
 
@@ -1957,6 +1984,17 @@ def build_standard_frame(raw_df, mapping, applicant_rules=None):
     # 동일 실제 컬럼이 두 개념에 매핑될 수는 없음(automap 이 보장) — 방어적으로 중복 제거
     df = df.loc[:, ~df.columns.duplicated()]
 
+    # 텍스트 계열 개념의 결측(NaN)은 빈 문자열로 통일 — pandas 3 부터
+    # astype(str) 가 NaN 을 'nan' 문자열로 바꾸지 않아, 'nan' 문자열 가드에
+    # 의존하던 비어있음 판정이 실제 Excel/CSV 업로드(NaN)에서 전부 깨진다
+    # (심판·국가과제·분할·표준특허 등 섹션이 전 문헌을 값 보유로 오인).
+    _ckind = concept_kind  # [merged import alias]
+    for c in df.columns:
+        if _ckind(c) in ("date", "number", "bool"):
+            continue
+        if df[c].dtype == object or str(df[c].dtype).startswith("str"):
+            df[c] = df[c].fillna("")
+
     raw_date_strs = {}
     for date_col in ("app_date", "pub_date", "reg_date", "priority_date", "expiry_date",
                      "lapse_date", "exam_request_date", "sep_date", "assign_date"):
@@ -2128,10 +2166,12 @@ def dedupe_families(df):
     if "family_rep" in work.columns and "pub_number" in work.columns:
         rep_match = (work["family_rep"].astype(str).str.strip()
                      == work["pub_number"].astype(str).str.strip()).map(lambda b: 0 if b else 1)
-    prio_date = work["priority_date"] if "priority_date" in work.columns else None
-    if prio_date is None or prio_date.isna().all():
-        prio_date = work["app_date"] if "app_date" in work.columns else pd.Series(
-            [pd.NaT] * len(work), index=work.index)
+    # 우선일 없는 '행'은 그 행의 출원일로 폴백 (행 단위 — 컬럼 전체 기준으로
+    # 폴백하면 우선일 결측 행이 항상 후순위가 되어 '가장 이른 문헌' 선택이 깨짐)
+    prio_date = (work["priority_date"] if "priority_date" in work.columns
+                 else pd.Series(pd.NaT, index=work.index))
+    if "app_date" in work.columns:
+        prio_date = prio_date.fillna(work["app_date"])
     completeness = work.apply(lambda r: -_completeness_score(r, text_cols), axis=1) if text_cols \
         else pd.Series([0] * len(work), index=work.index)
     country_rank = (work["country"].astype(str).str.strip().str.upper().map(
@@ -2159,9 +2199,7 @@ def apply_analysis_unit(df, unit):
     if unit == "family":
         return dedupe_families(df)
     if unit == "registration":
-        mask = df["_is_granted_bool"].map(lambda v: v is True)
-        sub = df[mask]
-        return sub if len(sub) else df.iloc[0:0]
+        return df[df["_is_granted_bool"].map(lambda v: v is True)]
     return df  # publication / application: 문헌 단위 그대로
 
 
@@ -2524,7 +2562,10 @@ def winsorize(arr, pct=0.02):
 
 
 def normalize_series(values, log=True, winsor_pct=0.02, method="robust"):
-    """정규화 파이프라인: log1p → winsorize → robust(IQR) 또는 minmax → [0,1] 클립.
+    """정규화 파이프라인: log1p → winsorize → min-max [0,1].
+
+    참고: method="robust"는 IQR 스케일 후 다시 min-max 를 적용하므로 결과가
+    min-max 와 동일하다 (아핀 변환 불변) — 두 방식은 실질적으로 같다.
 
     상수 시리즈(분모 0)는 전체 0.5. NaN 은 0.0 으로 치환.
     """
@@ -5617,7 +5658,13 @@ def select_patents(df, drill):
     if dtype == "tech" or "tech" in drill:
         t = drill.get("tech")
         if t:
-            mask &= has_tech(str(t))
+            if drill.get("tech_primary"):
+                # 대표(첫) 분류 기준으로 집계한 차트의 drill — 포함 매칭을 쓰면
+                # 차트 건수보다 많은 상위집합이 열리므로 대표 분류 일치로 제한
+                mask &= df["_tech_list"].map(
+                    lambda lst, tv=str(t): bool(lst) and str(lst[0]) == tv)
+            else:
+                mask &= has_tech(str(t))
     if dtype == "combo":
         a, b = drill.get("a"), drill.get("b")
         if a:
@@ -5854,7 +5901,9 @@ def _new_combos(df, settings, top_n):
                     "first_year": int(min(ys)),
                     "new_applicants": len(r["new_applicants"]),
                     "drill": {"type": "combo", "a": r["a"], "b": r["b"]}})
-    return sorted(out, key=lambda x: (-x["count"], -x["new_applicants"]))[:top_n]
+    # 전체 목록 반환 — 표시는 호출부에서 절단하고, 인사이트의 '관측 N개'는
+    # 절단 전 전체 수를 사용한다
+    return sorted(out, key=lambda x: (-x["count"], -x["new_applicants"]))
 
 
 def _strategy_changes(df, settings, top_n):
@@ -5974,7 +6023,8 @@ def compute_overview(df, settings):
         return empty_result()
     top_n = int(get_limit(settings, "top_n_default"))
     growing, declining, tech_meta = _tech_growth_lists(df, settings, top_n)
-    new_combos = _new_combos(df, settings, top_n)
+    new_combos_all = _new_combos(df, settings, top_n)
+    new_combos = new_combos_all[:top_n]
     strategy = _strategy_changes(df, settings, 5)
     barriers, whitespace = _barrier_and_whitespace(df, settings, 5)
     alerts = _alerts(df)
@@ -5999,18 +6049,18 @@ def compute_overview(df, settings):
     if growing:
         g0 = growing[0]
         sentences.append(
-            "%s 기준 전체 %s건 중 최근 성장률 1위 기술은 '%s'(성장률 %s, 최근 %s건)로 "
-            "상위 %s 내 성장 기술로 분류됩니다."
+            "%s 기준 전체 %s건 중 최근 성장률 1위 기술은 '%s'(성장률 %s, 최근 %s건)"
+            "입니다 — 표본 조건을 충족한 %s개 분류 중 1위."
             % (period, fmt_num(kpi["total"]), g0["tech"], fmt_pct(g0["growth"]),
-               fmt_num(g0["recent"]), "10%"))
+               fmt_num(g0["recent"]), fmt_num(tech_meta.get("n_tech", 0))))
         metrics["top_growth_tech"] = g0["tech"]
         metrics["top_growth_rate"] = g0["growth"]
     if new_combos:
         sentences.append(
             "최근 %d년 내 처음 출현한 기술조합이 %s개 관측되었으며, 최다 조합은 '%s × %s'(%s건)입니다."
-            % (int(get_threshold(settings, "recent_years")), fmt_num(len(new_combos)),
+            % (int(get_threshold(settings, "recent_years")), fmt_num(len(new_combos_all)),
                new_combos[0]["a"], new_combos[0]["b"], fmt_num(new_combos[0]["count"])))
-        metrics["new_combo_count"] = len(new_combos)
+        metrics["new_combo_count"] = len(new_combos_all)
     if strategy:
         sentences.append(
             "포트폴리오 구성 변화가 가장 큰 기업은 '%s'(코사인 거리 %s)이며, 비중 확대 1위 분류는 '%s'입니다."
@@ -6043,10 +6093,10 @@ analyses/tech_network.py — 4.2 기술분류 조합 네트워크.
   중심축·커뮤니티·최근 성장 조합을 파악한다.
 
 필수 컬럼: 기술분류(any)
-선택 컬럼: 패밀리 ID(노드 크기=패밀리 수), 날짜(성장률·최근 조합), 출원인(신규 출원인)
+선택 컬럼: 날짜(성장률·최근 조합), 출원인(신규 출원인)
 
 그래프 구성 (Cytoscape.js):
-- 노드: 기술분류 / 크기: 패밀리(문헌) 수 / 색상: 대분류 또는 Louvain 커뮤니티
+- 노드: 기술분류 / 크기: 문헌 수 / 색상: 대분류 또는 Louvain 커뮤니티
 - 테두리 색: 최근 성장률 (양수=초록, 음수=빨강, 불명=회색)
 - 엣지: 동시분류 / 두께: 동시분류 강도(Jaccard) / hover: 지표 전체
 
@@ -6122,6 +6172,7 @@ def compute_tech_network(df, settings, scope="all", company=None, color_by="l1")
 
     max_edges = get_limit(settings, "network_max_edges")
     max_nodes = get_limit(settings, "network_max_nodes")
+    n_pairs_all = len(pairs)
     pairs = pairs.sort_values("n_ab", ascending=False).head(max_edges)
 
     # 엣지 지표 계산
@@ -6223,7 +6274,7 @@ def compute_tech_network(df, settings, scope="all", company=None, color_by="l1")
         "network": cytoscape_network(nodes_payload, edges_payload),
         "scope": scope, "company": company,
         "n_nodes": len(nodes_payload), "n_edges": len(edges_payload),
-    }, insight=insight, meta={"truncated": len(pairs) >= get_limit(settings, "network_max_edges")})
+    }, insight=insight, meta={"truncated": n_pairs_all > len(pairs)})
 
 
 # ===========================================================================
@@ -6402,7 +6453,7 @@ analyses/lifecycle.py — 4.7 기술 생애주기 Phase Map.
   - combo_growth: 해당 분류가 참여한 신규 조합 수 증가율
   - avg_citations: 등록특허 평균 피인용도 (있을 때)
   - maturity(X축) = 정규화( age ) 와 정규화( 누적건수 ) 의 평균
-  - momentum(Y축) = 정규화( growth ) 와 정규화( new_entrant_growth ) 의 평균
+  - momentum(Y축) = 정규화(성장률) 와 정규화(최근 신규 출원인 수) 의 평균
 
 단계 판정 규칙 (임계값은 Settings thresholds 로 조정 가능):
   Re-emerging: 과거 reemerging_decline_years 간 감소·정체(합계 기울기<=0) AND
@@ -6414,7 +6465,7 @@ analyses/lifecycle.py — 4.7 기술 생애주기 Phase Map.
                AND 신규 출원인 유입 지속
   Mature     : 그 외
 
-그래프: X=성숙도, Y=모멘텀, 크기=유효 패밀리 수, 색상=경쟁 강도(출원인 수),
+그래프: X=성숙도, Y=모멘텀, 크기=유효 문헌 수(0이면 전체), 색상=경쟁 강도(출원인 수),
         화살표=전년 대비 (성숙도, 모멘텀) 이동 방향.
 Drill-down: 버블 클릭 {"type":"tech"}.
 자동 인사이트: 단계별 분포, Re-emerging 탐지 결과.
@@ -6443,7 +6494,9 @@ def detect_reemerging(series, new_entrants_recent, combo_growth,
     recent_part = s.iloc[-recent_increase_years:]
     past_part = s.iloc[-(need):-recent_increase_years]
     past_slope = linreg_slope(past_part)
-    if past_slope is None or past_slope > 0:
+    # 완전 평탄한 과거는 부동소수 오차로 +4e-16 이 나올 수 있어 '정체'로
+    # 인정되도록 미세 양수 임계 사용 (문서 규칙: 감소·정체 모두 재부상 후보)
+    if past_slope is None or past_slope > 1e-9:
         return False
     diffs = np.diff(recent_part.values)
     if not (len(diffs) > 0 and all(d > 0 for d in diffs)):
@@ -6560,16 +6613,30 @@ def compute_lifecycle(df, settings):
                 continue
             g, _ = robust_growth(series, recent_years=recent)
             first_year = int(series[series > 0].index.min()) if (series > 0).any() else None
+            # 직전 기간의 신규 출원인 수 — 현재 시점과 같은 정의로 계산해
+            # 화살표의 세로 이동이 정의 차이의 인공물이 되지 않게 한다
+            prev_y_max = int(mat_prev.columns.max())
+            prev_recent_from = prev_y_max - recent + 1
+            in_tech_p = df["_tech_list"].map(lambda lst, t=tech: t in (lst or []))
+            sub_p = df[in_tech_p & (df["_base_year"] <= prev_y_max)]
+            rec_apps = set(sub_p.loc[sub_p["_base_year"] >= prev_recent_from,
+                                     "applicant_display"].replace("", np.nan).dropna())
+            old_apps = set(sub_p.loc[sub_p["_base_year"] < prev_recent_from,
+                                     "applicant_display"].replace("", np.nan).dropna())
             prev_metrics[str(tech)] = {
-                "age": (int(mat_prev.columns.max()) - first_year) if first_year else 0,
-                "total": float(series.sum()), "growth": g if g is not None else 0.0}
+                "age": (prev_y_max - first_year) if first_year else 0,
+                "total": float(series.sum()), "growth": g if g is not None else 0.0,
+                "new_entrants": len(rec_apps - old_apps)}
         if prev_metrics:
             p_ages = normalize_series([m["age"] for m in prev_metrics.values()], log=False)
             p_totals = normalize_series([m["total"] for m in prev_metrics.values()], log=True)
             p_growth = normalize_series([m["growth"] for m in prev_metrics.values()], log=False)
+            p_entrants = normalize_series([m["new_entrants"] for m in prev_metrics.values()],
+                                          log=True)
             for i, (tech, m) in enumerate(prev_metrics.items()):
                 m["maturity"] = float((p_ages[i] + p_totals[i]) / 2)
-                m["momentum"] = float(p_growth[i])
+                # 현재 momentum 과 동일 공식: (성장 + 신규 출원인) / 2
+                m["momentum"] = float((p_growth[i] + p_entrants[i]) / 2)
             for r in rows:
                 pm = prev_metrics.get(r["tech"])
                 if pm:
@@ -6673,15 +6740,17 @@ analyses/whitespace.py — 4.8 Actionable White Space Map.
           만료예정일, 자사 특허 여부, 임베딩(자사 역량 인접도)
 
 계산식:
-  Opportunity Score = 가중 기하평균(기회 성분) ÷ (barrier_w 가중 권리장벽 성분)
+  Opportunity Score = 매력도 × 진입 가능성
+    매력도(X)      = 기회 성분들의 가중 기하평균
+    진입 가능성(Y) = 1 − min(장벽 점수 × barrier 가중치, 1)
   - 기회 지표: 최근 3년 성장률, 신규 출원인 수, 기술조합 증가율,
     제품·공정 키워드 증가율, 해결과제 반복 등장(고유 과제 대비 반복 비율),
     인접 기술 연결성(공동출현 이웃 수)
   - 위험 지표(권리장벽): 유효 등록특허 수, 상위 출원인 점유율(CR3), 핵심특허 집중도
     (피인용 상위 특허 비중), 주요 패밀리 국가 범위(평균), 권리 잔존기간(평균 잔여년)
-    — 각 성분 정규화 후 가중 평균.
-  - 모든 성분: log1p → Winsorization → 정규화([0,1]) — 점수 지배 방지.
-  - 매력도(X) = 기회 성분 가중 기하평균 / 진입 가능성(Y) = 1 - 장벽 점수.
+    — 각 성분 정규화 후 단순 평균.
+  - 정규화: 건수형 성분은 log1p 후, 비율형 성분은 그대로 Winsorization →
+    [0,1] 정규화 — 점수 지배 방지.
   - 가중치는 Settings 슬라이더로 조정. 응답에 성분별 정규화 점수를 포함하여
     프론트가 서버 재계산 없이 가중치 변경을 즉시 반영한다.
 
@@ -7067,7 +7136,8 @@ analyses/problem_solution.py — 문제–해결수단 매트릭스 (1단계).
 계산식:
   셀 값 = 특허 수 / 셀 색상 = 최근 성장률(robust_growth) / 셀 테두리 = 권리장벽
   (유효등록 비율 — hover 로 제공). 행·열은 빈도 상위 matrix_max_rows/cols 로 제한.
-  Opportunity Score(셀) = 정규화(성장률) × (1 - 유효등록비율) — 경량 산식.
+  Opportunity Score(셀) = [max(성장률,0) ÷ (1+max(성장률,0))] × (1 - 유효비율)
+  — 경량 산식 (성장 0=0, +100%≈0.5, 음수 성장은 0).
 
 그래프: Plotly 히트맵 (셀 수가 heatmap_max_cells 초과 시 ECharts 옵션 반환).
 Drill-down: 셀 클릭 → {"type":"cell","problem":…,"solution":…} → 패널에
@@ -7233,7 +7303,14 @@ def compute_problem_solution(df, settings):
         small_sample=check_small_sample(len(sub), settings))
     return ok_result({"figure": fig, "problems": top_problems, "solutions": top_solutions,
                       "problem_labels": prob_labels, "solution_labels": sol_labels,
-                      "cells": cell_meta, "engine": "echarts" if use_echarts else "plotly"},
+                      "cells": cell_meta,
+                      # engine 은 실제로 만들어진 figure 종류와 일치해야 한다 —
+                      # heatmap_max_cells 초과 + echarts 임계 미만 구간에서
+                      # Plotly figure 에 engine:"echarts" 가 붙던 불일치 방지
+                      "engine": ("echarts" if (use_echarts and n_cells >
+                                               get_limit(settings,
+                                                         "echarts_threshold_cells"))
+                                 else "plotly")},
                      insight=insight,
                      meta={"n_with_ps": int(len(work)), "truncated":
                            len(work["problem"].unique()) > len(top_problems)
@@ -7272,7 +7349,11 @@ def cell_detail(df, settings, problem, solution):
         claims = claims[claims.str.strip() != ""]
         if len(claims):
             rep_claim = claims.iloc[0][:600]
-    norm_growth = float(normalize_series([max(growth or 0, 0)], log=False)[0]) if growth else 0.0
+    # 성장 성분: 단일 값이라 분포 정규화가 불가능하므로 (1-원소 정규화는 항상
+    # 0.5가 되는 퇴화) 유계 변환 g/(1+g) 사용 — 0=정체, 음수 성장=0,
+    # +100%≈0.5, 커질수록 1에 수렴. 화면 문구도 이 산식을 그대로 표기한다.
+    g_pos = max(growth or 0.0, 0.0)
+    norm_growth = g_pos / (1.0 + g_pos)
     opp = round(norm_growth * (1 - (active_ratio or 0)), 4)
     sentences = ["'%s × %s' 조합은 총 %s건이며 최근 성장률 %s, 유효특허 비율 %s입니다."
                  % (str(problem)[:40], str(solution)[:40], fmt_num(len(cell)),
@@ -7470,9 +7551,8 @@ analyses/transition.py — 4.1 기술분류 전이 Sankey Diagram (2단계).
                  이전 기간 분류 → 다음 기간 분류 링크.
   applicant   ② 동일 출원인의 기간별 포트폴리오 변화: 출원인별 (이전 기간 분류 집합
                  × 다음 기간 분류 집합) 링크 — 규모 왜곡 방지 위해 1/(|S|·|T|) 가중.
-  continuation③ 후속출원 기준: 동일 패밀리 내 출원일이 다른 문헌 쌍(선→후)의 분류
-                 변화 (계속·분할출원 데이터가 별도로 없으므로 패밀리 내 시차 출원을
-                 후속출원으로 간주 — 근사임을 meta 에 명시).
+  continuation③ 후속출원 기준(근사): 계속·분할출원 데이터가 없어 '동일 패밀리'
+                 기준(②와 동일 계산)으로 근사한다 — 근사임을 meta 에 명시.
   cooccurrence④ 기술분류 간 공동출현 증가 기준: 이전 기간 대비 다음 기간에 공동출현이
                  증가한 조합을 전이 신호 링크로 표시 (링크값 = 증가량).
 
@@ -7670,14 +7750,14 @@ analyses/trajectory.py — 4.4 Technology Trajectory Map (기업별 전략 이�
 계산식:
   1) 기업·연도별 기술분류 구성비 벡터 (company_tech_shares(by_year=True))
      - 출원량 차이 왜곡 방지: weighting='share'(구성비) 또는 'tfidf'
-       (구성비 × log(전체 기업 수 / 해당 분류 보유 기업 수)) 선택 옵션.
+       (구성비 × log((기업×연도 관측 수+1)/(분류 보유 관측 수+1))+1 — IDF 유사 가중).
   2) 차원축소: method='pca'(기본) | 'umap' — UMAP 불가 시 PCA 자동 폴백 (gpu_utils).
   3) 기업별 연도 순 점 연결 화살표, 이동거리 = 연속 연도 좌표 간 유클리드 거리 합.
 
-그래프: 점(기업×연도), 크기=해당 연도 유효 패밀리 수, 색=기업,
+그래프: 점(기업×연도), 크기=해당 연도 유효 문헌 수, 색=기업,
         hover=주요 기술분류 Top3·비중, 화살표=연도 순 이동.
 Drill-down: 점 클릭 {"type":"applicant","applicant":…,"year":…}.
-자동 인사이트: 이동거리 상위 기업, 최근 방향 전환 기업.
+자동 인사이트: 이동거리 상위 기업, 가장 안정적인 기업.
 예외처리: 최소 관측(기업당 2개 연도, 연도당 min_class_patents 건) 미달 기업 제외.
 대상 기업: companies 파라미터 또는 출원 상위 trajectory_max_companies 개.
 """
@@ -8204,7 +8284,10 @@ def compute_lead_lag(df, settings, min_repeat=1):
             for b in eligible[i + 1:]:
                 lag, corr = cross_correlation_lag(pivot[a], pivot[b], max_lag=max_lag,
                                                   min_overlap=min_years)
-                if lag is None or corr is None or abs(corr) < min_corr or lag == 0:
+                # 음(-)의 상관(선행 기업 증가 → 상대 감소)은 "따라 늘어나는
+                # 선행-추종 패턴"이 아니므로 제외 — |corr| 사용 시 역상관이
+                # 상관 1.0 으로 둔갑하던 문제 방지
+                if lag is None or corr is None or corr < min_corr or lag == 0:
                     continue
                 leader, follower = (a, b) if lag > 0 else (b, a)
                 observations.append({"leader": str(leader), "follower": str(follower),
@@ -8223,7 +8306,7 @@ def compute_lead_lag(df, settings, min_repeat=1):
                                    "techs": [], "lags": [], "corrs": []})
         rec["techs"].append(o["tech"])
         rec["lags"].append(o["lag"])
-        rec["corrs"].append(abs(o["corr"]))
+        rec["corrs"].append(o["corr"])  # 양의 상관만 통과했으므로 부호 그대로
     relations = []
     for rec in agg.values():
         n_obs = len(rec["techs"])
@@ -10315,7 +10398,9 @@ def compute_portfolio_index(df, settings):
         [r["company"] for r in mc_sorted][::-1],
         [r["avg_mc"] for r in mc_sorted][::-1],
         title="Market Coverage (평균 MC — %s 표준화)" % mc_source, orientation="h",
-        x_title="평균 Market Coverage (1.0 = 전체 평균)",
+        x_title=("평균 Market Coverage (1.0 = 미국 단독 보호 수준)"
+                 if "GNI" in str(mc_source) else
+                 "평균 Market Coverage (1.0 = 전체 평균)"),
         hovertext=["%s — 평균 MC %s / 패밀리 %s건 / PAI %s"
                    % (r["company"], r["avg_mc"], fmt_num(r["families"]),
                       fmt_num(r["portfolio_index"])) for r in mc_sorted][::-1],
@@ -10503,7 +10588,11 @@ def _prosecution_section(df, settings):
     min_n = get_threshold(settings, "min_class_patents")
     by_comp = both[both["applicant_display"].astype(str) != ""] \
         .groupby("applicant_display")["_months"].agg(["mean", "size"])
-    by_comp = by_comp[by_comp["size"] >= min_n].sort_values("mean").head(12)
+    # 빠른 6 + 느린 6 — 빠른 순 상위 12개만 보이면 '느린 회사'(관심 대상)가
+    # 조용히 사라진다
+    _eligible = by_comp[by_comp["size"] >= min_n].sort_values("mean")
+    by_comp = (_eligible if len(_eligible) <= 12
+               else pd.concat([_eligible.head(6), _eligible.tail(6)]))
     fig_comp = None
     if len(by_comp):
         fig_comp = bar_chart(
@@ -10529,7 +10618,8 @@ def _expiry_section(df, settings):
     scope_label = "유효특허" if len(active) else "등록특허"
     scope = scope[scope["expiry_date"].notna()]
     now = pd.Timestamp.now()
-    scope = scope[scope["expiry_date"] >= now - pd.DateOffset(years=1)]
+    # '만료 예정' 차트이므로 이미 만료된 과거 건은 제외 (현재 시점부터)
+    scope = scope[scope["expiry_date"] >= now]
     if not len(scope):
         return None, "만료예정일이 있는 %s 없음" % scope_label
     years = scope["expiry_date"].dt.year
@@ -10983,10 +11073,11 @@ def compute_scope_entropy(df, settings, companies=None):
 
     country_lists = None
     if "family_countries" in work.columns:
+        # WIPS '한국-1 | 미국-0 | PCT-1' 형식 파싱: 건수 0 국가 제외, 한글
+        # 국가명→ISO 코드 변환 (portfolio_index 와 동일 파서 공유 — 단순
+        # 구분자 분리로는 '미국-0'을 보유국으로 오인하고 PCT 가 'PC'로 잘림)
         country_lists = work["family_countries"].map(
-            lambda v: sorted({str(c).strip().upper()[:2]
-                              for c in parse_multiclass_cell(v)
-                              if str(c).strip()}))
+            lambda v: sorted(set(_country_codes_of(v))))
     elif "country" in work.columns:
         country_lists = work["country"].map(
             lambda v: [str(v).strip().upper()] if str(v).strip() else [])
@@ -11017,13 +11108,19 @@ def compute_scope_entropy(df, settings, companies=None):
     entropy_by_company = {}
     for company in picked:
         values, hovers = [], []
+        valid = {}
         for d in dims:
             e = _norm_entropy(d["per"].get(company, {}), d["k"])
-            values.append(e if e is not None else 0.0)
+            values.append(e if e is not None else 0.0)  # 레이더 꼭짓점 (없음=0 표시)
+            if e is not None:
+                valid[d["key"]] = e
             hovers.append("%s: %s (범주 %d개 사용 / 전역 %d개)"
                           % (d["label"], "%.2f" % e if e is not None else "계산 불가",
                              len(d["per"].get(company, {})), d["k"]))
-        entropy_by_company[company] = {d["key"]: v for d, v in zip(dims, values)}
+        # 전체 다양성 평균은 계산 가능한 차원만 사용 — '데이터 없음'이
+        # '다양성 0'으로 평균을 끌어내리지 않게
+        entropy_by_company[company] = valid if valid else \
+            {d["key"]: 0.0 for d in dims}
         radar_traces.append({
             "type": "scatterpolar", "name": company,
             "r": values + values[:1],
@@ -11220,7 +11317,7 @@ analyses/combo_upset.py — 미점유 조합 UpSet 차트 (3개 이상 요소 �
 UpSet 차트 (Plotly 단일 figure, 위 막대 + 아래 도트 매트릭스):
   - 세로 막대: 특정 요소 조합(문헌의 추적 요소 집합이 정확히 일치)의 특허 수
   - 점·연결선: 조합에 포함된 요소 (아래 매트릭스)
-  - 막대 색: 조합 내 유효특허 비율 (RdYlGn)
+  - 막대 색: 조합 내 유효특허 비율 (빨강=낮음→초록=높음, 회색=판정 불가)
   - 막대 테두리: 최근 3년 출원이 있는 조합 (굵은 테두리)
 
 미점유 조합 (white space) 점수:
@@ -11316,7 +11413,7 @@ def compute_combo_upset(df, settings):
         bar_y.append(rec["n"])
         ratio = (rec["active_true"] / rec["active_known"]) \
             if rec["active_known"] else None
-        bar_colors.append(ratio if ratio is not None else 0.5)
+        bar_colors.append(ratio)  # None=미상 → 아래에서 회색 고정
         bar_lines.append(2.5 if rec["recent"] > 0 else 0.4)
         top_apps = sorted(rec["applicants"].items(), key=lambda kv: -kv[1])[:3]
         hovers.append("<b>%s</b><br>%d건 · 유효 %s · 최근 %d년 출원 %d건<br>주요: %s"
@@ -11325,12 +11422,24 @@ def compute_combo_upset(df, settings):
                          recent_years, rec["recent"],
                          ", ".join(a for a, _c in top_apps) or "-"))
         customs.append({"drill": {"type": "ids", "ids": rec["ids"]}})
+    # 유효비율 미상 막대는 중간색(0.5=절반 유효처럼 오독)이 아닌 회색으로 —
+    # 명시적 색상 배열로 변환 (RDYLGN: 0=빨강, 0.5=노랑, 1=초록 보간)
+    def _ratio_color(r):
+        if r is None:
+            return "#b9c4cd"  # 미상
+        stops = [(0.0, (0xE1, 0x57, 0x59)), (0.5, (0xF5, 0xC9, 0x5C)),
+                 (1.0, (0x59, 0xA1, 0x4F))]
+        r = max(0.0, min(1.0, float(r)))
+        for (p0, c0), (p1, c1) in zip(stops, stops[1:]):
+            if r <= p1:
+                f = (r - p0) / (p1 - p0) if p1 > p0 else 0.0
+                return "#%02x%02x%02x" % tuple(
+                    int(a + (b - a) * f) for a, b in zip(c0, c1))
+        return "#59A14F"
     traces = [{
         "type": "bar", "x": xs, "y": bar_y, "name": "특허 수",
         "hovertext": hovers, "hoverinfo": "text", "customdata": customs,
-        "marker": {"color": bar_colors, "colorscale": RDYLGN, "cmin": 0, "cmax": 1,
-                   "colorbar": {"title": "유효특허 비율", "thickness": 12, "y": 0.8,
-                                "len": 0.45},
+        "marker": {"color": [_ratio_color(r) for r in bar_colors],
                    "line": {"width": bar_lines, "color": "#1a2733"}},
         "yaxis": "y"}]
     # 매트릭스: 회색 배경 도트 + 멤버 도트 + 조합 연결선
@@ -12172,9 +12281,10 @@ analyses/wips_deep.py — 심층 시그널: 잘 활용되지 않는 WIPS 필드 
                  + 국가 [+우선일])
   ③ agent        대리인 전환 시그널 — 신규 대리인 등장·비중 급증 감지.
                  상관 신호이지 인과가 아니므로 "관찰된 변화"로만 표현. (대리인)
-  ④ examiner_eye 심사관의 눈 — OA(심사관) 인용 vs 출원인 자발 인용 밀도 산점도.
-                 대각선 위쪽(심사관≫자발)은 출원인들이 선행기술을 과소평가하는
-                 영역 → 무효 리스크 신호. (심사관/출원인 인용문헌 수)
+  ④ examiner_eye 심사관의 눈 — OA(심사관) 인용 vs 출원인측 인용 밀도 산점도.
+                 출원인측 인용은 WIPS '자기인용 문헌번호'(자사 선행 인용) 기준.
+                 대각선 위쪽(심사관≫출원인측)은 심사관이 별도 선행기술을 다수
+                 발굴한 영역 → 무효 리스크 신호. (심사관/출원인측 인용문헌 수)
   ⑤ expedited    우선심사·조기공개 — 사업화 긴급도의 자기 신고. 기술×연도 버블
                  (크기=출원, 색=우선심사 비율) + 급등 영역. (우선심사 여부)
   ⑥ divisional   분할·계속출원 타이밍 — 기업별 분할출원 타임라인과 단기 집중
@@ -12339,7 +12449,7 @@ def _survival_section(df, settings):
             "surv_10y": round(_km_at(times, probs, 10.0), 3),
             "surv_18y": round(_km_at(times, probs, 18.0), 3),
             "median": _km_median(times, probs),
-            "drill": {"type": "tech", "tech": str(tech)}})
+            "drill": {"type": "tech", "tech": str(tech), "tech_primary": True}})
     if not traces:
         # 분류가 부족하면 전체 곡선 하나
         trace, _t, _p = _km_trace(sub, "전체")
@@ -12549,7 +12659,7 @@ def _agent_section(df, settings):
 
 
 # ---------------------------------------------------------------------------
-# ④ 심사관의 눈 (OA 인용 vs 자발 인용)
+# ④ 심사관의 눈 (OA 인용 vs 출원인측 인용)
 # ---------------------------------------------------------------------------
 def _examiner_eye_section(df, settings):
     if "examiner_citations" not in df.columns:
@@ -12573,7 +12683,7 @@ def _examiner_eye_section(df, settings):
                      "applicant_avg": round(float(g["_apl"].mean()), 2)
                      if has_apl and g.get("_apl") is not None
                      and g["_apl"].notna().any() else None,
-                     "drill": {"type": "tech", "tech": str(tech)}})
+                     "drill": {"type": "tech", "tech": str(tech), "tech_primary": True}})
     if not rows:
         return None, "기술분류별 표본 부족"
     if has_apl and any(r["applicant_avg"] is not None for r in rows):
@@ -12589,7 +12699,7 @@ def _examiner_eye_section(df, settings):
             {"type": "scatter", "mode": "markers+text", "x": xs, "y": ys,
              "text": [r["tech"][:14] for r in rows], "textposition": "top center",
              "textfont": {"size": 9},
-             "hovertext": ["%s — 심사관 평균 %.2f vs 자발 평균 %.2f (%d건)"
+             "hovertext": ["%s — 심사관 평균 %.2f vs 출원인측 평균 %.2f (%d건)"
                            % (r["tech"], r["examiner_avg"], r["applicant_avg"] or 0,
                               r["n"]) for r in rows],
              "hoverinfo": "text",
@@ -12599,8 +12709,8 @@ def _examiner_eye_section(df, settings):
                         "color": ["#E15759" if r in risky else "#4E79A7"
                                   for r in rows]}}],
             "layout": base_layout(
-                "심사관의 눈 — OA 인용 vs 출원인 자발 인용 (대각선 위=선행기술 과소평가 영역)",
-                xaxis={"title": "출원인 자발 인용 평균 (건)", "range": [0, lim]},
+                "심사관의 눈 — OA 인용 vs 출원인측 인용 (대각선 위=심사관이 별도 선행기술 다수 발굴)",
+                xaxis={"title": "출원인측 인용 평균 (건 · WIPS 자기인용 기준)", "range": [0, lim]},
                 yaxis={"title": "심사관(OA) 인용 평균 (건)", "range": [0, lim]})}
         return {"fig": fig, "rows": rows,
                 "risky": [r["tech"] for r in risky]}, None
@@ -12643,7 +12753,7 @@ def _expedited_section(df, settings):
         pts["color"].append(round(ratio, 3))
         pts["hover"].append("%s %d년: 출원 %d건, 우선심사 %s"
                             % (tech, y, n, fmt_pct(ratio)))
-        pts["custom"].append({"drill": {"type": "tech", "tech": str(tech),
+        pts["custom"].append({"drill": {"type": "tech", "tech": str(tech), "tech_primary": True,
                                         "year": int(y)}})
     fig = {"data": [{"type": "scatter", "mode": "markers",
                      "x": pts["x"], "y": pts["y"],
@@ -12670,14 +12780,18 @@ def _expedited_section(df, settings):
         if len(rec) < 5:
             continue
         r_rec = float(pd.Series([v is True for v in rec["_exp"]]).mean())
+        # 이전 구간 표본이 부족하면 0%로 가장하지 않고 '표본 부족'으로 구분
+        # (0.0 강제 시 delta 가 인위적으로 부풀어 급등 순위가 왜곡됨)
         r_old = float(pd.Series([v is True for v in old["_exp"]]).mean()) \
-            if len(old) >= 5 else 0.0
+            if len(old) >= 5 else None
         surge.append({"tech": str(tech), "recent_ratio": round(r_rec, 3),
-                      "prior_ratio": round(r_old, 3),
-                      "delta": round(r_rec - r_old, 3),
+                      "prior_ratio": round(r_old, 3) if r_old is not None else None,
+                      "prior_note": None if r_old is not None else "이전 구간 표본 부족",
+                      "delta": round(r_rec - r_old, 3) if r_old is not None else None,
                       "n_recent": int(len(rec)),
-                      "drill": {"type": "tech", "tech": str(tech)}})
-    surge.sort(key=lambda s: -s["delta"])
+                      "drill": {"type": "tech", "tech": str(tech),
+                                "tech_primary": True}})
+    surge.sort(key=lambda s: -(s["delta"] if s["delta"] is not None else -9))
     return {"fig": fig, "surge": surge[:10],
             "overall_ratio": round(float(pd.Series(
                 [v is True for v in sub["_exp"]]).mean()), 3)}, None
@@ -12912,7 +13026,8 @@ def _trial_section(df, settings):
                             title="기술분류별 심판 건수 — 심판이 몰린 분류가 상업적 격전지",
                             orientation="h", x_title="심판 건수",
                             hovertext=hover[::-1],
-                            customdata=[{"drill": {"type": "tech", "tech": str(t)}}
+                            customdata=[{"drill": {"type": "tech", "tech": str(t),
+                                                   "tech_primary": True}}
                                         for t in by_tech.index][::-1])
     network = None
     top_target = None
@@ -13185,12 +13300,12 @@ def compute_wips_deep(df, settings, only_sections=None, company=None):
                          % (s0["company"], s0["year"], s0["new_agent"],
                             fmt_pct(s0["share"])))
     if "examiner_eye" in sections and sections["examiner_eye"]["risky"]:
-        sentences.append("심사관 인용이 자발 인용보다 훨씬 많은 분류(%s)는 출원인들이 "
+        sentences.append("심사관 인용이 출원인측 인용보다 훨씬 많은 분류(%s)는 출원인들이 "
                          "선행기술을 과소평가하는 영역으로, 무효 리스크 검토 후보입니다."
                          % ", ".join(sections["examiner_eye"]["risky"][:3]))
     if "expedited" in sections and sections["expedited"]["surge"]:
         s0 = sections["expedited"]["surge"][0]
-        if s0["delta"] > 0.05:
+        if s0["delta"] is not None and s0["delta"] > 0.05:
             sentences.append("우선심사 비율이 가장 급등한 분류는 '%s'(%s→%s)로, 향후 "
                              "1~2년 내 제품화 가능성이 높은 영역입니다."
                              % (s0["tech"], fmt_pct(s0["prior_ratio"]),
@@ -13278,8 +13393,14 @@ def _expiry_cliff_section(df, settings, focal):
         exp_year = df["expiry_date"].dt.year
         basis = "만료예정일 컬럼"
     elif "reg_date" in df.columns and df["reg_date"].notna().any():
-        exp_year = df["reg_date"].dt.year + 20
-        basis = "등록일 + 20년 (만료예정일 미매핑 — 근사치)"
+        # 특허 존속기간은 '출원일'로부터 20년 — 등록일 기준 +20년은 심사 기간
+        # (~2-3년)만큼 만료를 과대 추정한다
+        base_col = "app_date" if "app_date" in df.columns and \
+            df["app_date"].notna().any() else "reg_date"
+        exp_year = df[base_col].dt.year + 20
+        basis = ("출원일 + 20년 (만료예정일 미매핑 — 존속기간 규정 기준 근사)"
+                 if base_col == "app_date"
+                 else "등록일 + 20년 (만료예정일·출원일 미매핑 — 근사치)")
     else:
         return None, "만료예정일 또는 등록일 컬럼 필요"
     now_y = pd.Timestamp.now().year
@@ -13476,7 +13597,15 @@ def _keyman_section(df, settings, focal):
     total = sum(inv_counts.values())
     s = pd.Series(inv_counts).sort_values(ascending=False)
     n_top10 = max(1, int(np.ceil(len(s) * 0.10)))
-    top10_share = float(s.head(n_top10).sum()) / total
+    # '상위 10% 발명자 특허 점유율' = 상위 발명자가 1명이라도 참여한 특허 수 ÷
+    # 전체 특허 수 (발명 참여 슬롯 비중이 아니라 특허 기준 — 라벨과 일치)
+    top10_set = set(str(k) for k in s.head(n_top10).index)
+    with_inv = g[g["_inventor_list"].map(
+        lambda lst: any(str(i).strip() for i in (lst or [])))]
+    n_docs = int(len(with_inv))
+    n_top_docs = int(with_inv["_inventor_list"].map(
+        lambda lst: bool(top10_set & {str(i).strip() for i in (lst or [])})).sum())
+    top10_share = (n_top_docs / float(n_docs)) if n_docs else 0.0
     hhi = float(((s / total) ** 2).sum())
     max_year = int(df["_base_year"].dropna().max())
     top = s.head(12)
@@ -14130,7 +14259,7 @@ def _science_section(df, settings):
                            for t, m, n in zip(by_tech.index, by_tech["mean"],
                                               by_tech["size"])],
                 # drill: 해당 분류에서 실제 NPL 을 인용한 특허만
-                customdata=[{"drill": {"type": "tech", "tech": str(t),
+                customdata=[{"drill": {"type": "tech", "tech": str(t), "tech_primary": True,
                                        "npl_cited": True}}
                             for t in by_tech.index])
     fig_comp = None

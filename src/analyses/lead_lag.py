@@ -66,7 +66,10 @@ def compute_lead_lag(df, settings, min_repeat=1):
             for b in eligible[i + 1:]:
                 lag, corr = cross_correlation_lag(pivot[a], pivot[b], max_lag=max_lag,
                                                   min_overlap=min_years)
-                if lag is None or corr is None or abs(corr) < min_corr or lag == 0:
+                # 음(-)의 상관(선행 기업 증가 → 상대 감소)은 "따라 늘어나는
+                # 선행-추종 패턴"이 아니므로 제외 — |corr| 사용 시 역상관이
+                # 상관 1.0 으로 둔갑하던 문제 방지
+                if lag is None or corr is None or corr < min_corr or lag == 0:
                     continue
                 leader, follower = (a, b) if lag > 0 else (b, a)
                 observations.append({"leader": str(leader), "follower": str(follower),
@@ -85,7 +88,7 @@ def compute_lead_lag(df, settings, min_repeat=1):
                                    "techs": [], "lags": [], "corrs": []})
         rec["techs"].append(o["tech"])
         rec["lags"].append(o["lag"])
-        rec["corrs"].append(abs(o["corr"]))
+        rec["corrs"].append(o["corr"])  # 양의 상관만 통과했으므로 부호 그대로
     relations = []
     for rec in agg.values():
         n_obs = len(rec["techs"])

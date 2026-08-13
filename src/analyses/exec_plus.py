@@ -51,8 +51,14 @@ def _expiry_cliff_section(df, settings, focal):
         exp_year = df["expiry_date"].dt.year
         basis = "만료예정일 컬럼"
     elif "reg_date" in df.columns and df["reg_date"].notna().any():
-        exp_year = df["reg_date"].dt.year + 20
-        basis = "등록일 + 20년 (만료예정일 미매핑 — 근사치)"
+        # 특허 존속기간은 '출원일'로부터 20년 — 등록일 기준 +20년은 심사 기간
+        # (~2-3년)만큼 만료를 과대 추정한다
+        base_col = "app_date" if "app_date" in df.columns and \
+            df["app_date"].notna().any() else "reg_date"
+        exp_year = df[base_col].dt.year + 20
+        basis = ("출원일 + 20년 (만료예정일 미매핑 — 존속기간 규정 기준 근사)"
+                 if base_col == "app_date"
+                 else "등록일 + 20년 (만료예정일·출원일 미매핑 — 근사치)")
     else:
         return None, "만료예정일 또는 등록일 컬럼 필요"
     now_y = pd.Timestamp.now().year
@@ -249,7 +255,15 @@ def _keyman_section(df, settings, focal):
     total = sum(inv_counts.values())
     s = pd.Series(inv_counts).sort_values(ascending=False)
     n_top10 = max(1, int(np.ceil(len(s) * 0.10)))
-    top10_share = float(s.head(n_top10).sum()) / total
+    # '상위 10% 발명자 특허 점유율' = 상위 발명자가 1명이라도 참여한 특허 수 ÷
+    # 전체 특허 수 (발명 참여 슬롯 비중이 아니라 특허 기준 — 라벨과 일치)
+    top10_set = set(str(k) for k in s.head(n_top10).index)
+    with_inv = g[g["_inventor_list"].map(
+        lambda lst: any(str(i).strip() for i in (lst or [])))]
+    n_docs = int(len(with_inv))
+    n_top_docs = int(with_inv["_inventor_list"].map(
+        lambda lst: bool(top10_set & {str(i).strip() for i in (lst or [])})).sum())
+    top10_share = (n_top_docs / float(n_docs)) if n_docs else 0.0
     hhi = float(((s / total) ** 2).sum())
     max_year = int(df["_base_year"].dropna().max())
     top = s.head(12)

@@ -12,14 +12,14 @@ analyses/trajectory.py — 4.4 Technology Trajectory Map (기업별 전략 이�
 계산식:
   1) 기업·연도별 기술분류 구성비 벡터 (company_tech_shares(by_year=True))
      - 출원량 차이 왜곡 방지: weighting='share'(구성비) 또는 'tfidf'
-       (구성비 × log(전체 기업 수 / 해당 분류 보유 기업 수)) 선택 옵션.
+       (구성비 × log((기업×연도 관측 수+1)/(분류 보유 관측 수+1))+1 — IDF 유사 가중).
   2) 차원축소: method='pca'(기본) | 'umap' — UMAP 불가 시 PCA 자동 폴백 (gpu_utils).
   3) 기업별 연도 순 점 연결 화살표, 이동거리 = 연속 연도 좌표 간 유클리드 거리 합.
 
-그래프: 점(기업×연도), 크기=해당 연도 유효 패밀리 수, 색=기업,
+그래프: 점(기업×연도), 크기=해당 연도 유효 문헌 수, 색=기업,
         hover=주요 기술분류 Top3·비중, 화살표=연도 순 이동.
 Drill-down: 점 클릭 {"type":"applicant","applicant":…,"year":…}.
-자동 인사이트: 이동거리 상위 기업, 최근 방향 전환 기업.
+자동 인사이트: 이동거리 상위 기업, 가장 안정적인 기업.
 예외처리: 최소 관측(기업당 2개 연도, 연도당 min_class_patents 건) 미달 기업 제외.
 대상 기업: companies 파라미터 또는 출원 상위 trajectory_max_companies 개.
 """

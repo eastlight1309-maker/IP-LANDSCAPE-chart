@@ -76,7 +76,9 @@ def _new_combos(df, settings, top_n):
                     "first_year": int(min(ys)),
                     "new_applicants": len(r["new_applicants"]),
                     "drill": {"type": "combo", "a": r["a"], "b": r["b"]}})
-    return sorted(out, key=lambda x: (-x["count"], -x["new_applicants"]))[:top_n]
+    # 전체 목록 반환 — 표시는 호출부에서 절단하고, 인사이트의 '관측 N개'는
+    # 절단 전 전체 수를 사용한다
+    return sorted(out, key=lambda x: (-x["count"], -x["new_applicants"]))
 
 
 def _strategy_changes(df, settings, top_n):
@@ -196,7 +198,8 @@ def compute_overview(df, settings):
         return empty_result()
     top_n = int(get_limit(settings, "top_n_default"))
     growing, declining, tech_meta = _tech_growth_lists(df, settings, top_n)
-    new_combos = _new_combos(df, settings, top_n)
+    new_combos_all = _new_combos(df, settings, top_n)
+    new_combos = new_combos_all[:top_n]
     strategy = _strategy_changes(df, settings, 5)
     barriers, whitespace = _barrier_and_whitespace(df, settings, 5)
     alerts = _alerts(df)
@@ -221,18 +224,18 @@ def compute_overview(df, settings):
     if growing:
         g0 = growing[0]
         sentences.append(
-            "%s 기준 전체 %s건 중 최근 성장률 1위 기술은 '%s'(성장률 %s, 최근 %s건)로 "
-            "상위 %s 내 성장 기술로 분류됩니다."
+            "%s 기준 전체 %s건 중 최근 성장률 1위 기술은 '%s'(성장률 %s, 최근 %s건)"
+            "입니다 — 표본 조건을 충족한 %s개 분류 중 1위."
             % (period, fmt_num(kpi["total"]), g0["tech"], fmt_pct(g0["growth"]),
-               fmt_num(g0["recent"]), "10%"))
+               fmt_num(g0["recent"]), fmt_num(tech_meta.get("n_tech", 0))))
         metrics["top_growth_tech"] = g0["tech"]
         metrics["top_growth_rate"] = g0["growth"]
     if new_combos:
         sentences.append(
             "최근 %d년 내 처음 출현한 기술조합이 %s개 관측되었으며, 최다 조합은 '%s × %s'(%s건)입니다."
-            % (int(get_threshold(settings, "recent_years")), fmt_num(len(new_combos)),
+            % (int(get_threshold(settings, "recent_years")), fmt_num(len(new_combos_all)),
                new_combos[0]["a"], new_combos[0]["b"], fmt_num(new_combos[0]["count"])))
-        metrics["new_combo_count"] = len(new_combos)
+        metrics["new_combo_count"] = len(new_combos_all)
     if strategy:
         sentences.append(
             "포트폴리오 구성 변화가 가장 큰 기업은 '%s'(코사인 거리 %s)이며, 비중 확대 1위 분류는 '%s'입니다."

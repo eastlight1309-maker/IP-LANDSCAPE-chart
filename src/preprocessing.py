@@ -298,7 +298,13 @@ def auto_standardize_name(name):
         changed = False
         low = s.lower()
         for suf in _CORP_SUFFIXES:
-            if low.endswith(" " + suf) or low == suf or low.endswith(suf):
+            # 영문(ASCII) 접미사는 단어 경계 필수 — 경계 없이 자르면
+            # POSCO→POS, SUMCO→SUM 같은 오절단이 생긴다. 한글 접미사는
+            # 붙여쓰기 관행(삼성전자주식회사)이 있어 경계 없이도 허용.
+            ascii_suf = bool(re.fullmatch(r"[\x00-\x7F]+", suf))
+            hit = (low == suf or low.endswith(" " + suf)
+                   or (not ascii_suf and low.endswith(suf)))
+            if hit:
                 cut = len(s) - len(suf)
                 trimmed = s[:cut].strip(" ,.-·")
                 if trimmed:
@@ -331,11 +337,23 @@ def split_names(value):
     for sep in ("|", ";", "\n"):
         if sep in s:
             return [p.strip() for p in s.split(sep) if p.strip()]
-    # 쉼표는 "성, 이름" 오분리 위험이 있어 ', ' + 대문자/한글 시작 패턴만 분리
-    if ", " in s and len(s.split(", ")) > 1 and all(len(p.strip()) > 1 for p in s.split(", ")):
-        return [p.strip() for p in s.split(", ") if p.strip()]
+    # 쉼표 분리: "SAMSUNG ELECTRONICS CO., LTD." 같은 단일 영문 법인명이
+    # 유령 공동출원인("LTD.")으로 쪼개지지 않도록, 분리 결과에 법인 접미사
+    # 토큰이 있으면 분리하지 않는다.
+    if ", " in s:
+        parts = [p.strip() for p in s.split(", ") if p.strip()]
+        if len(parts) > 1 and all(len(p) > 1 for p in parts):
+            lows = {p.lower().strip(" .").strip() for p in parts}
+            if not (lows & _COMMA_CORP_TOKENS):
+                return parts
     return [s]
 
+
+# 쉼표 분리 금지 판정용 법인 접미사 토큰 (split_names)
+_COMMA_CORP_TOKENS = frozenset([
+    "ltd", "ltd.", "inc", "inc.", "llc", "l.l.c", "co", "co.", "corp", "corp.",
+    "limited", "plc", "gmbh", "ag", "sa", "s.a", "spa", "s.p.a", "bv", "b.v",
+    "nv", "n.v", "kk", "k.k", "kg"])
 
 _NUMERIC_ONLY_RE = re.compile(r"^[+-]?\d+(\.\d+)?$")
 
@@ -543,6 +561,17 @@ def build_standard_frame(raw_df, mapping, applicant_rules=None):
     # 동일 실제 컬럼이 두 개념에 매핑될 수는 없음(automap 이 보장) — 방어적으로 중복 제거
     df = df.loc[:, ~df.columns.duplicated()]
 
+    # 텍스트 계열 개념의 결측(NaN)은 빈 문자열로 통일 — pandas 3 부터
+    # astype(str) 가 NaN 을 'nan' 문자열로 바꾸지 않아, 'nan' 문자열 가드에
+    # 의존하던 비어있음 판정이 실제 Excel/CSV 업로드(NaN)에서 전부 깨진다
+    # (심판·국가과제·분할·표준특허 등 섹션이 전 문헌을 값 보유로 오인).
+    from src.column_mapping import concept_kind as _ckind
+    for c in df.columns:
+        if _ckind(c) in ("date", "number", "bool"):
+            continue
+        if df[c].dtype == object or str(df[c].dtype).startswith("str"):
+            df[c] = df[c].fillna("")
+
     raw_date_strs = {}
     for date_col in ("app_date", "pub_date", "reg_date", "priority_date", "expiry_date",
                      "lapse_date", "exam_request_date", "sep_date", "assign_date"):
@@ -714,10 +743,12 @@ def dedupe_families(df):
     if "family_rep" in work.columns and "pub_number" in work.columns:
         rep_match = (work["family_rep"].astype(str).str.strip()
                      == work["pub_number"].astype(str).str.strip()).map(lambda b: 0 if b else 1)
-    prio_date = work["priority_date"] if "priority_date" in work.columns else None
-    if prio_date is None or prio_date.isna().all():
-        prio_date = work["app_date"] if "app_date" in work.columns else pd.Series(
-            [pd.NaT] * len(work), index=work.index)
+    # 우선일 없는 '행'은 그 행의 출원일로 폴백 (행 단위 — 컬럼 전체 기준으로
+    # 폴백하면 우선일 결측 행이 항상 후순위가 되어 '가장 이른 문헌' 선택이 깨짐)
+    prio_date = (work["priority_date"] if "priority_date" in work.columns
+                 else pd.Series(pd.NaT, index=work.index))
+    if "app_date" in work.columns:
+        prio_date = prio_date.fillna(work["app_date"])
     completeness = work.apply(lambda r: -_completeness_score(r, text_cols), axis=1) if text_cols \
         else pd.Series([0] * len(work), index=work.index)
     country_rank = (work["country"].astype(str).str.strip().str.upper().map(
@@ -745,9 +776,7 @@ def apply_analysis_unit(df, unit):
     if unit == "family":
         return dedupe_families(df)
     if unit == "registration":
-        mask = df["_is_granted_bool"].map(lambda v: v is True)
-        sub = df[mask]
-        return sub if len(sub) else df.iloc[0:0]
+        return df[df["_is_granted_bool"].map(lambda v: v is True)]
     return df  # publication / application: 문헌 단위 그대로
 
 

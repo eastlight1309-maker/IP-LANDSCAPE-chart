@@ -1963,9 +1963,9 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
                 }));
             }
             if (s.examiner_eye) {
-              head('④ 심사관의 눈 — OA 인용 vs 자발 인용');
+              head('④ 심사관의 눈 — OA 인용 vs 출원인측 인용');
               addFig(s.examiner_eye.fig,
-                'X축=출원인 자발 인용 평균, Y축=심사관(OA) 인용 평균, 점=기술분류. 읽는 법: ' +
+                'X축=출원인측 인용 평균(WIPS 자기인용 문헌번호 기준), Y축=심사관(OA) 인용 평균, 점=기술분류. 읽는 법: ' +
                 '점선(대각선) 위쪽으로 크게 벗어난 빨간 분류는 심사관이 본 선행기술은 많은데 ' +
                 '출원인들은 적게 인용하는 영역 = 선행기술 과소평가 → 등록되어도 무효 리스크가 ' +
                 '높을 수 있는 영역입니다.');
@@ -1984,8 +1984,10 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
                   tr.appendChild(td0);
                   tr.insertAdjacentHTML('beforeend',
                     '<td class="num">' + Ui.pct(x.recent_ratio) + '</td>' +
-                    '<td class="num">' + Ui.pct(x.prior_ratio) + '</td>' +
-                    '<td class="num">' + (x.delta > 0 ? '+' : '') + Ui.pct(x.delta) + '</td>' +
+                    '<td class="num">' + (x.prior_ratio !== null && x.prior_ratio !== undefined ?
+                      Ui.pct(x.prior_ratio) : '<span title="이전 구간 표본 부족">표본 부족</span>') + '</td>' +
+                    '<td class="num">' + (x.delta !== null && x.delta !== undefined ?
+                      ((x.delta > 0 ? '+' : '') + Ui.pct(x.delta)) : '-') + '</td>' +
                     '<td class="num">' + x.n_recent + '</td>');
                   return tr;
                 }));
@@ -2223,7 +2225,7 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
         '시차로 시장 베팅 순서를 읽습니다.'),
       deepTab('시그널: 심사 이력', ['examiner_eye', 'expedited', 'anomaly'],
         '심층 시그널 — 심사관 인용 · 우선심사 · 심사기간 이상탐지',
-        '심사관(OA) 인용 vs 자발 인용 격차로 무효 리스크 후보 영역을, 우선심사 비율 급등으로 ' +
+        '심사관(OA) 인용 vs 출원인측 인용 격차로 무효 리스크 후보 영역을, 우선심사 비율 급등으로 ' +
         '사업화 임박 신호를, 심사 소요기간 이상치로 강한 권리 후보를 찾습니다.'),
       deepTab('시그널: 출원 행태', ['agent', 'divisional', 'disclosure'],
         '심층 시그널 — 대리인 전환 · 분할출원 · 개시 충실도',
@@ -2994,7 +2996,7 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
           '<b style="font-size:12px">가중치 (즉시 반영)</b></div>');
         var labels = { growth: '성장률', new_entrants: '신규 출원인', combo_growth: '조합 증가',
           keyword_growth: '키워드 증가', problem_recurrence: '과제 반복', adjacency: '인접 연결성',
-          barrier: '권리장벽(분모)' };
+          barrier: '권리장벽 가중(진입 감점)' };
         var weights = Object.assign({}, r.weights);
         function recompute() {
           var areas = r.areas || [];
@@ -3058,7 +3060,7 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
         '2차원 히트맵으로는 보이지 않는 3개 이상 요소의 교집합을 UpSet 형식으로 보여주고, ' +
         '개별 요소는 혼잡하지만 결합 청구가 비어 있는 미점유 조합 후보를 기대-실제 격차 점수로 도출합니다.',
       guide: '위 막대: 높이=해당 요소 조합(아래 점들이 표시)의 특허 수, 색=유효특허 비율' +
-        '(초록=대부분 유효, 빨강=대부분 소멸), 굵은 테두리=최근 3년 출원 있음. ' +
+        '(초록=대부분 유효, 빨강=대부분 소멸, 회색=법적상태 정보가 없어 판정 불가), 굵은 테두리=최근 3년 출원 있음. ' +
         '아래 매트릭스: 각 세로줄이 하나의 조합이며 진한 점=조합에 포함된 요소, 점을 잇는 ' +
         '세로선=다중 요소 교집합. 막대 클릭 시 해당 조합의 근거 특허가 열립니다. ' +
         '읽는 법: 왼쪽의 큰 막대는 이미 혼잡한 조합(경쟁 심함), 미점유 후보 표의 조합은 ' +

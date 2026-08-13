@@ -61,7 +61,11 @@ def _prosecution_section(df, settings):
     min_n = get_threshold(settings, "min_class_patents")
     by_comp = both[both["applicant_display"].astype(str) != ""] \
         .groupby("applicant_display")["_months"].agg(["mean", "size"])
-    by_comp = by_comp[by_comp["size"] >= min_n].sort_values("mean").head(12)
+    # 빠른 6 + 느린 6 — 빠른 순 상위 12개만 보이면 '느린 회사'(관심 대상)가
+    # 조용히 사라진다
+    _eligible = by_comp[by_comp["size"] >= min_n].sort_values("mean")
+    by_comp = (_eligible if len(_eligible) <= 12
+               else pd.concat([_eligible.head(6), _eligible.tail(6)]))
     fig_comp = None
     if len(by_comp):
         fig_comp = bar_chart(
@@ -87,7 +91,8 @@ def _expiry_section(df, settings):
     scope_label = "유효특허" if len(active) else "등록특허"
     scope = scope[scope["expiry_date"].notna()]
     now = pd.Timestamp.now()
-    scope = scope[scope["expiry_date"] >= now - pd.DateOffset(years=1)]
+    # '만료 예정' 차트이므로 이미 만료된 과거 건은 제외 (현재 시점부터)
+    scope = scope[scope["expiry_date"] >= now]
     if not len(scope):
         return None, "만료예정일이 있는 %s 없음" % scope_label
     years = scope["expiry_date"].dt.year

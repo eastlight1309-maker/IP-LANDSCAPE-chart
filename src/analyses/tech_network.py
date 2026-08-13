@@ -7,10 +7,10 @@ analyses/tech_network.py — 4.2 기술분류 조합 네트워크.
   중심축·커뮤니티·최근 성장 조합을 파악한다.
 
 필수 컬럼: 기술분류(any)
-선택 컬럼: 패밀리 ID(노드 크기=패밀리 수), 날짜(성장률·최근 조합), 출원인(신규 출원인)
+선택 컬럼: 날짜(성장률·최근 조합), 출원인(신규 출원인)
 
 그래프 구성 (Cytoscape.js):
-- 노드: 기술분류 / 크기: 패밀리(문헌) 수 / 색상: 대분류 또는 Louvain 커뮤니티
+- 노드: 기술분류 / 크기: 문헌 수 / 색상: 대분류 또는 Louvain 커뮤니티
 - 테두리 색: 최근 성장률 (양수=초록, 음수=빨강, 불명=회색)
 - 엣지: 동시분류 / 두께: 동시분류 강도(Jaccard) / hover: 지표 전체
 
@@ -89,6 +89,7 @@ def compute_tech_network(df, settings, scope="all", company=None, color_by="l1")
 
     max_edges = get_limit(settings, "network_max_edges")
     max_nodes = get_limit(settings, "network_max_nodes")
+    n_pairs_all = len(pairs)
     pairs = pairs.sort_values("n_ab", ascending=False).head(max_edges)
 
     # 엣지 지표 계산
@@ -190,4 +191,4 @@ def compute_tech_network(df, settings, scope="all", company=None, color_by="l1")
         "network": cytoscape_network(nodes_payload, edges_payload),
         "scope": scope, "company": company,
         "n_nodes": len(nodes_payload), "n_edges": len(edges_payload),
-    }, insight=insight, meta={"truncated": len(pairs) >= get_limit(settings, "network_max_edges")})
+    }, insight=insight, meta={"truncated": n_pairs_all > len(pairs)})
