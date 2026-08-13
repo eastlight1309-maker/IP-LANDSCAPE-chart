@@ -498,7 +498,7 @@ def _expedited_section(df, settings):
                             % (tech, y, n, fmt_pct(ratio)))
         pts["custom"].append({"drill": {"type": "tech", "tech": str(tech), "tech_primary": True,
                                         "year": int(y)}})
-    fig = {"data": [{"type": "scatter", "mode": "markers",
+    fig = {"data": [{"type": "scatter", "mode": "markers", "cliponaxis": False,
                      "x": pts["x"], "y": pts["y"],
                      "hovertext": pts["hover"], "hoverinfo": "text",
                      "customdata": pts["custom"],

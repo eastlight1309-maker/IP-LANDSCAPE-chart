@@ -341,15 +341,34 @@ def compute_opportunity(df, settings, company=None):
             what = "관망"
         return what
 
+    # 상위 5개 주석: 그리디 충돌 회피 배치 — 라벨 상자(2줄)가 서로 겹치면
+    # 다음 후보 오프셋으로 옮기고, 자리가 없으면 그 주석은 생략한다.
     key_anns = []
+    placed_boxes = []  # (nx, ny) 라벨 중심 (0~1 축 좌표 근사)
+    cand_offsets = [(70, -50), (-70, -50), (90, 30), (-90, 30), (110, -80),
+                    (-110, -80), (0, -95), (0, 70), (130, -20), (-130, -20)]
     for rank, r in enumerate(shown[:5], start=1):
-        side = 1 if rank % 2 else -1
+        best = None
+        for ax_px, ay_px in cand_offsets:
+            # 플롯 ~880×520px 근사: 픽셀 오프셋 → 축 좌표 변위
+            nx = r["attractiveness"] + ax_px / 880.0
+            ny = r["entry_possibility"] - ay_px / 520.0
+            if not (0.0 <= nx <= 1.02 and -0.02 <= ny <= 1.06):
+                continue  # 플롯 밖으로 나가는 위치 제외
+            if all(abs(nx - px) > 0.20 or abs(ny - py) > 0.12
+                   for px, py in placed_boxes):
+                best = (ax_px, ay_px, nx, ny)
+                break
+        if best is None:
+            continue  # 겹치지 않을 자리가 없으면 겹쳐 쓰지 않고 생략
+        ax_px, ay_px, nx, ny = best
+        placed_boxes.append((nx, ny))
         key_anns.append({
             "x": r["attractiveness"], "y": r["entry_possibility"],
             "xref": "x", "yref": "y", "showarrow": True,
             "arrowhead": 2, "arrowsize": 0.9, "arrowwidth": 1.2,
             "arrowcolor": "#5b7a8a",
-            "ax": side * 70, "ay": -46 - (rank // 2) * 22,
+            "ax": ax_px, "ay": ay_px,
             "text": "<b>%d위 %s</b><br>기회 %.2f · %s"
                     % (rank, str(r["tech"])[:14], r["opportunity_score"],
                        _bubble_note(r)),

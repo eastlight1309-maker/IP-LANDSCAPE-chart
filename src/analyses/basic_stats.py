@@ -171,9 +171,15 @@ def compute_basic_stats(df, settings, company=None):
                                                              "year": int(y)}),
                                       "m": {"출원인": str(a), "연도": int(y),
                                             "출원건수": int(v)}})
+        _bub_cut = sorted(pts["color"], reverse=True)[:12][-1] \
+            if pts["color"] else 0
+        _bub_cut = max(_bub_cut, 2)
         fig_app_bubble = {"data": [{
-            "type": "scatter", "mode": "markers",
+            "type": "scatter", "mode": "markers+text", "cliponaxis": False,
             "x": pts["x"], "y": pts["y"],
+            "text": [(fmt_num(v) if v >= _bub_cut else "") for v in pts["color"]],
+            "textposition": "middle center",
+            "textfont": {"size": 9, "color": "#1f3550"},
             "hovertext": pts["hover"], "hoverinfo": "text",
             "customdata": pts["custom"],
             "marker": {"size": pts["size"], "color": pts["color"],
@@ -564,7 +570,7 @@ def compute_company_focus(df, settings, company=None):
                               "급부상": "예" if r["rising"] else ""}})
     x_max = max(xs)
     fig = {"data": [{
-        "type": "scatter", "mode": "markers",
+        "type": "scatter", "mode": "markers", "cliponaxis": False,
         "x": xs, "y": ys,
         "hovertext": hovers, "hoverinfo": "text", "customdata": customs,
         "marker": {"size": sizes, "color": colors, "opacity": 0.85,
@@ -677,9 +683,40 @@ def compute_tech_year_bubble(df, settings, companies=None, level=None):
     Drill: 버블 클릭 → 해당 (기술분류 × 연도 [× 출원인]) 특허.
     """
     from src.viz_payload import color_for
-    level = level if level in ("l1", "l2", "l3") else None
+    level = level if level in ("l1", "l2", "l3", "path") else None
     tech_col, level_label, drill_key = "_tech_list", "통합", "tech"
-    if level:
+    path_drills = {}
+    if level == "path":
+        # 계층 보기: 각 문헌의 대›중›소 대표 분류를 하나의 경로 행으로 —
+        # Y축에서 어느 소분류가 어느 중·대분류에 속하는지 바로 보인다
+        lv_cols = [c for c in ("_tech_l1_list", "_tech_l2_list", "_tech_l3_list")
+                   if c in df.columns and df[c].map(lambda v: bool(v)).any()]
+        if len(lv_cols) < 2:
+            return empty_result("계층 보기는 대/중(/소) 분류가 2개 레벨 이상 매핑된 "
+                                "경우에만 가능합니다 — Settings → 컬럼 매핑을 확인하세요.")
+        lv_keys = {"_tech_l1_list": "tech_l1", "_tech_l2_list": "tech_l2",
+                   "_tech_l3_list": "tech_l3"}
+        df = df.copy()
+        paths = []
+        for vals in zip(*[df[c] for c in lv_cols]):
+            segs = []
+            for lst in vals:
+                v = (lst or [None])[0]
+                s = "" if v is None else str(v).strip()
+                if not s or s.lower() in ("nan", "none", "-"):
+                    break
+                segs.append(s)
+            if segs:
+                path = " › ".join(segs)
+                paths.append([path])
+                if path not in path_drills:
+                    path_drills[path] = {lv_keys[lv_cols[i]]: seg
+                                         for i, seg in enumerate(segs)}
+            else:
+                paths.append([])
+        df["_bubble_path_list"] = paths
+        tech_col, level_label, drill_key = "_bubble_path_list", "대›중›소 계층", "path"
+    elif level:
         cand = "_tech_%s_list" % level
         names = {"l1": "대분류", "l2": "중분류", "l3": "소분류"}
         if cand not in df.columns or not df[cand].map(lambda v: bool(v)).any():
@@ -703,18 +740,26 @@ def compute_tech_year_bubble(df, settings, companies=None, level=None):
         return empty_result("선택한 출원인(%s)의 특허가 현재 필터에 없습니다."
                             % ", ".join(comps))
 
-    max_rows = min(int(get_limit(settings, "matrix_max_rows")), 15)
+    max_rows = min(int(get_limit(settings, "matrix_max_rows")),
+                   20 if drill_key == "path" else 15)
     tech_counts = pd.Series([t for lst in scope[tech_col] for t in (lst or [])])
     if not len(tech_counts):
         return empty_result("기술분류(%s) 값이 없습니다." % level_label)
     top_techs = tech_counts.value_counts().head(max_rows).index.tolist()
+    if drill_key == "path":
+        # 계층 보기: 대분류→중분류→소분류 순으로 정렬해 같은 상위 분류끼리 묶임
+        top_techs = sorted(top_techs)
     tpos = {t: i for i, t in enumerate(top_techs)}
     year_lo = int(scope["_base_year"].dropna().min())
     year_hi = int(scope["_base_year"].dropna().max())
 
     def _t_drill(t, y=None):
-        d = ({"type": "tech", "tech": str(t)} if drill_key == "tech"
-             else {drill_key: str(t)})
+        if drill_key == "path":
+            d = dict(path_drills.get(str(t), {}))
+        elif drill_key == "tech":
+            d = {"type": "tech", "tech": str(t)}
+        else:
+            d = {drill_key: str(t)}
         if y is not None:
             d["year"] = int(y)
         return d
@@ -743,12 +788,13 @@ def compute_tech_year_bubble(df, settings, companies=None, level=None):
         if not counts:
             continue
         name = g if g else "전체"
-        xs, ys, sizes, colors, hovers, customs = [], [], [], [], [], []
+        xs, ys, sizes, colors, hovers, customs, cell_ns = [], [], [], [], [], [], []
         for (t, y), n in counts.items():
             xs.append(int(y))
             ys.append(tpos[t] + offsets[gi])
             sizes.append(float(max(7.0, min(40.0, 6 + 30 * np.sqrt(n / vmax)))))
             colors.append(n)
+            cell_ns.append(int(n))
             hovers.append("%s — %s %d년: %s건" % (name, t, y, fmt_num(n)))
             drill = _t_drill(t, y)
             if g:
@@ -757,14 +803,22 @@ def compute_tech_year_bubble(df, settings, companies=None, level=None):
             customs.append({"drill": drill,
                             "m": {"출원인": name, "기술분류": str(t),
                                   "연도": int(y), "건수": int(n)}})
+        # 주요 셀에는 건수를 숫자로 표시 — 상위 셀(트레이스당 최대 12개)만
+        label_cut = sorted(cell_ns, reverse=True)[:12][-1] if cell_ns else 0
+        label_cut = max(label_cut, 2, int(np.ceil(vmax * 0.35)))
+        texts = [(fmt_num(n) if n >= label_cut else "") for n in cell_ns]
         marker = {"size": sizes, "line": {"width": 0.6, "color": "#5b7a8a"}}
         if n_g == 1:
             marker.update({"color": colors, "colorscale": BLUES, "cmin": 0,
                            "colorbar": {"title": "출원건수", "thickness": 12}})
         else:
             marker.update({"color": color_for(name, color_reg), "opacity": 0.85})
-        traces.append({"type": "scatter", "mode": "markers", "name": name,
-                       "x": xs, "y": ys, "hovertext": hovers, "hoverinfo": "text",
+        traces.append({"type": "scatter", "mode": "markers+text", "name": name,
+                       "cliponaxis": False,  # 맨 아래 행 버블이 X축 선에 잘리지 않게
+                       "x": xs, "y": ys, "text": texts,
+                       "textposition": "middle center",
+                       "textfont": {"size": 9, "color": "#1f3550"},
+                       "hovertext": hovers, "hoverinfo": "text",
                        "customdata": customs, "marker": marker})
     title = ("기술분류(%s) × 출원연도 버블 — %s 비교 (크기=출원건수)"
              % (level_label, " vs ".join(comps)) if comps else
@@ -775,8 +829,9 @@ def compute_tech_year_bubble(df, settings, companies=None, level=None):
                "range": [year_lo - 0.7, year_hi + 0.7]},
         yaxis={"title": "", "tickmode": "array",
                "tickvals": list(range(len(top_techs))),
-               "ticktext": [str(t)[:22] for t in top_techs],
-               "range": [-0.7, len(top_techs) - 0.3], "automargin": True},
+               "ticktext": [str(t)[:44 if drill_key == "path" else 22]
+                            for t in top_techs],
+               "range": [-0.8, len(top_techs) - 0.2], "automargin": True},
         showlegend=bool(comps),
         height=max(440, 140 + 36 * len(top_techs)))}
 

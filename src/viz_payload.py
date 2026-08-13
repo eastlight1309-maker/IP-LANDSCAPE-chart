@@ -121,6 +121,7 @@ def bubble_chart(points, x_title, y_title, title=None, quadrants=None,
     smax = max(sizes)
     trace = {
         "type": "scatter", "mode": "markers",
+        "cliponaxis": False,  # 가장자리 버블이 축 선에 잘려 반원으로 보이지 않게
         "x": [p["x"] for p in points], "y": [p["y"] for p in points],
         "text": [p.get("label", "") for p in points],
         "hovertext": [p.get("hover", "") for p in points],

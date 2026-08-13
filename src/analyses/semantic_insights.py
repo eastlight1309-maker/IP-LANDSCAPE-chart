@@ -253,15 +253,21 @@ def compute_emerging_clusters(df, settings, company=None, recent_years=None):
         recent_share = float((years >= recent_from).mean())
         first_year = int(years.min())
         mean_year = float(years.mean())
-        # 신규 출원인: 이 군집에서의 첫 출원이 최근 구간인 출원인 비율
-        apps = sub[sub["applicant_display"].astype(str) != ""]
+        # 신규 출원인: 이 군집에서의 첫 출원이 최근 구간인 출원인 비율.
+        # 특정 출원인 하나로 좁힌 보기에서는 '신규 출원인' 개념이 무의미하므로
+        # 계산·표시하지 않고 점수에서도 제외한다 (가중치 재정규화).
         new_ratio = None
-        if len(apps):
+        apps = sub[sub["applicant_display"].astype(str) != ""]
+        if not company and len(apps):
             first_by_app = apps.groupby("applicant_display")["_base_year"].min()
             new_ratio = float((first_by_app >= recent_from).mean())
         is_new = first_year >= recent_from
-        score = round(0.5 * recent_share + 0.3 * (new_ratio or 0.0)
-                      + 0.2 * (1.0 if is_new else 0.0), 3)
+        if company:
+            score = round((0.5 * recent_share + 0.2 * (1.0 if is_new else 0.0))
+                          / 0.7, 3)
+        else:
+            score = round(0.5 * recent_share + 0.3 * (new_ratio or 0.0)
+                          + 0.2 * (1.0 if is_new else 0.0), 3)
         # 키워드: 군집 중심에 가까운 문헌 상위 30건에서 추출
         d = np.linalg.norm(vectors[mask] - centers[cl], axis=1)
         near_idx = np.argsort(d)[:30]
@@ -301,38 +307,57 @@ def compute_emerging_clusters(df, settings, company=None, recent_years=None):
     label_method = "llm" if llm_names else "keywords"
 
     color_reg = {}
-    fig = {"data": [{
-        "type": "scatter", "mode": "markers+text",
-        "x": [c["mean_year"] for c in clusters],
-        "y": [c["recent_share"] for c in clusters],
-        "text": [c["label"][:24] for c in clusters],
-        "textposition": "top center", "textfont": {"size": 9},
-        "hovertext": ["<b>%s</b><br>%d건 · 최초 %d년 · 최근 %d년 비중 %s"
-                      "<br>신규 출원인 비율 %s · 점수 %.2f%s"
-                      % (c["label"], c["n"], c["first_year"], recent_n,
-                         fmt_pct(c["recent_share"]),
-                         fmt_pct(c["new_applicant_ratio"])
-                         if c["new_applicant_ratio"] is not None else "미상",
-                         c["score"], " · 🆕 새 군집" if c["is_new_cluster"] else "")
-                      for c in clusters],
-        "hoverinfo": "text",
-        "customdata": [{"drill": c["drill"],
-                        "m": {"건수": c["n"], "최초연도": c["first_year"],
-                              "최근비중": c["recent_share"],
-                              "신규출원인비율": c["new_applicant_ratio"],
-                              "점수": c["score"]}} for c in clusters],
-        "marker": {
+    if company:
+        # 단일 출원인 보기: '신규 출원인 비율' 색·hover 표기 제거 (무의미)
+        hovers = ["<b>%s</b><br>%d건 · 최초 %d년 · 최근 %d년 비중 %s"
+                  "<br>점수 %.2f%s"
+                  % (c["label"], c["n"], c["first_year"], recent_n,
+                     fmt_pct(c["recent_share"]), c["score"],
+                     " · 🆕 새 군집" if c["is_new_cluster"] else "")
+                  for c in clusters]
+        marker = {
+            "size": [max(14.0, min(56.0, 10 + 2.2 * np.sqrt(c["n"]))) for c in clusters],
+            "color": "#4E79A7",
+            "line": {"width": [2.5 if c["is_new_cluster"] else 0.6 for c in clusters],
+                     "color": "#E15759"}}
+        title = ("신흥 기술 조기 탐지 — %s (크기=건수, 빨간 테두리=새 군집)"
+                 % company)
+    else:
+        hovers = ["<b>%s</b><br>%d건 · 최초 %d년 · 최근 %d년 비중 %s"
+                  "<br>신규 출원인 비율 %s · 점수 %.2f%s"
+                  % (c["label"], c["n"], c["first_year"], recent_n,
+                     fmt_pct(c["recent_share"]),
+                     fmt_pct(c["new_applicant_ratio"])
+                     if c["new_applicant_ratio"] is not None else "미상",
+                     c["score"], " · 🆕 새 군집" if c["is_new_cluster"] else "")
+                  for c in clusters]
+        marker = {
             "size": [max(14.0, min(56.0, 10 + 2.2 * np.sqrt(c["n"]))) for c in clusters],
             "color": [c["new_applicant_ratio"] if c["new_applicant_ratio"] is not None
                       else 0.0 for c in clusters],
             "colorscale": YLGNBU, "cmin": 0, "cmax": 1,
             "colorbar": {"title": "신규 출원인 비율", "thickness": 12},
             "line": {"width": [2.5 if c["is_new_cluster"] else 0.6 for c in clusters],
-                     "color": "#E15759"}}}],
+                     "color": "#E15759"}}
+        title = "신흥 기술 조기 탐지 — 임베딩 군집 × 출원 시점 (크기=건수, 빨간 테두리=새 군집)"
+    fig = {"data": [{
+        "type": "scatter", "mode": "markers+text", "cliponaxis": False,
+        "x": [c["mean_year"] for c in clusters],
+        "y": [c["recent_share"] for c in clusters],
+        "text": [c["label"][:24] for c in clusters],
+        "textposition": "top center", "textfont": {"size": 9},
+        "hovertext": hovers,
+        "hoverinfo": "text",
+        "customdata": [{"drill": c["drill"],
+                        "m": {"건수": c["n"], "최초연도": c["first_year"],
+                              "최근비중": c["recent_share"],
+                              "신규출원인비율": c["new_applicant_ratio"],
+                              "점수": c["score"]}} for c in clusters],
+        "marker": marker}],
         "layout": base_layout(
-            "신흥 기술 조기 탐지 — 임베딩 군집 × 출원 시점 (크기=건수, 빨간 테두리=새 군집)",
+            title,
             xaxis={"title": "군집 평균 출원연도", "tickformat": "d"},
-            yaxis={"title": "최근 %d년 출원 비중" % recent_n, "range": [-0.05, 1.1],
+            yaxis={"title": "최근 %d년 출원 비중" % recent_n, "range": [-0.08, 1.1],
                    "tickformat": ".0%"}, height=520)}
 
     emergings = [c for c in clusters if c["emerging"]]
@@ -340,12 +365,19 @@ def compute_emerging_clusters(df, settings, company=None, recent_years=None):
     if emergings:
         c0 = emergings[0]
         dom = c0["top_applicants"][0]["name"] if c0["top_applicants"] else "-"
-        sentences.append("가장 유력한 신흥 기술 후보는 '%s' 군집(%s건)으로, 출원의 %s가 "
-                         "최근 %d년에 몰려 있고 신규 출원인 비율이 %s입니다 (주도: %s)."
-                         % (c0["label"], fmt_num(c0["n"]), fmt_pct(c0["recent_share"]),
-                            recent_n,
-                            fmt_pct(c0["new_applicant_ratio"])
-                            if c0["new_applicant_ratio"] is not None else "미상", dom))
+        if company:
+            sentences.append("'%s'에서 가장 유력한 신흥 기술 후보는 '%s' 군집(%s건)으로, "
+                             "출원의 %s가 최근 %d년에 몰려 있습니다 (단일 출원인 보기 — "
+                             "신규 출원인 지표는 계산에서 제외)."
+                             % (company, c0["label"], fmt_num(c0["n"]),
+                                fmt_pct(c0["recent_share"]), recent_n))
+        else:
+            sentences.append("가장 유력한 신흥 기술 후보는 '%s' 군집(%s건)으로, 출원의 %s가 "
+                             "최근 %d년에 몰려 있고 신규 출원인 비율이 %s입니다 (주도: %s)."
+                             % (c0["label"], fmt_num(c0["n"]), fmt_pct(c0["recent_share"]),
+                                recent_n,
+                                fmt_pct(c0["new_applicant_ratio"])
+                                if c0["new_applicant_ratio"] is not None else "미상", dom))
         news = [c for c in emergings if c["is_new_cluster"]]
         if news:
             sentences.append("이전 기간에는 존재하지 않던 새 군집이 %d개 관찰됩니다: %s."

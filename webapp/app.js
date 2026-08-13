@@ -2329,6 +2329,8 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
           help: 'X축=출원연도(1년=1칸), Y축=기술분류, 버블 크기=해당 연도·분류의 출원건수입니다. ' +
             '상단에서 출원인을 선택하면 그 회사만 표시되고, 2~3개사를 고르면 회사별 색으로 같은 축에 ' +
             '겹쳐 비교합니다 (같은 기술 행에서 세로로 살짝 어긋나게 배치되어 겹침 없이 비교 가능). ' +
+            '분류 선택에서 "대›중›소 계층"을 고르면 Y축이 대분류 › 중분류 › 소분류 경로로 표시되어 ' +
+            '어느 소분류가 어느 상위 분류에 속하는지 한눈에 보입니다 (같은 대분류끼리 묶여 정렬). ' +
             '아무도 선택하지 않으면 전체 데이터 기준입니다. 집계 기준: 전체 보기는 특허 1건=1번 ' +
             '집계로 공동출원이어도 중복 계산되지 않습니다. 회사를 선택하면 공동출원 건이 그 회사 ' +
             '것으로 포함되며, 공동출원 관계인 두 회사를 함께 선택한 경우에만 같은 특허가 양쪽 ' +
@@ -2353,7 +2355,8 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
             }
             lvlSel = Ui.el('<select><option value="">분류: 통합</option>' +
               '<option value="l1">분류: 대</option><option value="l2">분류: 중</option>' +
-              '<option value="l3">분류: 소</option></select>');
+              '<option value="l3">분류: 소</option>' +
+              '<option value="path">분류: 대›중›소 계층</option></select>');
             lvlSel.addEventListener('change', go);
             sel1 = mkSel('회사 1 (전체)'); sel2 = mkSel('회사 2'); sel3 = mkSel('회사 3');
             c.controls.prepend(sel3); c.controls.prepend(sel2); c.controls.prepend(sel1);

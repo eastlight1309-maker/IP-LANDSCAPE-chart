@@ -822,6 +822,67 @@ def test_embedding_file_feeds_semantic_analysis(tmp_path, monkeypatch, settings)
     assert "column" in str(out["methods"].get("embedding", ""))
 
 
+def test_tech_year_bubble_hier_path_and_labels(settings):
+    """기술×연도 버블: 대›중›소 계층 보기 + 주요 셀 숫자 라벨 + 축 잘림 방지."""
+    from src.analyses.basic_stats import compute_tech_year_bubble
+    from src.analyses.common import select_patents
+    df = make_prepared(generate_sample(n=400, seed=21))
+    r = compute_tech_year_bubble(df, settings, level="path")
+    assert r["status"] == "ok"
+    assert "계층" in r["figure"]["layout"]["title"]["text"]
+    techs = r["techs"]
+    assert all("›" in str(t) for t in techs)     # 경로 라벨 (대 › 중 …)
+    assert techs == sorted(techs)                # 같은 대분류끼리 묶여 정렬
+    tr = r["figure"]["data"][0]
+    assert tr["cliponaxis"] is False
+    assert tr["mode"] == "markers+text"
+    assert any(t for t in tr["text"])            # 주요 셀 숫자 라벨 존재
+    # 경로 drill = 각 레벨 조건 AND
+    cd = next(c["drill"] for c, t in zip(tr["customdata"], tr["text"]) if t)
+    assert "tech_l1" in cd and "year" in cd
+    picked = select_patents(df, cd)
+    assert len(picked) > 0
+    assert picked["_tech_l1_list"].map(
+        lambda lst: cd["tech_l1"] in (lst or [])).all()
+    # 통합 보기도 숫자 라벨·잘림 방지 적용
+    r2 = compute_tech_year_bubble(df, settings)
+    tr2 = r2["figure"]["data"][0]
+    assert tr2["cliponaxis"] is False and any(t for t in tr2["text"])
+
+
+def test_emerging_company_hides_new_applicant(settings):
+    """신흥 탐지: 출원인 선택 시 신규 출원인 색·표기·점수 성분 제거."""
+    from src.analyses.semantic_insights import compute_emerging_clusters
+    df = make_prepared(generate_sample(n=200, seed=9))
+    comp = df["applicant_display"].value_counts().index[0]
+    r = compute_emerging_clusters(df, settings, company=comp)
+    assert r["status"] == "ok"
+    mk = r["figure"]["data"][0]["marker"]
+    assert mk["color"] == "#4E79A7" and "colorbar" not in mk
+    assert all(c["new_applicant_ratio"] is None for c in r["clusters"])
+    assert "신규 출원인" not in r["figure"]["data"][0]["hovertext"][0]
+    # 전체 보기는 기존대로 색상 유지
+    r0 = compute_emerging_clusters(df, settings)
+    assert "colorbar" in r0["figure"]["data"][0]["marker"]
+
+
+def test_opportunity_annotations_no_overlap(settings):
+    """White Space 주석: 라벨 상자가 서로 겹치지 않게 배치된다."""
+    from src.analyses.whitespace import compute_opportunity
+    df = make_prepared(generate_sample(n=400, seed=21))
+    r = compute_opportunity(df, settings)
+    key = [a for a in r["figure"]["layout"]["annotations"]
+           if a.get("showarrow") and "위" in str(a.get("text"))]
+    assert key
+    boxes = []
+    for a in key:
+        nx = a["x"] + a["ax"] / 880.0
+        ny = a["y"] - a["ay"] / 520.0
+        for px, py in boxes:
+            assert abs(nx - px) > 0.20 or abs(ny - py) > 0.12, "주석 겹침"
+        boxes.append((nx, ny))
+
+
 def test_lifecycle_company_uniform_color(settings):
     """생애주기: 출원인 선택 시 재계산 + 경쟁강도 색 단일화."""
     from src.analyses.lifecycle import compute_lifecycle

@@ -5040,6 +5040,7 @@ def bubble_chart(points, x_title, y_title, title=None, quadrants=None,
     smax = max(sizes)
     trace = {
         "type": "scatter", "mode": "markers",
+        "cliponaxis": False,  # 가장자리 버블이 축 선에 잘려 반원으로 보이지 않게
         "x": [p["x"] for p in points], "y": [p["y"] for p in points],
         "text": [p.get("label", "") for p in points],
         "hovertext": [p.get("hover", "") for p in points],
@@ -7080,15 +7081,34 @@ def compute_opportunity(df, settings, company=None):
             what = "관망"
         return what
 
+    # 상위 5개 주석: 그리디 충돌 회피 배치 — 라벨 상자(2줄)가 서로 겹치면
+    # 다음 후보 오프셋으로 옮기고, 자리가 없으면 그 주석은 생략한다.
     key_anns = []
+    placed_boxes = []  # (nx, ny) 라벨 중심 (0~1 축 좌표 근사)
+    cand_offsets = [(70, -50), (-70, -50), (90, 30), (-90, 30), (110, -80),
+                    (-110, -80), (0, -95), (0, 70), (130, -20), (-130, -20)]
     for rank, r in enumerate(shown[:5], start=1):
-        side = 1 if rank % 2 else -1
+        best = None
+        for ax_px, ay_px in cand_offsets:
+            # 플롯 ~880×520px 근사: 픽셀 오프셋 → 축 좌표 변위
+            nx = r["attractiveness"] + ax_px / 880.0
+            ny = r["entry_possibility"] - ay_px / 520.0
+            if not (0.0 <= nx <= 1.02 and -0.02 <= ny <= 1.06):
+                continue  # 플롯 밖으로 나가는 위치 제외
+            if all(abs(nx - px) > 0.20 or abs(ny - py) > 0.12
+                   for px, py in placed_boxes):
+                best = (ax_px, ay_px, nx, ny)
+                break
+        if best is None:
+            continue  # 겹치지 않을 자리가 없으면 겹쳐 쓰지 않고 생략
+        ax_px, ay_px, nx, ny = best
+        placed_boxes.append((nx, ny))
         key_anns.append({
             "x": r["attractiveness"], "y": r["entry_possibility"],
             "xref": "x", "yref": "y", "showarrow": True,
             "arrowhead": 2, "arrowsize": 0.9, "arrowwidth": 1.2,
             "arrowcolor": "#5b7a8a",
-            "ax": side * 70, "ay": -46 - (rank // 2) * 22,
+            "ax": ax_px, "ay": ay_px,
             "text": "<b>%d위 %s</b><br>기회 %.2f · %s"
                     % (rank, str(r["tech"])[:14], r["opportunity_score"],
                        _bubble_note(r)),
@@ -9476,9 +9496,15 @@ def compute_basic_stats(df, settings, company=None):
                                                              "year": int(y)}),
                                       "m": {"출원인": str(a), "연도": int(y),
                                             "출원건수": int(v)}})
+        _bub_cut = sorted(pts["color"], reverse=True)[:12][-1] \
+            if pts["color"] else 0
+        _bub_cut = max(_bub_cut, 2)
         fig_app_bubble = {"data": [{
-            "type": "scatter", "mode": "markers",
+            "type": "scatter", "mode": "markers+text", "cliponaxis": False,
             "x": pts["x"], "y": pts["y"],
+            "text": [(fmt_num(v) if v >= _bub_cut else "") for v in pts["color"]],
+            "textposition": "middle center",
+            "textfont": {"size": 9, "color": "#1f3550"},
             "hovertext": pts["hover"], "hoverinfo": "text",
             "customdata": pts["custom"],
             "marker": {"size": pts["size"], "color": pts["color"],
@@ -9866,7 +9892,7 @@ def compute_company_focus(df, settings, company=None):
                               "급부상": "예" if r["rising"] else ""}})
     x_max = max(xs)
     fig = {"data": [{
-        "type": "scatter", "mode": "markers",
+        "type": "scatter", "mode": "markers", "cliponaxis": False,
         "x": xs, "y": ys,
         "hovertext": hovers, "hoverinfo": "text", "customdata": customs,
         "marker": {"size": sizes, "color": colors, "opacity": 0.85,
@@ -9978,9 +10004,40 @@ def compute_tech_year_bubble(df, settings, companies=None, level=None):
     level: 'l1'|'l2'|'l3' → 대/중/소 분류 레벨 선택 (미지정=통합 기술분류).
     Drill: 버블 클릭 → 해당 (기술분류 × 연도 [× 출원인]) 특허.
     """
-    level = level if level in ("l1", "l2", "l3") else None
+    level = level if level in ("l1", "l2", "l3", "path") else None
     tech_col, level_label, drill_key = "_tech_list", "통합", "tech"
-    if level:
+    path_drills = {}
+    if level == "path":
+        # 계층 보기: 각 문헌의 대›중›소 대표 분류를 하나의 경로 행으로 —
+        # Y축에서 어느 소분류가 어느 중·대분류에 속하는지 바로 보인다
+        lv_cols = [c for c in ("_tech_l1_list", "_tech_l2_list", "_tech_l3_list")
+                   if c in df.columns and df[c].map(lambda v: bool(v)).any()]
+        if len(lv_cols) < 2:
+            return empty_result("계층 보기는 대/중(/소) 분류가 2개 레벨 이상 매핑된 "
+                                "경우에만 가능합니다 — Settings → 컬럼 매핑을 확인하세요.")
+        lv_keys = {"_tech_l1_list": "tech_l1", "_tech_l2_list": "tech_l2",
+                   "_tech_l3_list": "tech_l3"}
+        df = df.copy()
+        paths = []
+        for vals in zip(*[df[c] for c in lv_cols]):
+            segs = []
+            for lst in vals:
+                v = (lst or [None])[0]
+                s = "" if v is None else str(v).strip()
+                if not s or s.lower() in ("nan", "none", "-"):
+                    break
+                segs.append(s)
+            if segs:
+                path = " › ".join(segs)
+                paths.append([path])
+                if path not in path_drills:
+                    path_drills[path] = {lv_keys[lv_cols[i]]: seg
+                                         for i, seg in enumerate(segs)}
+            else:
+                paths.append([])
+        df["_bubble_path_list"] = paths
+        tech_col, level_label, drill_key = "_bubble_path_list", "대›중›소 계층", "path"
+    elif level:
         cand = "_tech_%s_list" % level
         names = {"l1": "대분류", "l2": "중분류", "l3": "소분류"}
         if cand not in df.columns or not df[cand].map(lambda v: bool(v)).any():
@@ -10004,18 +10061,26 @@ def compute_tech_year_bubble(df, settings, companies=None, level=None):
         return empty_result("선택한 출원인(%s)의 특허가 현재 필터에 없습니다."
                             % ", ".join(comps))
 
-    max_rows = min(int(get_limit(settings, "matrix_max_rows")), 15)
+    max_rows = min(int(get_limit(settings, "matrix_max_rows")),
+                   20 if drill_key == "path" else 15)
     tech_counts = pd.Series([t for lst in scope[tech_col] for t in (lst or [])])
     if not len(tech_counts):
         return empty_result("기술분류(%s) 값이 없습니다." % level_label)
     top_techs = tech_counts.value_counts().head(max_rows).index.tolist()
+    if drill_key == "path":
+        # 계층 보기: 대분류→중분류→소분류 순으로 정렬해 같은 상위 분류끼리 묶임
+        top_techs = sorted(top_techs)
     tpos = {t: i for i, t in enumerate(top_techs)}
     year_lo = int(scope["_base_year"].dropna().min())
     year_hi = int(scope["_base_year"].dropna().max())
 
     def _t_drill(t, y=None):
-        d = ({"type": "tech", "tech": str(t)} if drill_key == "tech"
-             else {drill_key: str(t)})
+        if drill_key == "path":
+            d = dict(path_drills.get(str(t), {}))
+        elif drill_key == "tech":
+            d = {"type": "tech", "tech": str(t)}
+        else:
+            d = {drill_key: str(t)}
         if y is not None:
             d["year"] = int(y)
         return d
@@ -10044,12 +10109,13 @@ def compute_tech_year_bubble(df, settings, companies=None, level=None):
         if not counts:
             continue
         name = g if g else "전체"
-        xs, ys, sizes, colors, hovers, customs = [], [], [], [], [], []
+        xs, ys, sizes, colors, hovers, customs, cell_ns = [], [], [], [], [], [], []
         for (t, y), n in counts.items():
             xs.append(int(y))
             ys.append(tpos[t] + offsets[gi])
             sizes.append(float(max(7.0, min(40.0, 6 + 30 * np.sqrt(n / vmax)))))
             colors.append(n)
+            cell_ns.append(int(n))
             hovers.append("%s — %s %d년: %s건" % (name, t, y, fmt_num(n)))
             drill = _t_drill(t, y)
             if g:
@@ -10058,14 +10124,22 @@ def compute_tech_year_bubble(df, settings, companies=None, level=None):
             customs.append({"drill": drill,
                             "m": {"출원인": name, "기술분류": str(t),
                                   "연도": int(y), "건수": int(n)}})
+        # 주요 셀에는 건수를 숫자로 표시 — 상위 셀(트레이스당 최대 12개)만
+        label_cut = sorted(cell_ns, reverse=True)[:12][-1] if cell_ns else 0
+        label_cut = max(label_cut, 2, int(np.ceil(vmax * 0.35)))
+        texts = [(fmt_num(n) if n >= label_cut else "") for n in cell_ns]
         marker = {"size": sizes, "line": {"width": 0.6, "color": "#5b7a8a"}}
         if n_g == 1:
             marker.update({"color": colors, "colorscale": BLUES, "cmin": 0,
                            "colorbar": {"title": "출원건수", "thickness": 12}})
         else:
             marker.update({"color": color_for(name, color_reg), "opacity": 0.85})
-        traces.append({"type": "scatter", "mode": "markers", "name": name,
-                       "x": xs, "y": ys, "hovertext": hovers, "hoverinfo": "text",
+        traces.append({"type": "scatter", "mode": "markers+text", "name": name,
+                       "cliponaxis": False,  # 맨 아래 행 버블이 X축 선에 잘리지 않게
+                       "x": xs, "y": ys, "text": texts,
+                       "textposition": "middle center",
+                       "textfont": {"size": 9, "color": "#1f3550"},
+                       "hovertext": hovers, "hoverinfo": "text",
                        "customdata": customs, "marker": marker})
     title = ("기술분류(%s) × 출원연도 버블 — %s 비교 (크기=출원건수)"
              % (level_label, " vs ".join(comps)) if comps else
@@ -10076,8 +10150,9 @@ def compute_tech_year_bubble(df, settings, companies=None, level=None):
                "range": [year_lo - 0.7, year_hi + 0.7]},
         yaxis={"title": "", "tickmode": "array",
                "tickvals": list(range(len(top_techs))),
-               "ticktext": [str(t)[:22] for t in top_techs],
-               "range": [-0.7, len(top_techs) - 0.3], "automargin": True},
+               "ticktext": [str(t)[:44 if drill_key == "path" else 22]
+                            for t in top_techs],
+               "range": [-0.8, len(top_techs) - 0.2], "automargin": True},
         showlegend=bool(comps),
         height=max(440, 140 + 36 * len(top_techs)))}
 
@@ -10414,7 +10489,7 @@ def compute_portfolio_index(df, settings, companies=None):
     sizes = [max(r["portfolio_index"], 0.1) for r in shown]
     smax = max(sizes)
     bubble = {"data": [{
-        "type": "scatter", "mode": "markers+text",
+        "type": "scatter", "mode": "markers+text", "cliponaxis": False,
         "x": [r["n"] for r in shown], "y": [r["avg_ci"] for r in shown],
         "text": [r["company"][:10] for r in shown], "textposition": "top center",
         "textfont": {"size": 9},
@@ -11876,15 +11951,21 @@ def compute_emerging_clusters(df, settings, company=None, recent_years=None):
         recent_share = float((years >= recent_from).mean())
         first_year = int(years.min())
         mean_year = float(years.mean())
-        # 신규 출원인: 이 군집에서의 첫 출원이 최근 구간인 출원인 비율
-        apps = sub[sub["applicant_display"].astype(str) != ""]
+        # 신규 출원인: 이 군집에서의 첫 출원이 최근 구간인 출원인 비율.
+        # 특정 출원인 하나로 좁힌 보기에서는 '신규 출원인' 개념이 무의미하므로
+        # 계산·표시하지 않고 점수에서도 제외한다 (가중치 재정규화).
         new_ratio = None
-        if len(apps):
+        apps = sub[sub["applicant_display"].astype(str) != ""]
+        if not company and len(apps):
             first_by_app = apps.groupby("applicant_display")["_base_year"].min()
             new_ratio = float((first_by_app >= recent_from).mean())
         is_new = first_year >= recent_from
-        score = round(0.5 * recent_share + 0.3 * (new_ratio or 0.0)
-                      + 0.2 * (1.0 if is_new else 0.0), 3)
+        if company:
+            score = round((0.5 * recent_share + 0.2 * (1.0 if is_new else 0.0))
+                          / 0.7, 3)
+        else:
+            score = round(0.5 * recent_share + 0.3 * (new_ratio or 0.0)
+                          + 0.2 * (1.0 if is_new else 0.0), 3)
         # 키워드: 군집 중심에 가까운 문헌 상위 30건에서 추출
         d = np.linalg.norm(vectors[mask] - centers[cl], axis=1)
         near_idx = np.argsort(d)[:30]
@@ -11924,38 +12005,57 @@ def compute_emerging_clusters(df, settings, company=None, recent_years=None):
     label_method = "llm" if llm_names else "keywords"
 
     color_reg = {}
-    fig = {"data": [{
-        "type": "scatter", "mode": "markers+text",
-        "x": [c["mean_year"] for c in clusters],
-        "y": [c["recent_share"] for c in clusters],
-        "text": [c["label"][:24] for c in clusters],
-        "textposition": "top center", "textfont": {"size": 9},
-        "hovertext": ["<b>%s</b><br>%d건 · 최초 %d년 · 최근 %d년 비중 %s"
-                      "<br>신규 출원인 비율 %s · 점수 %.2f%s"
-                      % (c["label"], c["n"], c["first_year"], recent_n,
-                         fmt_pct(c["recent_share"]),
-                         fmt_pct(c["new_applicant_ratio"])
-                         if c["new_applicant_ratio"] is not None else "미상",
-                         c["score"], " · 🆕 새 군집" if c["is_new_cluster"] else "")
-                      for c in clusters],
-        "hoverinfo": "text",
-        "customdata": [{"drill": c["drill"],
-                        "m": {"건수": c["n"], "최초연도": c["first_year"],
-                              "최근비중": c["recent_share"],
-                              "신규출원인비율": c["new_applicant_ratio"],
-                              "점수": c["score"]}} for c in clusters],
-        "marker": {
+    if company:
+        # 단일 출원인 보기: '신규 출원인 비율' 색·hover 표기 제거 (무의미)
+        hovers = ["<b>%s</b><br>%d건 · 최초 %d년 · 최근 %d년 비중 %s"
+                  "<br>점수 %.2f%s"
+                  % (c["label"], c["n"], c["first_year"], recent_n,
+                     fmt_pct(c["recent_share"]), c["score"],
+                     " · 🆕 새 군집" if c["is_new_cluster"] else "")
+                  for c in clusters]
+        marker = {
+            "size": [max(14.0, min(56.0, 10 + 2.2 * np.sqrt(c["n"]))) for c in clusters],
+            "color": "#4E79A7",
+            "line": {"width": [2.5 if c["is_new_cluster"] else 0.6 for c in clusters],
+                     "color": "#E15759"}}
+        title = ("신흥 기술 조기 탐지 — %s (크기=건수, 빨간 테두리=새 군집)"
+                 % company)
+    else:
+        hovers = ["<b>%s</b><br>%d건 · 최초 %d년 · 최근 %d년 비중 %s"
+                  "<br>신규 출원인 비율 %s · 점수 %.2f%s"
+                  % (c["label"], c["n"], c["first_year"], recent_n,
+                     fmt_pct(c["recent_share"]),
+                     fmt_pct(c["new_applicant_ratio"])
+                     if c["new_applicant_ratio"] is not None else "미상",
+                     c["score"], " · 🆕 새 군집" if c["is_new_cluster"] else "")
+                  for c in clusters]
+        marker = {
             "size": [max(14.0, min(56.0, 10 + 2.2 * np.sqrt(c["n"]))) for c in clusters],
             "color": [c["new_applicant_ratio"] if c["new_applicant_ratio"] is not None
                       else 0.0 for c in clusters],
             "colorscale": YLGNBU, "cmin": 0, "cmax": 1,
             "colorbar": {"title": "신규 출원인 비율", "thickness": 12},
             "line": {"width": [2.5 if c["is_new_cluster"] else 0.6 for c in clusters],
-                     "color": "#E15759"}}}],
+                     "color": "#E15759"}}
+        title = "신흥 기술 조기 탐지 — 임베딩 군집 × 출원 시점 (크기=건수, 빨간 테두리=새 군집)"
+    fig = {"data": [{
+        "type": "scatter", "mode": "markers+text", "cliponaxis": False,
+        "x": [c["mean_year"] for c in clusters],
+        "y": [c["recent_share"] for c in clusters],
+        "text": [c["label"][:24] for c in clusters],
+        "textposition": "top center", "textfont": {"size": 9},
+        "hovertext": hovers,
+        "hoverinfo": "text",
+        "customdata": [{"drill": c["drill"],
+                        "m": {"건수": c["n"], "최초연도": c["first_year"],
+                              "최근비중": c["recent_share"],
+                              "신규출원인비율": c["new_applicant_ratio"],
+                              "점수": c["score"]}} for c in clusters],
+        "marker": marker}],
         "layout": base_layout(
-            "신흥 기술 조기 탐지 — 임베딩 군집 × 출원 시점 (크기=건수, 빨간 테두리=새 군집)",
+            title,
             xaxis={"title": "군집 평균 출원연도", "tickformat": "d"},
-            yaxis={"title": "최근 %d년 출원 비중" % recent_n, "range": [-0.05, 1.1],
+            yaxis={"title": "최근 %d년 출원 비중" % recent_n, "range": [-0.08, 1.1],
                    "tickformat": ".0%"}, height=520)}
 
     emergings = [c for c in clusters if c["emerging"]]
@@ -11963,12 +12063,19 @@ def compute_emerging_clusters(df, settings, company=None, recent_years=None):
     if emergings:
         c0 = emergings[0]
         dom = c0["top_applicants"][0]["name"] if c0["top_applicants"] else "-"
-        sentences.append("가장 유력한 신흥 기술 후보는 '%s' 군집(%s건)으로, 출원의 %s가 "
-                         "최근 %d년에 몰려 있고 신규 출원인 비율이 %s입니다 (주도: %s)."
-                         % (c0["label"], fmt_num(c0["n"]), fmt_pct(c0["recent_share"]),
-                            recent_n,
-                            fmt_pct(c0["new_applicant_ratio"])
-                            if c0["new_applicant_ratio"] is not None else "미상", dom))
+        if company:
+            sentences.append("'%s'에서 가장 유력한 신흥 기술 후보는 '%s' 군집(%s건)으로, "
+                             "출원의 %s가 최근 %d년에 몰려 있습니다 (단일 출원인 보기 — "
+                             "신규 출원인 지표는 계산에서 제외)."
+                             % (company, c0["label"], fmt_num(c0["n"]),
+                                fmt_pct(c0["recent_share"]), recent_n))
+        else:
+            sentences.append("가장 유력한 신흥 기술 후보는 '%s' 군집(%s건)으로, 출원의 %s가 "
+                             "최근 %d년에 몰려 있고 신규 출원인 비율이 %s입니다 (주도: %s)."
+                             % (c0["label"], fmt_num(c0["n"]), fmt_pct(c0["recent_share"]),
+                                recent_n,
+                                fmt_pct(c0["new_applicant_ratio"])
+                                if c0["new_applicant_ratio"] is not None else "미상", dom))
         news = [c for c in emergings if c["is_new_cluster"]]
         if news:
             sentences.append("이전 기간에는 존재하지 않던 새 군집이 %d개 관찰됩니다: %s."
@@ -12835,7 +12942,7 @@ def _expedited_section(df, settings):
                             % (tech, y, n, fmt_pct(ratio)))
         pts["custom"].append({"drill": {"type": "tech", "tech": str(tech), "tech_primary": True,
                                         "year": int(y)}})
-    fig = {"data": [{"type": "scatter", "mode": "markers",
+    fig = {"data": [{"type": "scatter", "mode": "markers", "cliponaxis": False,
                      "x": pts["x"], "y": pts["y"],
                      "hovertext": pts["hover"], "hoverinfo": "text",
                      "customdata": pts["custom"],

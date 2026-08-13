@@ -296,7 +296,7 @@ def compute_portfolio_index(df, settings, companies=None):
     sizes = [max(r["portfolio_index"], 0.1) for r in shown]
     smax = max(sizes)
     bubble = {"data": [{
-        "type": "scatter", "mode": "markers+text",
+        "type": "scatter", "mode": "markers+text", "cliponaxis": False,
         "x": [r["n"] for r in shown], "y": [r["avg_ci"] for r in shown],
         "text": [r["company"][:10] for r in shown], "textposition": "top center",
         "textfont": {"size": 9},
