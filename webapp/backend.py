@@ -9864,11 +9864,21 @@ def compute_tech_year_bubble(df, settings, companies=None):
                              % (g, bt, by, fmt_num(bn), fmt_num(recent_total)))
         sentences.append("같은 행(기술)에서 색이 다른 버블의 크기·등장 시점을 비교하면 "
                          "누가 먼저·더 크게 투자했는지 보입니다.")
+        joint_in_scope = int(scope["_co_applicants_display"]
+                             .map(lambda lst: len(lst or []) > 1).sum()) \
+            if "_co_applicants_display" in scope.columns else 0
+        if joint_in_scope and len(comps) >= 2:
+            sentences.append("공동출원 %s건은 관련된 각 선택 회사의 버블에 각각 "
+                             "표시됩니다 — 두 공동출원사를 함께 선택하면 같은 특허가 "
+                             "양쪽 시리즈에 나타날 수 있습니다 (전체 보기에서는 특허 "
+                             "1건이 1번만 집계됩니다)." % fmt_num(joint_in_scope))
     else:
         counts = all_counts[0]
         (bt, by), bn = max(counts.items(), key=lambda kv: kv[1])
         sentences.append("최대 밀집 셀은 '%s' %d년(%s건)입니다. 위 출원인 선택으로 "
-                         "특정 회사·최대 3개사 비교 보기가 가능합니다."
+                         "특정 회사·최대 3개사 비교 보기가 가능합니다. 전체 보기의 "
+                         "건수는 특허 1건=1번 집계이며 공동출원이어도 중복 계산되지 "
+                         "않습니다 (다중 기술분류만 분류마다 1건씩)."
                          % (bt, by, fmt_num(bn)))
     insight = build_insight(
         sentences,

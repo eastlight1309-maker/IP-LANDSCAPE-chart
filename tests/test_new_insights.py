@@ -822,6 +822,27 @@ def test_embedding_file_feeds_semantic_analysis(tmp_path, monkeypatch, settings)
     assert "column" in str(out["methods"].get("embedding", ""))
 
 
+def test_tech_year_bubble_no_joint_double_count(settings):
+    """기술×연도 버블: 전체 보기는 공동출원이어도 특허 1건=1번 집계."""
+    from src.analyses.basic_stats import compute_tech_year_bubble
+    df = make_prepared(generate_sample(n=400, seed=21))
+    assert df["_co_applicants_display"].map(lambda l: len(l or []) > 1).any()
+    r = compute_tech_year_bubble(df, settings)
+    tr = r["figure"]["data"][0]
+    total = sum(cd["m"]["건수"] for cd in tr["customdata"])
+    top = set(r["techs"])
+    manual = sum(len(set(lst or []) & top)
+                 for lst, y in zip(df["_tech_list"], df["_base_year"])
+                 if pd.notna(y))
+    assert total == manual  # 문헌당 (상위)분류 1회 — 공동출원 무관
+    # 회사 비교: 공동출원 건은 관련된 각 선택 회사 시리즈에 표시 (의도된 동작)
+    pair = next(lst[:2] for lst in df["_co_applicants_display"]
+                if len(lst or []) >= 2)
+    r2 = compute_tech_year_bubble(df, settings, companies=pair)
+    assert {t["name"] for t in r2["figure"]["data"]} == set(pair)
+    assert any("각각 표시" in s for s in r2["insight"]["sentences"])
+
+
 def test_company_dna_formulas_and_fixes(settings):
     """기술 DNA: 지표 계산식 정의 제공 + 독립 재계산 검증 + 수정 사항 회귀."""
     import math
