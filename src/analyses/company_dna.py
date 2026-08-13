@@ -62,6 +62,63 @@ DNA_METRICS = [
     ("inventor_concentration", "발명자 집중도"), ("recent_growth", "최근 성장률"),
 ]
 
+# 화면 지표 정의표 — 각 지표의 계산식을 그대로 공개한다 (숨은 가정 없음).
+DNA_DEFINITIONS = [
+    {"code": "기술 집중도", "name": "tech_concentration",
+     "definition": "포트폴리오가 소수 기술분류에 몰려 있는 정도 (허핀달-허쉬만 지수)",
+     "formula": "HHI = Σ(분류별 건수 비중)² — 다중분류는 각 분류에 1건씩",
+     "basis": "기술분류 컬럼", "reading": "1에 가까울수록 한두 분류 집중, 1/분류수≈분산"},
+    {"code": "기술 다양성", "name": "tech_diversity",
+     "definition": "분류 분포의 고른 정도 (정규화 샤논 엔트로피)",
+     "formula": "(−Σ p·log₂p) ÷ log₂(활동 분류 수), p=분류별 건수 비중",
+     "basis": "기술분류 컬럼", "reading": "0~1 · 1=모든 분류에 균등, 0=단일 분류"},
+    {"code": "신규분류 진입률", "name": "new_class_entry",
+     "definition": "최근 N년(기본 3)에 처음 등장한 분류의 비중",
+     "formula": "|최근에만 있는 분류| ÷ |전체 활동 분류(최근∪과거)|",
+     "basis": "기술분류 × 출원연도", "reading": "높음=새 영역으로 확장 중"},
+    {"code": "조합 다양성", "name": "combo_diversity",
+     "definition": "한 문헌 안에서 서로 다른 분류를 함께 쓰는 정도",
+     "formula": "고유 기술분류 2-조합 수 ÷ 문헌 수",
+     "basis": "기술분류 컬럼(다중분류)", "reading": "높음=융합형 출원 (1 초과 가능)"},
+    {"code": "패밀리 규모", "name": "family_size",
+     "definition": "특허 1건이 몇 개 문헌(국가·후속 포함)으로 확장되는가",
+     "formula": "패밀리 수 컬럼의 평균", "basis": "패밀리 수 컬럼",
+     "reading": "높음=권리를 넓게 강화하는 투자"},
+    {"code": "해외 범위", "name": "intl_scope",
+     "definition": "평균 몇 개 국가에 권리를 확보하는가",
+     "formula": "패밀리 국가 수 컬럼의 평균", "basis": "패밀리 국가 수(목록) 컬럼",
+     "reading": "높음=글로벌 시장 지향"},
+    {"code": "등록 유지율", "name": "grant_keep_ratio",
+     "definition": "등록받은 권리를 계속 유지하는 비율",
+     "formula": "유효(존속) 등록 건수 ÷ 등록 건수",
+     "basis": "법적상태/등록·존속 여부", "reading": "높음=등록 권리를 끝까지 지킴"},
+    {"code": "평균 피인용", "name": "avg_citations",
+     "definition": "후행 특허가 얼마나 인용하는가 (기술 영향력 프록시)",
+     "formula": "피인용 수 컬럼의 평균", "basis": "피인용 수(F1 등) 컬럼",
+     "reading": "높음=기술 영향력 큼 (연차 미보정 주의)"},
+    {"code": "후속출원 비율", "name": "continuation_ratio",
+     "definition": "한 발명을 2건 이상으로 이어가는 패밀리의 비율 (근사)",
+     "formula": "패밀리 내 문헌 2건 이상 패밀리 ÷ 전체 패밀리 — 문헌 단위에서는 "
+                "패밀리 ID 중복으로, 패밀리 대표 단위에서는 '패밀리 수 ≥ 2'로 계산",
+     "basis": "패밀리 ID 또는 패밀리 수 컬럼", "reading": "높음=핵심 발명을 계속 보강"},
+    {"code": "공동출원 비율", "name": "co_apply_ratio",
+     "definition": "다른 주체와 함께 출원하는 비율 (개방형 협력 성향)",
+     "formula": "출원인 2인 이상 문헌 ÷ 전체 문헌 — 원본 출원인 리스트 기준 "
+                "(공동출원 집계 설정과 무관)",
+     "basis": "출원인 컬럼", "reading": "높음=산학·기업 간 협력형"},
+    {"code": "발명자 집중도", "name": "inventor_concentration",
+     "definition": "발명이 소수 발명자에게 몰려 있는 정도 (키맨 의존)",
+     "formula": "HHI = Σ(발명자별 건수 비중)²", "basis": "발명자 컬럼",
+     "reading": "높음=키맨 리스크 (이탈 시 타격 큼)"},
+    {"code": "최근 성장률", "name": "recent_growth",
+     "definition": "최근 N년(기본 3) 출원 증가 속도",
+     "formula": "연도별 건수(데이터 최신 연도까지 0 채움)의 robust growth — "
+                "① 최근 N년 CAGR → ② 회귀 기울기÷평균 → ③ 직전 N년 대비 증가율 "
+                "사다리에서 계산 가능한 첫 방법",
+     "basis": "출원일(없으면 우선일/공개일)",
+     "reading": "양수=확대, 음수=축소 · 출원을 멈춘 기업은 0 채움으로 음수가 됨"},
+]
+
 
 def _company_metrics(sub, recent_from, recent):
     techs_flat = [t for lst in sub["_tech_list"] for t in (lst or [])]
@@ -84,14 +141,24 @@ def _company_metrics(sub, recent_from, recent):
     inv_counts = pd.Series(inventors).value_counts() if inventors else None
     co_apply = sub["_co_applicants"].map(lambda lst: len(lst or []) >= 2) \
         if "_co_applicants" in sub.columns else pd.Series(dtype=bool)
+    # 후속출원 비율: 패밀리 내 문헌 2건 이상 패밀리 비율.
+    # 문헌 단위에서는 family_id 중복으로 직접 계산하지만, 분석 단위가 '패밀리
+    # 대표'(기본)이면 dedup 후 family_id 가 전부 유일해져 0 으로 붕괴하므로
+    # 그 경우 '패밀리 수(구성 문헌 수) ≥ 2' 근사로 폴백한다.
     fam_multi = None
     if "family_id" in sub.columns and sub["family_id"].notna().any():
         fam_sizes = sub["family_id"].astype(str).value_counts()
-        fam_multi = float((fam_sizes >= 2).mean())
-    elif "family_size" in sub.columns and sub["family_size"].notna().any():
+        if (fam_sizes >= 2).any():
+            fam_multi = float((fam_sizes >= 2).mean())
+    if fam_multi is None and "family_size" in sub.columns \
+            and sub["family_size"].notna().any():
         fam_multi = float((sub["family_size"].dropna() >= 2).mean())
     years = sub["_base_year"].dropna().astype(int)
-    growth, _ = (robust_growth(year_counts(years), recent_years=recent)
+    # 최근 성장률: 데이터 전체의 최신 연도까지 0 을 채워 계산 — 일찍 출원을
+    # 멈춘 기업이 '자기 마지막 3년' 기준의 낡은 성장률을 받지 않도록.
+    growth, _ = (robust_growth(year_counts(years,
+                                           year_max=recent_from + recent - 1),
+                               recent_years=recent)
                  if len(years) else (None, "n/a"))
     return {
         "n": len(sub),
@@ -255,5 +322,12 @@ def compute_company_dna(df, settings, companies=None):
                             small_sample=check_small_sample(len(companies_payload), settings))
     return ok_result({"figure": fig, "chart_kind": chart_kind, "parcoords": parcoords,
                       "companies": companies_payload, "metric_labels": dict(DNA_METRICS),
+                      "definitions": DNA_DEFINITIONS,
+                      "normalization_note":
+                          "레이더/히트맵/평행좌표의 축 값은 기업 간 비교를 위한 "
+                          "0~1 표준화 점수(log1p 일부 → 윈저라이즈 2% → IQR robust "
+                          "정규화)이며, 원값은 hover 와 기업 표에 함께 표시됩니다. "
+                          "유형 분류는 표준화 점수 ≥ cutoff(Settings 조정 가능) 규칙의 "
+                          "첫 매칭입니다.",
                       "similarity": sim_matrix, "overlap": overlap_matrix},
                      insight=insight)

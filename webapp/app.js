@@ -2662,6 +2662,11 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
           analysis: 'company-dna', holder: h, title: '경쟁사 기술 DNA Fingerprint',
           help: '12개 지표(집중도 HHI/다양성 entropy/신규진입률/조합다양성/패밀리규모/해외범위/등록유지율/평균피인용/후속출원/공동출원/발명자집중도/최근성장률). Hover 에 원값·표준화값 동시 표시.',
           renderOk: function (r, c, setTarget) {
+            if (r.definitions) c.body.appendChild(definitionsTable(r.definitions));
+            if (r.normalization_note) {
+              c.body.appendChild(Ui.el('<div style="color:#647b8d;font-size:11.5px;' +
+                'margin:-4px 0 8px">' + Ui.esc(r.normalization_note) + '</div>'));
+            }
             var holder = Ui.el('<div class="chart-holder"></div>');
             c.body.appendChild(holder);
             Render.plotly(holder, r.figure);

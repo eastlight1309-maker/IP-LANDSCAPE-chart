@@ -822,6 +822,51 @@ def test_embedding_file_feeds_semantic_analysis(tmp_path, monkeypatch, settings)
     assert "column" in str(out["methods"].get("embedding", ""))
 
 
+def test_company_dna_formulas_and_fixes(settings):
+    """기술 DNA: 지표 계산식 정의 제공 + 독립 재계산 검증 + 수정 사항 회귀."""
+    import math
+    from itertools import combinations
+    from src.preprocessing import apply_analysis_unit
+    from src.analyses.company_dna import compute_company_dna
+    df = make_prepared(generate_sample(n=600, seed=42))
+    r = compute_company_dna(df, settings)
+    assert r["status"] == "ok"
+    # 계산식 정의표: 12개 지표 전부 + 계산식 명시
+    assert len(r["definitions"]) == 12
+    assert all(d["formula"] and d["reading"] for d in r["definitions"])
+    assert r["normalization_note"]
+    # 대표 기업 지표를 독립 코드로 재계산해 일치 확인
+    p0 = r["companies"][0]
+    sub = df[df["applicant_display"].astype(str) == p0["company"]]
+    flat = pd.Series([t for lst in sub["_tech_list"] for t in (lst or [])])
+    sh = flat.value_counts() / float(len(flat))
+    assert abs(p0["raw"]["tech_concentration"] - float((sh ** 2).sum())) < 1e-3
+    ent = float(-(sh * sh.map(math.log2)).sum() / math.log2(len(sh)))
+    assert abs(p0["raw"]["tech_diversity"] - ent) < 1e-3
+    combos = set()
+    for lst in sub["_tech_list"]:
+        combos.update(combinations(sorted(set(lst or [])), 2))
+    assert abs(p0["raw"]["combo_diversity"] - len(combos) / len(sub)) < 1e-3
+    granted = sub["_is_granted_bool"].map(lambda v: v is True)
+    keep = granted & sub["_active_flag"].map(lambda v: v is True)
+    assert abs(p0["raw"]["grant_keep_ratio"]
+               - float(keep.sum()) / float(granted.sum())) < 1e-3
+    assert abs(p0["raw"]["avg_citations"]
+               - float(sub["cites_forward"].dropna().mean())) < 1e-3
+    # [버그 수정 회귀] 패밀리 대표 단위에서 후속출원 비율이 0 으로 붕괴하지 않음
+    dedup = apply_analysis_unit(df, "family").reset_index(drop=True)
+    r2 = compute_company_dna(dedup, settings)
+    crs = [p["raw"]["continuation_ratio"] for p in r2["companies"]]
+    assert any(v and v > 0 for v in crs), "dedup 후 후속출원 비율 전부 0 (붕괴)"
+    # [버그 수정 회귀] 출원을 멈춘 기업의 최근 성장률은 0 채움으로 음수
+    comp = "네패스"
+    stopped = df[~((df["applicant_display"] == comp) & (df["_base_year"] >= 2021))]
+    r3 = compute_company_dna(stopped, settings)
+    g = next(p["raw"]["recent_growth"] for p in r3["companies"]
+             if p["company"] == comp)
+    assert g is not None and g < 0
+
+
 def test_tech_tree(settings):
     """대·중·소 기술분류 트리맵: 계층 구조·값 정합·drill·회사 필터."""
     from src.analyses.basic_stats import compute_tech_tree
