@@ -3864,6 +3864,7 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
     section('🧠 임베딩·군집·LLM 안내',
       '<ul style="padding-left:18px;line-height:1.9">' +
       '<li><b>임베딩 모델</b>: 사내 서버의 로컬 KR-SBERT 특허 특화 모델을 사용합니다 (네트워크 비용 없음). 실제 사용 방식은 각 카드 하단 "방법: 임베딩 adapter:sbert" 로 확인할 수 있으며, 모델 미가용 시 TF-IDF 폴백이 명시됩니다.</li>' +
+      '<li><b>임베딩 벡터 파일 업로드 (.npy/.npz)</b>: 미리 계산한 벡터가 있으면 Settings → "🧬 임베딩 벡터 파일" 카드에서 파일로 올려 사용할 수 있습니다 (raw Excel 에 벡터 컬럼을 넣을 필요 없음). 권장은 <b>.npz(embeddings + ids)</b> 형식이며 ids 는 출원번호(또는 공개번호) — 하이픈·공백 형식 차이는 자동 흡수됩니다. "매칭 진단"으로 현재 데이터와 몇 건이 연결되는지 먼저 확인하고 "사용"을 누르면 모든 임베딩 분석이 이 벡터를 사용합니다. 매칭 안 된 문헌은 제외될 뿐 임의 벡터를 만들지 않습니다.</li>' +
       '<li><b>임베딩 대상</b>: 청구항 분석(밀집도·청구구조 다양성)=독립청구항 / 주제 분석(신흥 탐지·의미 영향력·중첩 네트워크)=명칭+요약(부족 시 독립청구항) / 문제–해결수단 의미 그룹=과제·수단 문구.</li>' +
       '<li><b>군집화</b>: 밀집도=HDBSCAN(자동), 신흥 탐지=KMeans(k 자동), 의미 그룹=계층 군집(거리 임계값 ps_group_distance 로 조정). 모든 시드는 고정되어 같은 데이터에서 같은 결과가 나옵니다.</li>' +
       '<li><b>LLM</b>: 허용 목록의 사내 모델만 사용하고, 특허 원문이 아닌 화면 집계값·요약 통계만 전달합니다.</li></ul>');
@@ -4073,6 +4074,84 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
       }).catch(errToast).finally(function () { upBtn.disabled = false; });
     });
     renderUploads();
+
+    /* 임베딩 벡터 파일 (.npy/.npz) 업로드·선택 */
+    var ce = card('🧬 임베딩 벡터 파일 (.npy/.npz)',
+      '사전 계산한 임베딩 벡터를 raw Excel 컬럼 대신 별도 파일로 올려 사용합니다. ' +
+      '권장 형식: .npz — embeddings(N×D 벡터) + ids(출원번호 또는 공개번호) 두 배열. ' +
+      '키가 없는 .npy(N×D)는 현재 dataset 과 행 수가 정확히 일치할 때만 행 순서로 매칭됩니다. ' +
+      '매칭은 출원번호/공개번호 기준이며 하이픈·공백 등 형식 차이는 자동 흡수, ' +
+      '매칭 안 된 문헌은 임베딩 분석에서 제외됩니다 (임의 벡터 생성 없음). ' +
+      '파일을 "사용"으로 지정하면 모든 임베딩 분석(신흥 탐지·의미 영향력·유사도 네트워크 등)이 ' +
+      '이 벡터를 사용하고, 해제하면 기존 방식(컬럼/KR-SBERT)으로 돌아갑니다.');
+    grid.appendChild(ce.root);
+    var embForm = Ui.el('<div class="settings-row"><label>벡터 파일 *</label>' +
+      '<input type="file" id="emb-file" accept=".npy,.npz" style="flex:1"></div>');
+    ce.body.appendChild(embForm);
+    var embBtn = Ui.el('<button class="btn small primary">업로드</button>');
+    ce.body.appendChild(embBtn);
+    var embList = Ui.el('<div style="margin-top:10px"></div>');
+    ce.body.appendChild(embList);
+
+    function renderEmbeddings() {
+      Api.get('/api/embeddings').then(function (r) {
+        embList.innerHTML = '';
+        var items = r.items || [];
+        if (!items.length) {
+          embList.appendChild(Ui.el('<div style="color:#8aa0b2;font-size:12px">' +
+            '업로드된 임베딩 파일이 없습니다.</div>'));
+          return;
+        }
+        items.forEach(function (it) {
+          var selected = r.selected === it.id;
+          var row = Ui.el('<div class="settings-row" style="align-items:center">' +
+            '<div style="flex:1;min-width:0"><b style="font-size:12.5px">' + Ui.esc(it.filename) +
+            (selected ? ' <span class="badge good">사용 중</span>' : '') + '</b>' +
+            '<div style="color:#8aa0b2;font-size:11px">' + it.n + '건 × ' + it.dim + '차원 · ' +
+            (it.has_ids ? '키(출원번호) 포함' : '키 없음(행 순서 매칭)') + ' · ' +
+            Ui.esc(it.created_at || '') + (it.owner ? ' · ' + Ui.esc(it.owner) : '') +
+            '</div><div class="emb-match" style="color:#46607a;font-size:11px"></div></div>' +
+            '<button class="btn small" data-act="match">매칭 진단</button>' +
+            '<button class="btn small ' + (selected ? '' : 'primary') + '" data-act="sel">' +
+            (selected ? '사용 해제' : '사용') + '</button>' +
+            '<button class="btn small" data-act="del">삭제</button></div>');
+          row.querySelector('[data-act="match"]').addEventListener('click', function () {
+            Api.post('/api/embeddings/match', { id: it.id }, '매칭 진단 중…').then(function (m) {
+              row.querySelector('.emb-match').textContent =
+                '매칭: ' + m.matched + ' / ' + m.n_data + '건 (' + m.match_field + ' 기준' +
+                (m.mode === 'order' ? ', 행 순서' : '') + ')' + (m.note ? ' — ' + m.note : '');
+            }).catch(errToast);
+          });
+          row.querySelector('[data-act="sel"]').addEventListener('click', function () {
+            Api.post('/api/embeddings/select', { id: selected ? null : it.id })
+              .then(function () {
+                Ui.toast(selected ? '임베딩 파일 사용을 해제했습니다.'
+                                  : '이제 임베딩 분석이 이 파일의 벡터를 사용합니다.');
+                renderEmbeddings();
+              }).catch(errToast);
+          });
+          row.querySelector('[data-act="del"]').addEventListener('click', function () {
+            if (!confirm('임베딩 파일을 삭제할까요?')) return;
+            Api.post('/api/embeddings/delete', { id: it.id })
+              .then(renderEmbeddings).catch(errToast);
+          });
+          embList.appendChild(row);
+        });
+      }).catch(function () { /* 미지원 백엔드 호환 */ });
+    }
+    embBtn.addEventListener('click', function () {
+      var fileEl = embForm.querySelector('#emb-file');
+      if (!fileEl.files.length) { Ui.toast('.npy 또는 .npz 파일을 선택하세요.'); return; }
+      var fd = new FormData();
+      fd.append('file', fileEl.files[0]);
+      embBtn.disabled = true;
+      Api.upload('/api/embeddings', fd, '임베딩 파일 업로드 중…').then(function (r) {
+        Ui.toast('업로드 완료: ' + r.entry.n + '건 × ' + r.entry.dim + '차원.');
+        fileEl.value = '';
+        renderEmbeddings();
+      }).catch(errToast).finally(function () { embBtn.disabled = false; });
+    });
+    renderEmbeddings();
 
     /* 분석 스냅샷 저장·불러오기 */
     var cs = card('💾 분석 스냅샷 — 기존 분석 결과 불러오기',

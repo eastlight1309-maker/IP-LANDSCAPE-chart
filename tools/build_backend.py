@@ -29,6 +29,7 @@ MODULE_ORDER = [
     "src/auth.py",
     "src/data_access.py",
     "src/uploads.py",
+    "src/embedding_files.py",
     "src/insight_store.py",
     "src/embedding_adapter.py",
     "src/llm_client.py",

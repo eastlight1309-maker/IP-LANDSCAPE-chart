@@ -224,6 +224,9 @@ DEFAULT_SETTINGS = {
     # (사내 로컬 경로 → HF 캐시 순서, SBERT_MODEL_CANDIDATES). 사전 계산 임베딩
     # 컬럼이 있으면 그것이 우선, 모델 로드 불가 환경에서는 TF-IDF 폴백.
     "embedding_adapter": {"type": "sbert", "model_name": ""},
+    # 업로드된 임베딩 벡터 파일(.npy/.npz) entry id — 지정 시 raw 컬럼 매핑 대신
+    # 출원번호/공개번호 매칭으로 _embedding 을 채운다 (모델 재계산보다 우선)
+    "embedding_file_id": None,
     # LLM 인사이트에 외부 웹 검색 결과 컨텍스트 첨부 허용 (요청별 체크박스로 사용)
     "web_search_enabled": True,
     "limits": {}, "thresholds": {}, "weights": {},

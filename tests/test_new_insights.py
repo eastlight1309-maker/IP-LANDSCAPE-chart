@@ -743,6 +743,85 @@ def test_company_focus(settings):
     assert compute_company_focus(df, settings, company="없는회사X")["status"] == "empty"
 
 
+def test_embedding_file_upload_and_matching(tmp_path, monkeypatch, settings):
+    """.npy/.npz 임베딩 파일 업로드 → 출원번호 매칭 → _embedding 적용."""
+    import io as _io
+    import numpy as np
+    monkeypatch.setenv("IP_LANDSCAPE_UPLOAD_DIR", str(tmp_path))
+    monkeypatch.setenv("IP_LANDSCAPE_STORE", str(tmp_path / "store.json"))
+    from src.embedding_files import (save_embedding_file, load_embedding_arrays,
+                                     apply_to_frame, match_stats,
+                                     delete_embedding_file, list_embedding_files)
+    df = make_prepared(generate_sample(n=120, seed=3))
+    dim = 16
+    # ① npz(embeddings+ids): 일부 문헌만 커버 + 하이픈 형식 차이
+    keys = ["%s-x" % v for v in df["app_number"].astype(str).head(80)]
+    vecs = np.random.RandomState(0).rand(80, dim)
+    buf = _io.BytesIO()
+    np.savez(buf, embeddings=vecs, ids=np.asarray(keys, dtype=object))
+    entry = save_embedding_file(buf.getvalue(), "vectors.npz", owner="IP팀/홍길동")
+    assert entry["n"] == 80 and entry["dim"] == dim and entry["has_ids"]
+    ids, mat = load_embedding_arrays(entry["id"])
+    assert mat.shape == (80, dim)
+    st = match_stats(df, entry["id"])
+    # '-x' 는 비영숫자가 아니므로... 키 정규화로 흡수되는 건 하이픈·공백 — 검증용으로
+    # 실제 매칭은 원본 번호 기반 npz 로 다시 확인한다
+    buf2 = _io.BytesIO()
+    np.savez(buf2, embeddings=vecs,
+             ids=np.asarray([str(v).replace("KR", "KR-") for v in
+                             df["app_number"].astype(str).head(80)], dtype=object))
+    e2 = save_embedding_file(buf2.getvalue(), "vectors2.npz")
+    st2 = match_stats(df, e2["id"])
+    assert st2["matched"] == 80 and st2["match_field"] == "출원번호"
+    r = apply_to_frame(df, e2["id"])
+    assert r["applied"] and r["matched"] == 80
+    got = df["_embedding"].map(lambda v: v is not None)
+    assert int(got.sum()) == 80  # 매칭 안 된 문헌은 None (임의 생성 없음)
+    # ② 키 없는 .npy: 행 수 일치 시에만 순서 매칭
+    buf3 = _io.BytesIO()
+    np.save(buf3, np.random.RandomState(1).rand(len(df), dim))
+    e3 = save_embedding_file(buf3.getvalue(), "plain.npy")
+    assert e3["has_ids"] is False
+    r3 = apply_to_frame(df.copy(), e3["id"])
+    assert r3["applied"] and r3["matched"] == len(df)
+    buf4 = _io.BytesIO()
+    np.save(buf4, np.random.RandomState(2).rand(len(df) - 5, dim))
+    e4 = save_embedding_file(buf4.getvalue(), "short.npy")
+    r4 = apply_to_frame(df.copy(), e4["id"])
+    assert not r4["applied"] and "행 수" in r4["reason"]  # 추측 매칭 금지
+    # ③ 잘못된 파일 거부
+    with pytest.raises(ValueError):
+        save_embedding_file(b"not an npy", "bad.npy")
+    # 삭제
+    assert delete_embedding_file(e4["id"])
+    assert all(it["id"] != e4["id"] for it in list_embedding_files())
+    _ = st  # (①은 형식 검증용)
+
+
+def test_embedding_file_feeds_semantic_analysis(tmp_path, monkeypatch, settings):
+    """업로드 임베딩이 임베딩 분석(신흥 탐지)에 실제로 사용된다."""
+    import io as _io
+    import numpy as np
+    monkeypatch.setenv("IP_LANDSCAPE_UPLOAD_DIR", str(tmp_path))
+    monkeypatch.setenv("IP_LANDSCAPE_STORE", str(tmp_path / "store.json"))
+    from src.embedding_files import save_embedding_file, apply_to_frame
+    from src.analyses.semantic_insights import compute_emerging_clusters
+    df = make_prepared(generate_sample(n=200, seed=9))
+    df = df.drop(columns=["_embedding"], errors="ignore")
+    dim = 24
+    buf = _io.BytesIO()
+    np.savez(buf, embeddings=np.random.RandomState(4).rand(len(df), dim),
+             ids=np.asarray(df["app_number"].astype(str).tolist(), dtype=object))
+    e = save_embedding_file(buf.getvalue(), "full.npz")
+    r = apply_to_frame(df, e["id"])
+    assert r["applied"] and r["matched"] == len(df)
+    s = dict(settings, embedding_adapter={"type": "none"})  # 모델 폴백 차단
+    out = compute_emerging_clusters(df, s)
+    assert out["status"] == "ok"
+    # 사전 계산 벡터(컬럼 어댑터) 사용이 방법에 표기됨
+    assert "column" in str(out["methods"].get("embedding", ""))
+
+
 def test_tech_tree(settings):
     """대·중·소 기술분류 트리맵: 계층 구조·값 정합·drill·회사 필터."""
     from src.analyses.basic_stats import compute_tech_tree

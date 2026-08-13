@@ -261,7 +261,8 @@ def _prepared_for(body):
     actual_cols = get_dataset_columns(dataset)
     mapping = _effective_mapping(dataset, actual_cols)
     rules = storage.load_applicant_rules()
-    df, _ = get_prepared(dataset, mapping, rules, settings.get("analysis_unit", "family"))
+    df, _ = get_prepared(dataset, mapping, rules, settings.get("analysis_unit", "family"),
+                         embedding_file=settings.get("embedding_file_id"))
     filters = (body or {}).get("filters") or {}
     filtered = apply_filters(df, filters)
     return filtered, settings, dataset, mapping, filters
@@ -1068,6 +1069,80 @@ def register_routes(app):
                 return _error(403, "본인이 올린 작업만 삭제할 수 있습니다 (관리자 예외).")
         entry = uploads_delete(uid)
         return {"status": "ok", "deleted": entry.get("id")}
+
+    # ---------------- 임베딩 벡터 파일 (.npy/.npz) ----------------
+    @app.route("/api/embeddings", methods=["GET", "POST"])
+    @wrap
+    def api_embeddings():
+        """임베딩 벡터 파일 저장소.
+
+        GET → {"items":[{id,filename,n,dim,has_ids,owner,created_at}...],
+               "selected": 현재 사용 중 entry id}
+        POST multipart form: file(.npy/.npz) → 검증·저장 후 목록 반환.
+        """
+        from src.embedding_files import list_embedding_files, save_embedding_file
+        me = _req_user()
+        if request.method == "GET":
+            return {"status": "ok", "items": list_embedding_files(),
+                    "selected": _settings().get("embedding_file_id")}
+        f = request.files.get("file")
+        if f is None:
+            return _error(400, "파일이 첨부되지 않았습니다.")
+        try:
+            entry = save_embedding_file(f.read(), f.filename, owner=me)
+        except ValueError as e:
+            return _error(400, str(e))
+        return {"status": "ok", "entry": entry, "items": list_embedding_files()}
+
+    @app.route("/api/embeddings/select", methods=["POST"])
+    @wrap
+    def api_embeddings_select():
+        """POST {"id": entry id 또는 null} → 사용할 임베딩 파일 지정/해제.
+
+        지정 시 모든 임베딩 분석이 이 파일의 벡터를 출원번호/공개번호 매칭으로
+        사용한다 (raw 컬럼·모델 재계산보다 우선). null 이면 기존 방식으로 복귀.
+        """
+        from src.embedding_files import find_entry
+        eid = (json_body() or {}).get("id")
+        if eid and find_entry(eid) is None:
+            return _error(400, "존재하지 않는 임베딩 파일입니다: %s" % eid)
+        current = storage.load_settings()
+        current["embedding_file_id"] = eid or None
+        storage.save_settings(current)
+        clear_all_caches()
+        return {"status": "ok", "selected": eid or None}
+
+    @app.route("/api/embeddings/match", methods=["POST"])
+    @wrap
+    def api_embeddings_match():
+        """POST {"id"} → 현재 dataset 과의 매칭 진단 (적용 없이 통계만)."""
+        from src.embedding_files import match_stats
+        eid = (json_body() or {}).get("id")
+        df, _s, _d, _m, _f = _prepared_for({})
+        stats = match_stats(df, eid)
+        if "error" in stats:
+            return _error(400, stats["error"])
+        return dict(stats, status="ok")
+
+    @app.route("/api/embeddings/delete", methods=["POST"])
+    @wrap
+    def api_embeddings_delete():
+        """POST {"id"} → 임베딩 파일 삭제 (본인 소유 또는 관리자만)."""
+        from src.embedding_files import list_embedding_files, delete_embedding_file
+        eid = (json_body() or {}).get("id")
+        me = _req_user()
+        for it in list_embedding_files():
+            if str(it.get("id")) == str(eid) and \
+                    not auth_can_delete(it.get("owner"), me):
+                return _error(403, "본인이 올린 파일만 삭제할 수 있습니다 (관리자 예외).")
+        if not delete_embedding_file(eid):
+            return _error(404, "파일을 찾을 수 없습니다.")
+        current = storage.load_settings()
+        if current.get("embedding_file_id") == eid:
+            current["embedding_file_id"] = None
+            storage.save_settings(current)
+        clear_all_caches()
+        return {"status": "ok", "deleted": eid}
 
     # ---------------- LLM 인사이트 보관함 / PPT 보고서 ----------------
     @app.route("/api/insights-log", methods=["GET"])

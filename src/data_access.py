@@ -169,15 +169,19 @@ def needed_raw_columns(mapping):
     return sorted(set(c for c in (mapping or {}).values() if c))
 
 
-def get_prepared(dataset_name, mapping, applicant_rules=None, analysis_unit="family"):
+def get_prepared(dataset_name, mapping, applicant_rules=None, analysis_unit="family",
+                 embedding_file=None):
     """전처리 완료 표준 프레임 (캐시). 모든 분석 API 의 공통 진입점.
 
+    embedding_file: 업로드된 임베딩 파일(.npy/.npz) entry id — 지정 시
+    _embedding 컬럼을 출원번호/공개번호 매칭으로 채운다 (raw 컬럼 매핑 불필요).
     반환: (df, from_cache). 매핑이 비어 있으면 ValueError.
     """
     mapping = {k: v for k, v in (mapping or {}).items() if v and k in CONCEPTS}
     if not mapping:
         raise ValueError("컬럼 매핑이 비어 있습니다. 컬럼 매핑 화면에서 매핑을 설정하세요.")
-    key = make_cache_key("prepared", dataset_name, mapping, applicant_rules or {}, analysis_unit)
+    key = make_cache_key("prepared", dataset_name, mapping, applicant_rules or {},
+                         analysis_unit, embedding_file or "")
     cached = DF_CACHE.get(key)
     if cached is not None:
         return cached, True
@@ -185,5 +189,11 @@ def get_prepared(dataset_name, mapping, applicant_rules=None, analysis_unit="fam
     df = build_standard_frame(raw, mapping, applicant_rules)
     df = apply_analysis_unit(df, analysis_unit)
     df = df.reset_index(drop=True)
+    if embedding_file:
+        from src.embedding_files import apply_to_frame
+        result = apply_to_frame(df, embedding_file)
+        if not result.get("applied"):
+            logger.warning("업로드 임베딩 적용 실패 (%s): %s",
+                           embedding_file, result.get("reason"))
     DF_CACHE.set(key, df)
     return df, False
