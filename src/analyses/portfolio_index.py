@@ -296,10 +296,8 @@ def compute_portfolio_index(df, settings, companies=None):
     sizes = [max(r["portfolio_index"], 0.1) for r in shown]
     smax = max(sizes)
     bubble = {"data": [{
-        "type": "scatter", "mode": "markers+text", "cliponaxis": False,
+        "type": "scatter", "mode": "markers", "cliponaxis": False,
         "x": [r["n"] for r in shown], "y": [r["avg_ci"] for r in shown],
-        "text": [r["company"][:10] for r in shown], "textposition": "top center",
-        "textfont": {"size": 9},
         "hovertext": ["<b>%s</b><br>PI %s / %s건 / 평균 CI %s<br>TR %s / MC %s / 성장률 %s"
                       % (r["company"], fmt_num(r["portfolio_index"]), fmt_num(r["n"]),
                          r["avg_ci"], r["avg_tr"], r["avg_mc"],
@@ -322,16 +320,20 @@ def compute_portfolio_index(df, settings, companies=None):
         "포트폴리오 규모 vs 질 (크기=Portfolio Index)",
         xaxis={"title": "%s 수 (규모)" % scope_label},
         yaxis={"title": "평균 Competitive Impact (질)"})}
+    # 회사명 라벨: 지시선 주석 (PI 상위 순, 겹침 회피)
+    from src.viz_payload import leader_labels
+    bubble["layout"].setdefault("annotations", [])
+    bubble["layout"]["annotations"] += leader_labels(
+        [{"x": r["n"], "y": r["avg_ci"], "text": r["company"][:12]}
+         for r in shown[:14]], plot_h=460.0, box_w=0.15)
 
     # ②-b 요청 사양 버블: X=특허 패밀리 건수, Y=평균 Competitive Impact,
     #      크기=패밀리 건수(화면 최적화 스케일), 라벨=출원인, 색=평균 MC
     fam_sizes = [max(r["families"], 1) for r in shown]
     fmax = max(fam_sizes)
     family_bubble = {"data": [{
-        "type": "scatter", "mode": "markers+text",
+        "type": "scatter", "mode": "markers", "cliponaxis": False,
         "x": [r["families"] for r in shown], "y": [r["avg_ci"] for r in shown],
-        "text": [r["company"][:12] for r in shown], "textposition": "top center",
-        "textfont": {"size": 10, "color": "#2b445c"},
         "hovertext": ["<b>%s</b><br>패밀리 %s건 / 평균 CI %s<br>PAI %s / TR %s / MC %s"
                       % (r["company"], fmt_num(r["families"]), r["avg_ci"],
                          fmt_num(r["portfolio_index"]), r["avg_tr"], r["avg_mc"])
@@ -353,6 +355,10 @@ def compute_portfolio_index(df, settings, companies=None):
         "기업별 패밀리 규모 × Competitive Impact (크기=패밀리 건수)",
         xaxis={"title": "특허 패밀리 건수"},
         yaxis={"title": "평균 Competitive Impact (CI)"})}
+    family_bubble["layout"].setdefault("annotations", [])
+    family_bubble["layout"]["annotations"] += leader_labels(
+        [{"x": r["families"], "y": r["avg_ci"], "text": r["company"][:12]}
+         for r in shown[:14]], plot_h=460.0, box_w=0.15)
 
     # ②-c Market Coverage 차트: 기업별 평균 MC 막대
     mc_sorted = sorted(shown, key=lambda r: -r["avg_mc"])[:top_n]

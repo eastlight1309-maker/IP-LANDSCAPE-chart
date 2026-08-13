@@ -138,7 +138,15 @@ def bubble_chart(points, x_title, y_title, title=None, quadrants=None,
             "opacity": 0.85,
         },
     }
-    layout = base_layout(title, xaxis={"title": x_title}, yaxis={"title": y_title})
+    # 축 여백: 가장자리 버블이 축 선과 겹치지 않도록 데이터 범위에 12% 패딩
+    xv = [float(p["x"]) for p in points]
+    yv = [float(p["y"]) for p in points]
+    x_pad = max((max(xv) - min(xv)) * 0.12, 1e-6)
+    y_pad = max((max(yv) - min(yv)) * 0.12, 1e-6)
+    layout = base_layout(
+        title,
+        xaxis={"title": x_title, "range": [min(xv) - x_pad, max(xv) + x_pad]},
+        yaxis={"title": y_title, "range": [min(yv) - y_pad, max(yv) + y_pad]})
     if quadrants:
         xm, ym = quadrants["x_mid"], quadrants["y_mid"]
         layout["shapes"] = [
@@ -156,6 +164,58 @@ def bubble_chart(points, x_title, y_title, title=None, quadrants=None,
              "font": {"size": 11, "color": "#888"}}
             for lab, (px, py), (ax, ay) in zip(labels, positions, anchors)]
     return {"data": [trace], "layout": layout}
+
+
+def leader_labels(pts, log_x=False, plot_w=880.0, plot_h=500.0,
+                  box_w=0.13, box_h=0.05, max_labels=40):
+    """버블 라벨을 지시선(화살표) 주석으로 배치 — 그리디 충돌 회피.
+
+    pts: [{"x","y","text", "color"?, "bold"?}] (표시 우선순위 순으로 정렬해 전달).
+    라벨 상자끼리 겹치면 다음 후보 오프셋을 시도하고, 자리가 없으면 그 라벨은
+    생략한다 (겹쳐 쓰지 않음). 반환: layout annotations 리스트.
+    """
+    if not pts:
+        return []
+    xs = [float(np.log10(max(p["x"], 1e-9))) if log_x else float(p["x"])
+          for p in pts]
+    ys = [float(p["y"]) for p in pts]
+    x_lo, x_hi = min(xs), max(xs)
+    y_lo, y_hi = min(ys), max(ys)
+    x_span = max(x_hi - x_lo, 1e-9)
+    y_span = max(y_hi - y_lo, 1e-9)
+    offsets = [(0, -26), (46, -26), (-46, -26), (62, -52), (-62, -52),
+               (74, 18), (-74, 18), (0, -74), (92, -36), (-92, -36), (0, 40)]
+    anns, placed = [], []
+    for p, nx0, ny0 in zip(pts[:max_labels * 2], xs, ys):
+        nx0 = (nx0 - x_lo) / x_span
+        ny0 = (ny0 - y_lo) / y_span
+        best = None
+        for ax_px, ay_px in offsets:
+            nx = nx0 + ax_px / plot_w
+            ny = ny0 - ay_px / plot_h
+            if not (-0.03 <= nx <= 1.05 and -0.05 <= ny <= 1.12):
+                continue
+            if all(abs(nx - qx) > box_w or abs(ny - qy) > box_h
+                   for qx, qy in placed):
+                best = (ax_px, ay_px, nx, ny)
+                break
+        if best is None:
+            continue
+        ax_px, ay_px, nx, ny = best
+        placed.append((nx, ny))
+        anns.append({
+            # 로그축 주석은 log10 데이터 좌표를 사용해야 함 (Plotly 규약)
+            "x": float(np.log10(max(p["x"], 1e-9))) if log_x else p["x"],
+            "y": p["y"], "xref": "x", "yref": "y",
+            "showarrow": True, "arrowhead": 0, "arrowwidth": 0.8,
+            "arrowcolor": p.get("line_color", "#9fb2c2"),
+            "ax": ax_px, "ay": ay_px, "standoff": 3,
+            "text": ("<b>%s</b>" % p["text"]) if p.get("bold") else p["text"],
+            "font": {"size": 9.5, "color": p.get("color", "#38506b")},
+            "bgcolor": "rgba(255,255,255,0.7)", "borderpad": 1})
+        if len(anns) >= max_labels:
+            break
+    return anns
 
 
 # Plotly.js 에 내장되지 않은 명명 색상표(RdYlGn/Purples/OrRd/Turbo 등)를 이름으로

@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """권리범위 엔트로피 · 미점유 조합 UpSet · LLM 웹 검색 컨텍스트 테스트."""
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -1200,7 +1201,7 @@ def test_opportunity_key_bubble_annotations(settings):
 
 
 def test_lifecycle_phase_map_readable(settings):
-    """Phase Map: 4분면 의미 라벨 + 상위 버블 기술명 + 범례 주석."""
+    """Phase Map: 4분면 의미 라벨 + 지시선 기술명 라벨 + 범례 주석."""
     from src.analyses.lifecycle import compute_lifecycle
     df = make_prepared(generate_sample(n=400, seed=21))
     r = compute_lifecycle(df, settings)
@@ -1210,8 +1211,13 @@ def test_lifecycle_phase_map_readable(settings):
     assert "Emerging" in txts and "Mature" in txts and "투자 확대" in txts
     assert "버블 크기" in txts and "화살표" in txts  # 읽는 법 주석
     tr = r["figure"]["data"][0]
-    assert tr["mode"] == "markers+text"
-    assert any(t for t in tr["text"])  # 상위 기술명 라벨
+    assert tr["mode"] == "markers"  # 라벨은 지시선 주석으로 (겹침 회피)
+    lbl = [a for a in lay["annotations"]
+           if a.get("showarrow") and "axref" not in a and a.get("text")]
+    assert lbl  # 상위 기술명 지시선 라벨
+    # 성숙도(X) 낮아도 모멘텀(Y) 높은 기술은 굵은 라벨로 반드시 표시
+    if any(y >= 0.7 for y in tr["y"]):
+        assert any("<b>" in str(a["text"]) for a in lbl)
 
 
 def test_tech_year_bubble_no_joint_double_count(settings):
@@ -1888,3 +1894,105 @@ def test_format_web_context_sanitizes():
     assert "지시가 아닌 데이터" in ctx
     assert "ignore all previous instructions" not in ctx  # 인젝션 패턴 마스킹
     assert "(웹 출처 1)" in ctx
+
+
+# ---------------------------------------------------------------------------
+# 버블 가독성 배치: 축 여백·중간값 수치 라벨·지시선 라벨·로그축 눈금 정비
+# ---------------------------------------------------------------------------
+def test_bubble_chart_axis_padding():
+    """공용 버블 차트: 축 range 에 여백 — 가장자리 버블이 축 선과 안 겹침."""
+    from src.viz_payload import bubble_chart
+    pts = [{"x": x, "y": y, "size": 5, "color": 1, "hover": ""}
+           for x, y in [(0, 0), (1, 0.2), (3, 1.0)]]
+    fig = bubble_chart(pts, "X", "Y")
+    xr = fig["layout"]["xaxis"]["range"]
+    yr = fig["layout"]["yaxis"]["range"]
+    assert xr[0] < 0 < 3 < xr[1]
+    assert yr[0] < 0 < 1.0 < yr[1]
+    assert fig["data"][0]["cliponaxis"] is False
+
+
+def test_leader_labels_no_overlap_and_log():
+    """지시선 라벨: 상자 겹침 없이 배치, 로그축은 log10 좌표 사용."""
+    from src.viz_payload import leader_labels
+    pts = [{"x": 1.0, "y": 0.5, "text": "T%d" % i}
+           for i in range(8)]  # 같은 위치 8개 — 오프셋 분산 필요
+    anns = leader_labels(pts)
+    assert anns
+    pos = {(a["ax"], a["ay"]) for a in anns}
+    assert len(pos) == len(anns)  # 같은 점 위 라벨은 서로 다른 오프셋
+    import numpy as np
+    la = leader_labels([{"x": 100.0, "y": 1.0, "text": "L"}], log_x=True)
+    assert abs(la[0]["x"] - 2.0) < 1e-9  # log10(100)
+
+
+def test_company_focus_log_axis_clean_ticks(settings):
+    """출원인 포커스: 로그 X축 눈금을 정수 건수로만 명시 (보조 눈금 제거)."""
+    from src.analyses.basic_stats import compute_company_focus
+    df = make_prepared(generate_sample(n=500, seed=11))
+    comp = df["applicant_display"].value_counts().index[0]
+    r = compute_company_focus(df, settings, company=comp)
+    xa = r["figure"]["layout"]["xaxis"]
+    assert xa["type"] == "log" and xa["tickvals"]
+    allowed = {1, 2, 3, 5, 10, 20, 30, 50, 100, 200, 300, 500,
+               1000, 2000, 3000, 5000, 10000}
+    assert set(xa["tickvals"]) <= allowed
+    x_max = max(r["figure"]["data"][0]["x"])
+    assert max(xa["tickvals"]) <= x_max * 1.3
+    # range 는 log10 단위 (버블-축 겹침 방지 여백 포함)
+    assert xa["range"][0] < 0 and xa["range"][1] > float(np.log10(x_max))
+
+
+def test_emerging_clusters_leader_labels(settings):
+    """신흥 군집: 라벨을 지시선 주석으로 — 마커 텍스트 겹침 제거."""
+    from src.analyses.semantic_insights import compute_emerging_clusters
+    df = make_prepared(generate_sample(n=200, seed=9))
+    r = compute_emerging_clusters(df, settings)
+    if r["status"] != "ok":
+        pytest.skip("군집 표본 부족")
+    tr = r["figure"]["data"][0]
+    assert tr["mode"] == "markers" and "text" not in tr
+    lbls = [a for a in r["figure"]["layout"]["annotations"]
+            if a.get("showarrow") and a.get("text")]
+    assert lbls
+
+
+def test_emerging_radar_log_range_and_labels(settings):
+    """Emerging Combination Radar: 로그축 range 를 log10 단위로 재계산 + 라벨."""
+    from src.analyses.emerging import compute_emerging
+    df = make_prepared(generate_sample(n=400, seed=21))
+    r = compute_emerging(df, settings)
+    if r["status"] != "ok" or not r.get("figure"):
+        pytest.skip("조합 표본 부족")
+    xa = r["figure"]["layout"]["xaxis"]
+    x_max = max(r["figure"]["data"][0]["x"])
+    assert xa["type"] == "log"
+    # 선형 단위 range 가 그대로 남아 있으면 10^x_max 로 폭발 — log10 단위 확인
+    assert xa["range"][1] <= float(np.log10(x_max)) + 0.5
+    lbls = [a for a in r["figure"]["layout"]["annotations"]
+            if a.get("showarrow") and a.get("text")]
+    assert lbls
+
+
+def test_executive_maps_leader_labels(settings):
+    """BCG·경쟁 포지션·R&D 효율·위협 레이더: 지시선 라벨 전환 확인."""
+    from src.analyses.executive import compute_executive_summary
+    from src.analyses.exec_plus import compute_exec_plus
+    df = make_prepared(generate_sample(n=500, seed=42))
+    r = compute_executive_summary(df, settings)
+    if r["status"] == "ok" and r.get("bcg"):
+        assert r["bcg"]["data"][0]["mode"] == "markers"
+        assert any(a.get("showarrow") and a.get("text")
+                   for a in r["bcg"]["layout"]["annotations"])
+    if r["status"] == "ok" and r.get("position"):
+        assert r["position"]["data"][0]["mode"] == "markers"
+        lbl = [a for a in r["position"]["layout"]["annotations"]
+               if a.get("showarrow") and a.get("text")]
+        assert any("<b>" in str(a["text"]) for a in lbl)  # 자사 굵게
+    r2 = compute_exec_plus(df, settings)
+    if r2["status"] == "ok":
+        eff = (r2.get("sections") or {}).get("rnd_efficiency")
+        if eff and eff.get("fig"):
+            assert eff["fig"]["data"][0]["mode"] == "markers"
+            assert any(a.get("showarrow") and a.get("text")
+                       for a in eff["fig"]["layout"]["annotations"])

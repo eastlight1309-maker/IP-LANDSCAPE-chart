@@ -5057,7 +5057,15 @@ def bubble_chart(points, x_title, y_title, title=None, quadrants=None,
             "opacity": 0.85,
         },
     }
-    layout = base_layout(title, xaxis={"title": x_title}, yaxis={"title": y_title})
+    # 축 여백: 가장자리 버블이 축 선과 겹치지 않도록 데이터 범위에 12% 패딩
+    xv = [float(p["x"]) for p in points]
+    yv = [float(p["y"]) for p in points]
+    x_pad = max((max(xv) - min(xv)) * 0.12, 1e-6)
+    y_pad = max((max(yv) - min(yv)) * 0.12, 1e-6)
+    layout = base_layout(
+        title,
+        xaxis={"title": x_title, "range": [min(xv) - x_pad, max(xv) + x_pad]},
+        yaxis={"title": y_title, "range": [min(yv) - y_pad, max(yv) + y_pad]})
     if quadrants:
         xm, ym = quadrants["x_mid"], quadrants["y_mid"]
         layout["shapes"] = [
@@ -5075,6 +5083,58 @@ def bubble_chart(points, x_title, y_title, title=None, quadrants=None,
              "font": {"size": 11, "color": "#888"}}
             for lab, (px, py), (ax, ay) in zip(labels, positions, anchors)]
     return {"data": [trace], "layout": layout}
+
+
+def leader_labels(pts, log_x=False, plot_w=880.0, plot_h=500.0,
+                  box_w=0.13, box_h=0.05, max_labels=40):
+    """버블 라벨을 지시선(화살표) 주석으로 배치 — 그리디 충돌 회피.
+
+    pts: [{"x","y","text", "color"?, "bold"?}] (표시 우선순위 순으로 정렬해 전달).
+    라벨 상자끼리 겹치면 다음 후보 오프셋을 시도하고, 자리가 없으면 그 라벨은
+    생략한다 (겹쳐 쓰지 않음). 반환: layout annotations 리스트.
+    """
+    if not pts:
+        return []
+    xs = [float(np.log10(max(p["x"], 1e-9))) if log_x else float(p["x"])
+          for p in pts]
+    ys = [float(p["y"]) for p in pts]
+    x_lo, x_hi = min(xs), max(xs)
+    y_lo, y_hi = min(ys), max(ys)
+    x_span = max(x_hi - x_lo, 1e-9)
+    y_span = max(y_hi - y_lo, 1e-9)
+    offsets = [(0, -26), (46, -26), (-46, -26), (62, -52), (-62, -52),
+               (74, 18), (-74, 18), (0, -74), (92, -36), (-92, -36), (0, 40)]
+    anns, placed = [], []
+    for p, nx0, ny0 in zip(pts[:max_labels * 2], xs, ys):
+        nx0 = (nx0 - x_lo) / x_span
+        ny0 = (ny0 - y_lo) / y_span
+        best = None
+        for ax_px, ay_px in offsets:
+            nx = nx0 + ax_px / plot_w
+            ny = ny0 - ay_px / plot_h
+            if not (-0.03 <= nx <= 1.05 and -0.05 <= ny <= 1.12):
+                continue
+            if all(abs(nx - qx) > box_w or abs(ny - qy) > box_h
+                   for qx, qy in placed):
+                best = (ax_px, ay_px, nx, ny)
+                break
+        if best is None:
+            continue
+        ax_px, ay_px, nx, ny = best
+        placed.append((nx, ny))
+        anns.append({
+            # 로그축 주석은 log10 데이터 좌표를 사용해야 함 (Plotly 규약)
+            "x": float(np.log10(max(p["x"], 1e-9))) if log_x else p["x"],
+            "y": p["y"], "xref": "x", "yref": "y",
+            "showarrow": True, "arrowhead": 0, "arrowwidth": 0.8,
+            "arrowcolor": p.get("line_color", "#9fb2c2"),
+            "ax": ax_px, "ay": ay_px, "standoff": 3,
+            "text": ("<b>%s</b>" % p["text"]) if p.get("bold") else p["text"],
+            "font": {"size": 9.5, "color": p.get("color", "#38506b")},
+            "bgcolor": "rgba(255,255,255,0.7)", "borderpad": 1})
+        if len(anns) >= max_labels:
+            break
+    return anns
 
 
 # Plotly.js 에 내장되지 않은 명명 색상표(RdYlGn/Purples/OrRd/Turbo 등)를 이름으로
@@ -6404,6 +6464,18 @@ def compute_emerging(df, settings):
         colorbar_title="Lift")
     if fig:
         fig["layout"]["xaxis"]["type"] = "log"
+        # 로그축 range 는 log10 단위 — bubble_chart 가 넣은 선형 range 를 재계산
+        x_lo = max(min(x_vals), 1.0)
+        fig["layout"]["xaxis"]["range"] = [
+            float(np.log10(x_lo)) - 0.1, float(np.log10(max(x_vals))) + 0.1]
+        # 상위 조합 라벨: 지시선 주석 (Score 순, 로그 X 좌표 보정, 겹침 회피)
+        fig["layout"].setdefault("annotations", [])
+        fig["layout"]["annotations"] += leader_labels(
+            [{"x": max(r["n_ab"], 1), "y": r["growth"],
+              "text": "%s×%s" % (r["a"][:8], r["b"][:8]),
+              "bold": i == 0}
+             for i, r in enumerate(shown[:12])], log_x=True, plot_h=460.0,
+            box_w=0.15)
 
     sentences, metrics = [], {}
     top = shown[0] if shown else None
@@ -6702,14 +6774,22 @@ def compute_lifecycle(df, settings, company=None):
         mk.pop("colorbar", None)
     if fig:
         fig["layout"].setdefault("annotations", [])
-        # 상위 버블에 기술명 라벨 — 차트만 봐도 어떤 기술이 어느 국면인지 읽히도록
-        tr0 = fig["data"][0]
-        tr0["mode"] = "markers+text"
-        top_lbl = {r["tech"] for r in shown[:8]}
-        tr0["text"] = [(p["label"][:12] if p["label"] in top_lbl else "")
-                       for p in points]
-        tr0["textposition"] = "top center"
-        tr0["textfont"] = {"size": 9.5, "color": "#38506b"}
+        # 기술명 라벨: 지시선 주석으로 겹침 없이 배치. 규모 상위 8개 +
+        # 성숙도(X)가 낮아도 모멘텀(Y)이 높은 버블(떠오르는 신호)은 반드시 표시.
+        by_size = [r["tech"] for r in shown[:8]]
+        high_momentum = {r["tech"] for r in shown if r["momentum"] >= 0.7}
+        extra = [t for t in sorted(high_momentum) if t not in by_size]
+        # 좌상단(고모멘텀) 신호는 자리 경쟁에서 밀리지 않게 항상 먼저 배치
+        label_order = (extra + [t for t in by_size if t in high_momentum]
+                       + [t for t in by_size if t not in high_momentum])
+        rmap = {r["tech"]: r for r in shown}
+        pts_lbl = [{"x": rmap[t]["maturity"], "y": rmap[t]["momentum"],
+                    "text": str(t)[:14],
+                    "bold": t in high_momentum,
+                    "color": "#c0392b" if t in high_momentum else "#38506b",
+                    "line_color": "#c0392b" if t in high_momentum else "#9fb2c2"}
+                   for t in label_order if t in rmap]
+        fig["layout"]["annotations"] += leader_labels(pts_lbl, plot_h=470.0)
         fig["layout"]["annotations"].append({
             "x": 0.5, "y": -0.14, "xref": "paper", "yref": "paper",
             "showarrow": False,
@@ -9496,9 +9576,7 @@ def compute_basic_stats(df, settings, company=None):
                                                              "year": int(y)}),
                                       "m": {"출원인": str(a), "연도": int(y),
                                             "출원건수": int(v)}})
-        _bub_cut = sorted(pts["color"], reverse=True)[:12][-1] \
-            if pts["color"] else 0
-        _bub_cut = max(_bub_cut, 2)
+        _bub_cut = max(float(np.median(pts["color"])) if pts["color"] else 0, 2)
         fig_app_bubble = {"data": [{
             "type": "scatter", "mode": "markers+text", "cliponaxis": False,
             "x": pts["x"], "y": pts["y"],
@@ -9517,7 +9595,8 @@ def compute_basic_stats(df, settings, company=None):
                        "range": [year_lo - 0.7, year_hi + 0.7]},
                 yaxis={"title": "", "type": "category", "automargin": True,
                        "categoryorder": "array",
-                       "categoryarray": [str(a) for a in bub_apps[::-1]]},
+                       "categoryarray": [str(a) for a in bub_apps[::-1]],
+                       "range": [-0.9, len(bub_apps) - 0.1]},
                 height=max(420, 130 + 36 * len(bub_apps)))}
 
     # ⑤ 기술분류 순위 + ⑥ 분류×연도
@@ -9891,6 +9970,11 @@ def compute_company_focus(df, settings, company=None):
                               "전체 시장 건수": r["market_total"],
                               "급부상": "예" if r["rising"] else ""}})
     x_max = max(xs)
+    # 로그축은 기본값으로 두면 보조 눈금(2,3,…,9)이 매 자리수마다 찍혀 축 아래가
+    # 숫자로 지저분해짐 → 정수 건수 눈금만 명시 (1,2,3,5,10,20,…)
+    _tick_cands = [1, 2, 3, 5, 10, 20, 30, 50, 100, 200, 300, 500,
+                   1000, 2000, 3000, 5000, 10000]
+    x_ticks = [v for v in _tick_cands if v <= x_max * 1.3] or [1]
     fig = {"data": [{
         "type": "scatter", "mode": "markers", "cliponaxis": False,
         "x": xs, "y": ys,
@@ -9900,9 +9984,14 @@ def compute_company_focus(df, settings, company=None):
         "layout": base_layout(
             "'%s' 기술 포커스 맵 — X=누적 출원, Y=최근 %d년 비중 (빨강=급부상 후보)"
             % (company, recent),
-            xaxis={"title": "누적 출원 건수 (로그축)", "type": "log"},
+            xaxis={"title": "누적 출원 건수 (로그축)", "type": "log",
+                   "tickvals": x_ticks,
+                   "ticktext": [fmt_num(v) for v in x_ticks],
+                   # 로그축 range 는 log10 단위 — 좌우 여백으로 버블·축 겹침 방지
+                   "range": [float(np.log10(0.72)),
+                             float(np.log10(x_max * 1.45))]},
             yaxis={"title": "최근 %d년 출원 비중" % recent,
-                   "range": [-0.05, 1.08], "tickformat": ".0%"},
+                   "range": [-0.08, 1.08], "tickformat": ".0%"},
             annotations=[
                 {"x": np.log10(max(1.5, median_total * 0.35)), "y": 1.04,
                  "xref": "x", "yref": "y", "showarrow": False,
@@ -10124,9 +10213,8 @@ def compute_tech_year_bubble(df, settings, companies=None, level=None):
             customs.append({"drill": drill,
                             "m": {"출원인": name, "기술분류": str(t),
                                   "연도": int(y), "건수": int(n)}})
-        # 주요 셀에는 건수를 숫자로 표시 — 상위 셀(트레이스당 최대 12개)만
-        label_cut = sorted(cell_ns, reverse=True)[:12][-1] if cell_ns else 0
-        label_cut = max(label_cut, 2, int(np.ceil(vmax * 0.35)))
+        # 건수 표시: 중간값 이상 버블에 수치 라벨 (작은 버블은 hover 로)
+        label_cut = max(float(np.median(cell_ns)) if cell_ns else 0, 2)
         texts = [(fmt_num(n) if n >= label_cut else "") for n in cell_ns]
         marker = {"size": sizes, "line": {"width": 0.6, "color": "#5b7a8a"}}
         if n_g == 1:
@@ -10152,7 +10240,7 @@ def compute_tech_year_bubble(df, settings, companies=None, level=None):
                "tickvals": list(range(len(top_techs))),
                "ticktext": [str(t)[:44 if drill_key == "path" else 22]
                             for t in top_techs],
-               "range": [-0.8, len(top_techs) - 0.2], "automargin": True},
+               "range": [-0.95, len(top_techs) - 0.05], "automargin": True},
         showlegend=bool(comps),
         height=max(440, 140 + 36 * len(top_techs)))}
 
@@ -10489,10 +10577,8 @@ def compute_portfolio_index(df, settings, companies=None):
     sizes = [max(r["portfolio_index"], 0.1) for r in shown]
     smax = max(sizes)
     bubble = {"data": [{
-        "type": "scatter", "mode": "markers+text", "cliponaxis": False,
+        "type": "scatter", "mode": "markers", "cliponaxis": False,
         "x": [r["n"] for r in shown], "y": [r["avg_ci"] for r in shown],
-        "text": [r["company"][:10] for r in shown], "textposition": "top center",
-        "textfont": {"size": 9},
         "hovertext": ["<b>%s</b><br>PI %s / %s건 / 평균 CI %s<br>TR %s / MC %s / 성장률 %s"
                       % (r["company"], fmt_num(r["portfolio_index"]), fmt_num(r["n"]),
                          r["avg_ci"], r["avg_tr"], r["avg_mc"],
@@ -10515,16 +10601,19 @@ def compute_portfolio_index(df, settings, companies=None):
         "포트폴리오 규모 vs 질 (크기=Portfolio Index)",
         xaxis={"title": "%s 수 (규모)" % scope_label},
         yaxis={"title": "평균 Competitive Impact (질)"})}
+    # 회사명 라벨: 지시선 주석 (PI 상위 순, 겹침 회피)
+    bubble["layout"].setdefault("annotations", [])
+    bubble["layout"]["annotations"] += leader_labels(
+        [{"x": r["n"], "y": r["avg_ci"], "text": r["company"][:12]}
+         for r in shown[:14]], plot_h=460.0, box_w=0.15)
 
     # ②-b 요청 사양 버블: X=특허 패밀리 건수, Y=평균 Competitive Impact,
     #      크기=패밀리 건수(화면 최적화 스케일), 라벨=출원인, 색=평균 MC
     fam_sizes = [max(r["families"], 1) for r in shown]
     fmax = max(fam_sizes)
     family_bubble = {"data": [{
-        "type": "scatter", "mode": "markers+text",
+        "type": "scatter", "mode": "markers", "cliponaxis": False,
         "x": [r["families"] for r in shown], "y": [r["avg_ci"] for r in shown],
-        "text": [r["company"][:12] for r in shown], "textposition": "top center",
-        "textfont": {"size": 10, "color": "#2b445c"},
         "hovertext": ["<b>%s</b><br>패밀리 %s건 / 평균 CI %s<br>PAI %s / TR %s / MC %s"
                       % (r["company"], fmt_num(r["families"]), r["avg_ci"],
                          fmt_num(r["portfolio_index"]), r["avg_tr"], r["avg_mc"])
@@ -10546,6 +10635,10 @@ def compute_portfolio_index(df, settings, companies=None):
         "기업별 패밀리 규모 × Competitive Impact (크기=패밀리 건수)",
         xaxis={"title": "특허 패밀리 건수"},
         yaxis={"title": "평균 Competitive Impact (CI)"})}
+    family_bubble["layout"].setdefault("annotations", [])
+    family_bubble["layout"]["annotations"] += leader_labels(
+        [{"x": r["families"], "y": r["avg_ci"], "text": r["company"][:12]}
+         for r in shown[:14]], plot_h=460.0, box_w=0.15)
 
     # ②-c Market Coverage 차트: 기업별 평균 MC 막대
     mc_sorted = sorted(shown, key=lambda r: -r["avg_mc"])[:top_n]
@@ -12039,11 +12132,9 @@ def compute_emerging_clusters(df, settings, company=None, recent_years=None):
                      "color": "#E15759"}}
         title = "신흥 기술 조기 탐지 — 임베딩 군집 × 출원 시점 (크기=건수, 빨간 테두리=새 군집)"
     fig = {"data": [{
-        "type": "scatter", "mode": "markers+text", "cliponaxis": False,
+        "type": "scatter", "mode": "markers", "cliponaxis": False,
         "x": [c["mean_year"] for c in clusters],
         "y": [c["recent_share"] for c in clusters],
-        "text": [c["label"][:24] for c in clusters],
-        "textposition": "top center", "textfont": {"size": 9},
         "hovertext": hovers,
         "hoverinfo": "text",
         "customdata": [{"drill": c["drill"],
@@ -12057,6 +12148,20 @@ def compute_emerging_clusters(df, settings, company=None, recent_years=None):
             xaxis={"title": "군집 평균 출원연도", "tickformat": "d"},
             yaxis={"title": "최근 %d년 출원 비중" % recent_n, "range": [-0.08, 1.1],
                    "tickformat": ".0%"}, height=520)}
+    # 군집 라벨: 지시선 주석으로 겹침 없이 배치 (점수 높은 군집 우선,
+    # 신흥/새 군집은 굵게 강조)
+    lbl_order = sorted(clusters, key=lambda c: -c["score"])
+    pts_lbl = [{"x": c["mean_year"], "y": c["recent_share"],
+                "text": c["label"][:22],
+                "bold": bool(c["emerging"] or c["is_new_cluster"]),
+                "color": ("#c0392b" if (c["emerging"] or c["is_new_cluster"])
+                          else "#38506b"),
+                "line_color": ("#c0392b" if (c["emerging"] or c["is_new_cluster"])
+                               else "#9fb2c2")}
+               for c in lbl_order]
+    fig["layout"].setdefault("annotations", [])
+    fig["layout"]["annotations"] += leader_labels(pts_lbl, plot_h=490.0,
+                                                  box_w=0.16)
 
     emergings = [c for c in clusters if c["emerging"]]
     sentences = []
@@ -12883,9 +12988,8 @@ def _examiner_eye_section(df, settings):
             {"type": "scatter", "mode": "lines", "x": [0, lim], "y": [0, lim],
              "line": {"dash": "dot", "color": "#8899aa"}, "hoverinfo": "skip",
              "showlegend": False},
-            {"type": "scatter", "mode": "markers+text", "x": xs, "y": ys,
-             "text": [r["tech"][:14] for r in rows], "textposition": "top center",
-             "textfont": {"size": 9},
+            {"type": "scatter", "mode": "markers", "cliponaxis": False,
+             "x": xs, "y": ys,
              "hovertext": ["%s — 심사관 평균 %.2f vs 출원인측 평균 %.2f (%d건)"
                            % (r["tech"], r["examiner_avg"], r["applicant_avg"] or 0,
                               r["n"]) for r in rows],
@@ -12897,8 +13001,20 @@ def _examiner_eye_section(df, settings):
                                   for r in rows]}}],
             "layout": base_layout(
                 "심사관의 눈 — OA 인용 vs 출원인측 인용 (대각선 위=심사관이 별도 선행기술 다수 발굴)",
-                xaxis={"title": "출원인측 인용 평균 (건 · WIPS 자기인용 기준)", "range": [0, lim]},
-                yaxis={"title": "심사관(OA) 인용 평균 (건)", "range": [0, lim]})}
+                xaxis={"title": "출원인측 인용 평균 (건 · WIPS 자기인용 기준)",
+                       "range": [-lim * 0.04, lim]},
+                yaxis={"title": "심사관(OA) 인용 평균 (건)",
+                       "range": [-lim * 0.04, lim]})}
+        # 기술명 라벨: 지시선 주석 (위험 신호 우선·굵게, 겹침 회피)
+        risky_set = {id(r) for r in risky}
+        lbl_rows = sorted(rows, key=lambda r: (id(r) not in risky_set, -r["n"]))
+        fig["layout"].setdefault("annotations", [])
+        fig["layout"]["annotations"] += leader_labels(
+            [{"x": r["applicant_avg"] or 0, "y": r["examiner_avg"],
+              "text": r["tech"][:14], "bold": id(r) in risky_set,
+              "color": "#c0392b" if id(r) in risky_set else "#38506b",
+              "line_color": "#c0392b" if id(r) in risky_set else "#9fb2c2"}
+             for r in lbl_rows[:25]], plot_h=460.0)
         return {"fig": fig, "rows": rows,
                 "risky": [r["tech"] for r in risky]}, None
     rows.sort(key=lambda r: -r["examiner_avg"])
@@ -12954,7 +13070,8 @@ def _expedited_section(df, settings):
             "layout": base_layout(
                 "우선심사·조기공개로 본 사업화 긴급도 (크기=출원 수, 색=우선심사 비율)",
                 xaxis={"title": "출원연도", "dtick": 1, "tickformat": "d"},
-                yaxis={"title": "", "type": "category", "automargin": True},
+                yaxis={"title": "", "type": "category", "automargin": True,
+                       "range": [-0.9, len(top_techs) - 0.1]},
                 height=max(420, 120 + 34 * len(top_techs)))}
     # 급등 랭킹: 최근 vs 이전 비율 차
     recent_n = int(get_threshold(settings, "recent_years"))
@@ -13716,10 +13833,8 @@ def _rnd_efficiency_section(df, settings, focal):
                          if r["n"] >= x_med else
                          ("소작·정예" if r["quality"] >= y_med else "양·질 모두 부족"))
     max_rec = max([r["recent_n"] for r in rows] + [1])
-    trace = {"type": "scatter", "mode": "markers+text",
+    trace = {"type": "scatter", "mode": "markers", "cliponaxis": False,
              "x": [r["n"] for r in rows], "y": [r["quality"] for r in rows],
-             "text": [r["company"][:12] for r in rows],
-             "textposition": "top center", "textfont": {"size": 10},
              "hovertext": ["%s — 출원 %s건 / 질 지수 %+.2f (%s) / 최근 %d건"
                            % (r["company"], fmt_num(r["n"]), r["quality"],
                               r["quadrant"], r["recent_n"]) for r in rows],
@@ -13749,6 +13864,14 @@ def _rnd_efficiency_section(df, settings, focal):
              "text": "다작·저임팩트", "showarrow": False,
              "font": {"size": 11, "color": "#E15759"}, "yanchor": "bottom"}])
     fig = {"data": [trace], "layout": layout}
+    # 회사명 라벨: 지시선 주석 (자사 우선·굵게, 로그 X축 좌표 보정, 겹침 회피)
+    lbl_rows = sorted(rows, key=lambda r: (r["company"] != focal, -r["n"]))
+    layout["annotations"] += leader_labels(
+        [{"x": max(r["n"], 1), "y": r["quality"], "text": r["company"][:12],
+          "bold": r["company"] == focal,
+          "color": "#c0392b" if r["company"] == focal else "#38506b",
+          "line_color": "#c0392b" if r["company"] == focal else "#9fb2c2"}
+         for r in lbl_rows], log_x=True, plot_h=440.0, box_w=0.15)
     metric_labels = {"cites": "평균 피인용", "family": "평균 패밀리 수",
                      "active": "유효특허 비율"}
     focal_row = next((r for r in rows if r["company"] == focal), None)
@@ -13954,11 +14077,9 @@ def _threat_section(df, settings, focal):
     entrants.sort(key=lambda e: -e["threat"])
     color_reg = {}
     max_tot = max(e["total_n"] for e in entrants)
-    trace = {"type": "scatter", "mode": "markers+text",
+    trace = {"type": "scatter", "mode": "markers", "cliponaxis": False,
              "x": [e["entry_year"] for e in entrants],
              "y": [e["n_in_tech"] for e in entrants],
-             "text": [e["company"][:10] for e in entrants],
-             "textposition": "top center", "textfont": {"size": 9},
              "hovertext": ["%s — '%s' %d년 첫 진입, 해당 기술 %d건 / 전체 %d건%s "
                            "· 위협도 %.2f"
                            % (e["company"], e["tech"], e["entry_year"],
@@ -13973,10 +14094,18 @@ def _threat_section(df, settings, focal):
                         "color": [color_for(e["tech"], color_reg)
                                   for e in entrants],
                         "opacity": 0.85, "line": {"width": 1, "color": "#333"}}}
+    y_maxv = max(e["n_in_tech"] for e in entrants)
     fig = {"data": [trace], "layout": base_layout(
         "신흥 위협 레이더 — 자사 주력 기술 신규 진입자 (색=기술, 크기=기업 전체 규모)",
         xaxis={"title": "첫 진입 연도", "dtick": 1, "tickformat": "d"},
-        yaxis={"title": "해당 기술 출원 수"})}
+        yaxis={"title": "해당 기술 출원 수",
+               "range": [-y_maxv * 0.06, y_maxv * 1.12]})}
+    # 회사명 라벨: 지시선 주석 (위협도 순, 겹침 회피)
+    fig["layout"].setdefault("annotations", [])
+    fig["layout"]["annotations"] += leader_labels(
+        [{"x": e["entry_year"], "y": e["n_in_tech"], "text": e["company"][:10],
+          "bold": e is entrants[0]}
+         for e in entrants[:18]], plot_h=440.0, box_w=0.14)
     return {"fig": fig, "rows": entrants[:15], "focal": focal,
             "focal_techs": [str(t) for t in focal_techs.index],
             "note": "위협도 = 0.5×해당기술 출원량 + 0.3×진입 최신성 + 0.2×평균 "
@@ -14854,10 +14983,8 @@ def compute_executive_summary(df, settings, company=None):
             r["quadrant"] = quad(r)
         xs = [r["rel_share"] for r in bcg_rows]
         fig_bcg = {"data": [{
-            "type": "scatter", "mode": "markers+text",
+            "type": "scatter", "mode": "markers", "cliponaxis": False,
             "x": xs, "y": [r["growth"] for r in bcg_rows],
-            "text": [r["tech"][:14] for r in bcg_rows],
-            "textposition": "top center", "textfont": {"size": 9.5},
             "hovertext": ["<b>%s</b> — %s<br>시장 %s건 · 자사 %s건 · 상대점유 %.2f · "
                           "시장 성장률 %s"
                           % (r["tech"], r["quadrant"], fmt_num(r["market_n"]),
@@ -14900,6 +15027,13 @@ def compute_executive_summary(df, settings, company=None):
                     {"xref": "paper", "yref": "paper", "x": 0.01, "y": 0.03,
                      "text": "🐕 Dog", "showarrow": False,
                      "font": {"color": "#93a5b4", "size": 11}}])}
+        # 기술명 라벨: 지시선 주석 (시장 규모 순, 로그 X축 좌표 보정, 겹침 회피)
+        lbl_bcg = sorted(bcg_rows, key=lambda r: -r["market_n"])
+        fig_bcg["layout"]["annotations"] += leader_labels(
+            [{"x": r["rel_share"], "y": r["growth"], "text": r["tech"][:14],
+              "color": quad_colors[r["quadrant"]],
+              "line_color": quad_colors[r["quadrant"]]}
+             for r in lbl_bcg[:20]], log_x=True, plot_h=480.0)
 
     # ---- ③ 경쟁 포지션 버블 -----------------------------------------------
     top_comps = list(counts.head(10).index)
@@ -14929,11 +15063,9 @@ def compute_executive_summary(df, settings, company=None):
         nmax = max(r["n"] for r in pos_rows)
         color_reg = {}
         fig_pos = {"data": [{
-            "type": "scatter", "mode": "markers+text",
+            "type": "scatter", "mode": "markers", "cliponaxis": False,
             "x": [r["growth"] for r in pos_rows],
             "y": [r["quality"] for r in pos_rows],
-            "text": [r["company"][:12] for r in pos_rows],
-            "textposition": "top center", "textfont": {"size": 9.5},
             "hovertext": ["%s%s — 출원 %s건 · 성장률 %s · %s %.2f"
                           % (r["company"], " (자사)" if r["is_focal"] else "",
                              fmt_num(r["n"]), fmt_pct(r["growth"]),
@@ -14959,6 +15091,15 @@ def compute_executive_summary(df, settings, company=None):
                 xaxis={"title": "최근 %d년 출원 성장률" % recent,
                        "tickformat": ".0%"},
                 yaxis={"title": quality_label}, height=500)}
+        # 회사명 라벨: 지시선 주석 (자사 우선·굵게, 규모 순, 겹침 회피)
+        lbl_pos = sorted(pos_rows, key=lambda r: (not r["is_focal"], -r["n"]))
+        fig_pos["layout"].setdefault("annotations", [])
+        fig_pos["layout"]["annotations"] += leader_labels(
+            [{"x": r["growth"], "y": r["quality"], "text": r["company"][:12],
+              "bold": r["is_focal"],
+              "color": "#c0392b" if r["is_focal"] else "#38506b",
+              "line_color": "#c0392b" if r["is_focal"] else "#9fb2c2"}
+             for r in lbl_pos], plot_h=440.0, box_w=0.15)
 
     # ---- ④ 경영 alert ------------------------------------------------------
     alerts = []

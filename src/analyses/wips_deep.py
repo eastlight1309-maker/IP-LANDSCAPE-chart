@@ -439,9 +439,8 @@ def _examiner_eye_section(df, settings):
             {"type": "scatter", "mode": "lines", "x": [0, lim], "y": [0, lim],
              "line": {"dash": "dot", "color": "#8899aa"}, "hoverinfo": "skip",
              "showlegend": False},
-            {"type": "scatter", "mode": "markers+text", "x": xs, "y": ys,
-             "text": [r["tech"][:14] for r in rows], "textposition": "top center",
-             "textfont": {"size": 9},
+            {"type": "scatter", "mode": "markers", "cliponaxis": False,
+             "x": xs, "y": ys,
              "hovertext": ["%s — 심사관 평균 %.2f vs 출원인측 평균 %.2f (%d건)"
                            % (r["tech"], r["examiner_avg"], r["applicant_avg"] or 0,
                               r["n"]) for r in rows],
@@ -453,8 +452,21 @@ def _examiner_eye_section(df, settings):
                                   for r in rows]}}],
             "layout": base_layout(
                 "심사관의 눈 — OA 인용 vs 출원인측 인용 (대각선 위=심사관이 별도 선행기술 다수 발굴)",
-                xaxis={"title": "출원인측 인용 평균 (건 · WIPS 자기인용 기준)", "range": [0, lim]},
-                yaxis={"title": "심사관(OA) 인용 평균 (건)", "range": [0, lim]})}
+                xaxis={"title": "출원인측 인용 평균 (건 · WIPS 자기인용 기준)",
+                       "range": [-lim * 0.04, lim]},
+                yaxis={"title": "심사관(OA) 인용 평균 (건)",
+                       "range": [-lim * 0.04, lim]})}
+        # 기술명 라벨: 지시선 주석 (위험 신호 우선·굵게, 겹침 회피)
+        from src.viz_payload import leader_labels
+        risky_set = {id(r) for r in risky}
+        lbl_rows = sorted(rows, key=lambda r: (id(r) not in risky_set, -r["n"]))
+        fig["layout"].setdefault("annotations", [])
+        fig["layout"]["annotations"] += leader_labels(
+            [{"x": r["applicant_avg"] or 0, "y": r["examiner_avg"],
+              "text": r["tech"][:14], "bold": id(r) in risky_set,
+              "color": "#c0392b" if id(r) in risky_set else "#38506b",
+              "line_color": "#c0392b" if id(r) in risky_set else "#9fb2c2"}
+             for r in lbl_rows[:25]], plot_h=460.0)
         return {"fig": fig, "rows": rows,
                 "risky": [r["tech"] for r in risky]}, None
     rows.sort(key=lambda r: -r["examiner_avg"])
@@ -510,7 +522,8 @@ def _expedited_section(df, settings):
             "layout": base_layout(
                 "우선심사·조기공개로 본 사업화 긴급도 (크기=출원 수, 색=우선심사 비율)",
                 xaxis={"title": "출원연도", "dtick": 1, "tickformat": "d"},
-                yaxis={"title": "", "type": "category", "automargin": True},
+                yaxis={"title": "", "type": "category", "automargin": True,
+                       "range": [-0.9, len(top_techs) - 0.1]},
                 height=max(420, 120 + 34 * len(top_techs)))}
     # 급등 랭킹: 최근 vs 이전 비율 차
     recent_n = int(get_threshold(settings, "recent_years"))

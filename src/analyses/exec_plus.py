@@ -29,7 +29,7 @@ from src.metrics import year_counts
 from src.insights import build_insight, fmt_num, fmt_pct, period_label, \
     check_small_sample
 from src.viz_payload import ok_result, empty_result, bar_chart, base_layout, \
-    color_for, BLUES
+    color_for, BLUES, leader_labels
 from src.analyses.executive import _pick_focal
 
 
@@ -187,10 +187,8 @@ def _rnd_efficiency_section(df, settings, focal):
                          if r["n"] >= x_med else
                          ("소작·정예" if r["quality"] >= y_med else "양·질 모두 부족"))
     max_rec = max([r["recent_n"] for r in rows] + [1])
-    trace = {"type": "scatter", "mode": "markers+text",
+    trace = {"type": "scatter", "mode": "markers", "cliponaxis": False,
              "x": [r["n"] for r in rows], "y": [r["quality"] for r in rows],
-             "text": [r["company"][:12] for r in rows],
-             "textposition": "top center", "textfont": {"size": 10},
              "hovertext": ["%s — 출원 %s건 / 질 지수 %+.2f (%s) / 최근 %d건"
                            % (r["company"], fmt_num(r["n"]), r["quality"],
                               r["quadrant"], r["recent_n"]) for r in rows],
@@ -220,6 +218,15 @@ def _rnd_efficiency_section(df, settings, focal):
              "text": "다작·저임팩트", "showarrow": False,
              "font": {"size": 11, "color": "#E15759"}, "yanchor": "bottom"}])
     fig = {"data": [trace], "layout": layout}
+    # 회사명 라벨: 지시선 주석 (자사 우선·굵게, 로그 X축 좌표 보정, 겹침 회피)
+    from src.viz_payload import leader_labels
+    lbl_rows = sorted(rows, key=lambda r: (r["company"] != focal, -r["n"]))
+    layout["annotations"] += leader_labels(
+        [{"x": max(r["n"], 1), "y": r["quality"], "text": r["company"][:12],
+          "bold": r["company"] == focal,
+          "color": "#c0392b" if r["company"] == focal else "#38506b",
+          "line_color": "#c0392b" if r["company"] == focal else "#9fb2c2"}
+         for r in lbl_rows], log_x=True, plot_h=440.0, box_w=0.15)
     metric_labels = {"cites": "평균 피인용", "family": "평균 패밀리 수",
                      "active": "유효특허 비율"}
     focal_row = next((r for r in rows if r["company"] == focal), None)
@@ -425,11 +432,9 @@ def _threat_section(df, settings, focal):
     entrants.sort(key=lambda e: -e["threat"])
     color_reg = {}
     max_tot = max(e["total_n"] for e in entrants)
-    trace = {"type": "scatter", "mode": "markers+text",
+    trace = {"type": "scatter", "mode": "markers", "cliponaxis": False,
              "x": [e["entry_year"] for e in entrants],
              "y": [e["n_in_tech"] for e in entrants],
-             "text": [e["company"][:10] for e in entrants],
-             "textposition": "top center", "textfont": {"size": 9},
              "hovertext": ["%s — '%s' %d년 첫 진입, 해당 기술 %d건 / 전체 %d건%s "
                            "· 위협도 %.2f"
                            % (e["company"], e["tech"], e["entry_year"],
@@ -444,10 +449,18 @@ def _threat_section(df, settings, focal):
                         "color": [color_for(e["tech"], color_reg)
                                   for e in entrants],
                         "opacity": 0.85, "line": {"width": 1, "color": "#333"}}}
+    y_maxv = max(e["n_in_tech"] for e in entrants)
     fig = {"data": [trace], "layout": base_layout(
         "신흥 위협 레이더 — 자사 주력 기술 신규 진입자 (색=기술, 크기=기업 전체 규모)",
         xaxis={"title": "첫 진입 연도", "dtick": 1, "tickformat": "d"},
-        yaxis={"title": "해당 기술 출원 수"})}
+        yaxis={"title": "해당 기술 출원 수",
+               "range": [-y_maxv * 0.06, y_maxv * 1.12]})}
+    # 회사명 라벨: 지시선 주석 (위협도 순, 겹침 회피)
+    fig["layout"].setdefault("annotations", [])
+    fig["layout"]["annotations"] += leader_labels(
+        [{"x": e["entry_year"], "y": e["n_in_tech"], "text": e["company"][:10],
+          "bold": e is entrants[0]}
+         for e in entrants[:18]], plot_h=440.0, box_w=0.14)
     return {"fig": fig, "rows": entrants[:15], "focal": focal,
             "focal_techs": [str(t) for t in focal_techs.index],
             "note": "위협도 = 0.5×해당기술 출원량 + 0.3×진입 최신성 + 0.2×평균 "

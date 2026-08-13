@@ -341,11 +341,9 @@ def compute_emerging_clusters(df, settings, company=None, recent_years=None):
                      "color": "#E15759"}}
         title = "신흥 기술 조기 탐지 — 임베딩 군집 × 출원 시점 (크기=건수, 빨간 테두리=새 군집)"
     fig = {"data": [{
-        "type": "scatter", "mode": "markers+text", "cliponaxis": False,
+        "type": "scatter", "mode": "markers", "cliponaxis": False,
         "x": [c["mean_year"] for c in clusters],
         "y": [c["recent_share"] for c in clusters],
-        "text": [c["label"][:24] for c in clusters],
-        "textposition": "top center", "textfont": {"size": 9},
         "hovertext": hovers,
         "hoverinfo": "text",
         "customdata": [{"drill": c["drill"],
@@ -359,6 +357,21 @@ def compute_emerging_clusters(df, settings, company=None, recent_years=None):
             xaxis={"title": "군집 평균 출원연도", "tickformat": "d"},
             yaxis={"title": "최근 %d년 출원 비중" % recent_n, "range": [-0.08, 1.1],
                    "tickformat": ".0%"}, height=520)}
+    # 군집 라벨: 지시선 주석으로 겹침 없이 배치 (점수 높은 군집 우선,
+    # 신흥/새 군집은 굵게 강조)
+    from src.viz_payload import leader_labels
+    lbl_order = sorted(clusters, key=lambda c: -c["score"])
+    pts_lbl = [{"x": c["mean_year"], "y": c["recent_share"],
+                "text": c["label"][:22],
+                "bold": bool(c["emerging"] or c["is_new_cluster"]),
+                "color": ("#c0392b" if (c["emerging"] or c["is_new_cluster"])
+                          else "#38506b"),
+                "line_color": ("#c0392b" if (c["emerging"] or c["is_new_cluster"])
+                               else "#9fb2c2")}
+               for c in lbl_order]
+    fig["layout"].setdefault("annotations", [])
+    fig["layout"]["annotations"] += leader_labels(pts_lbl, plot_h=490.0,
+                                                  box_w=0.16)
 
     emergings = [c for c in clusters if c["emerging"]]
     sentences = []

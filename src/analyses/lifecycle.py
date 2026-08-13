@@ -272,14 +272,23 @@ def compute_lifecycle(df, settings, company=None):
         mk.pop("colorbar", None)
     if fig:
         fig["layout"].setdefault("annotations", [])
-        # 상위 버블에 기술명 라벨 — 차트만 봐도 어떤 기술이 어느 국면인지 읽히도록
-        tr0 = fig["data"][0]
-        tr0["mode"] = "markers+text"
-        top_lbl = {r["tech"] for r in shown[:8]}
-        tr0["text"] = [(p["label"][:12] if p["label"] in top_lbl else "")
-                       for p in points]
-        tr0["textposition"] = "top center"
-        tr0["textfont"] = {"size": 9.5, "color": "#38506b"}
+        # 기술명 라벨: 지시선 주석으로 겹침 없이 배치. 규모 상위 8개 +
+        # 성숙도(X)가 낮아도 모멘텀(Y)이 높은 버블(떠오르는 신호)은 반드시 표시.
+        from src.viz_payload import leader_labels
+        by_size = [r["tech"] for r in shown[:8]]
+        high_momentum = {r["tech"] for r in shown if r["momentum"] >= 0.7}
+        extra = [t for t in sorted(high_momentum) if t not in by_size]
+        # 좌상단(고모멘텀) 신호는 자리 경쟁에서 밀리지 않게 항상 먼저 배치
+        label_order = (extra + [t for t in by_size if t in high_momentum]
+                       + [t for t in by_size if t not in high_momentum])
+        rmap = {r["tech"]: r for r in shown}
+        pts_lbl = [{"x": rmap[t]["maturity"], "y": rmap[t]["momentum"],
+                    "text": str(t)[:14],
+                    "bold": t in high_momentum,
+                    "color": "#c0392b" if t in high_momentum else "#38506b",
+                    "line_color": "#c0392b" if t in high_momentum else "#9fb2c2"}
+                   for t in label_order if t in rmap]
+        fig["layout"]["annotations"] += leader_labels(pts_lbl, plot_h=470.0)
         fig["layout"]["annotations"].append({
             "x": 0.5, "y": -0.14, "xref": "paper", "yref": "paper",
             "showarrow": False,

@@ -171,9 +171,7 @@ def compute_basic_stats(df, settings, company=None):
                                                              "year": int(y)}),
                                       "m": {"출원인": str(a), "연도": int(y),
                                             "출원건수": int(v)}})
-        _bub_cut = sorted(pts["color"], reverse=True)[:12][-1] \
-            if pts["color"] else 0
-        _bub_cut = max(_bub_cut, 2)
+        _bub_cut = max(float(np.median(pts["color"])) if pts["color"] else 0, 2)
         fig_app_bubble = {"data": [{
             "type": "scatter", "mode": "markers+text", "cliponaxis": False,
             "x": pts["x"], "y": pts["y"],
@@ -192,7 +190,8 @@ def compute_basic_stats(df, settings, company=None):
                        "range": [year_lo - 0.7, year_hi + 0.7]},
                 yaxis={"title": "", "type": "category", "automargin": True,
                        "categoryorder": "array",
-                       "categoryarray": [str(a) for a in bub_apps[::-1]]},
+                       "categoryarray": [str(a) for a in bub_apps[::-1]],
+                       "range": [-0.9, len(bub_apps) - 0.1]},
                 height=max(420, 130 + 36 * len(bub_apps)))}
 
     # ⑤ 기술분류 순위 + ⑥ 분류×연도
@@ -569,6 +568,11 @@ def compute_company_focus(df, settings, company=None):
                               "전체 시장 건수": r["market_total"],
                               "급부상": "예" if r["rising"] else ""}})
     x_max = max(xs)
+    # 로그축은 기본값으로 두면 보조 눈금(2,3,…,9)이 매 자리수마다 찍혀 축 아래가
+    # 숫자로 지저분해짐 → 정수 건수 눈금만 명시 (1,2,3,5,10,20,…)
+    _tick_cands = [1, 2, 3, 5, 10, 20, 30, 50, 100, 200, 300, 500,
+                   1000, 2000, 3000, 5000, 10000]
+    x_ticks = [v for v in _tick_cands if v <= x_max * 1.3] or [1]
     fig = {"data": [{
         "type": "scatter", "mode": "markers", "cliponaxis": False,
         "x": xs, "y": ys,
@@ -578,9 +582,14 @@ def compute_company_focus(df, settings, company=None):
         "layout": base_layout(
             "'%s' 기술 포커스 맵 — X=누적 출원, Y=최근 %d년 비중 (빨강=급부상 후보)"
             % (company, recent),
-            xaxis={"title": "누적 출원 건수 (로그축)", "type": "log"},
+            xaxis={"title": "누적 출원 건수 (로그축)", "type": "log",
+                   "tickvals": x_ticks,
+                   "ticktext": [fmt_num(v) for v in x_ticks],
+                   # 로그축 range 는 log10 단위 — 좌우 여백으로 버블·축 겹침 방지
+                   "range": [float(np.log10(0.72)),
+                             float(np.log10(x_max * 1.45))]},
             yaxis={"title": "최근 %d년 출원 비중" % recent,
-                   "range": [-0.05, 1.08], "tickformat": ".0%"},
+                   "range": [-0.08, 1.08], "tickformat": ".0%"},
             annotations=[
                 {"x": np.log10(max(1.5, median_total * 0.35)), "y": 1.04,
                  "xref": "x", "yref": "y", "showarrow": False,
@@ -803,9 +812,8 @@ def compute_tech_year_bubble(df, settings, companies=None, level=None):
             customs.append({"drill": drill,
                             "m": {"출원인": name, "기술분류": str(t),
                                   "연도": int(y), "건수": int(n)}})
-        # 주요 셀에는 건수를 숫자로 표시 — 상위 셀(트레이스당 최대 12개)만
-        label_cut = sorted(cell_ns, reverse=True)[:12][-1] if cell_ns else 0
-        label_cut = max(label_cut, 2, int(np.ceil(vmax * 0.35)))
+        # 건수 표시: 중간값 이상 버블에 수치 라벨 (작은 버블은 hover 로)
+        label_cut = max(float(np.median(cell_ns)) if cell_ns else 0, 2)
         texts = [(fmt_num(n) if n >= label_cut else "") for n in cell_ns]
         marker = {"size": sizes, "line": {"width": 0.6, "color": "#5b7a8a"}}
         if n_g == 1:
@@ -831,7 +839,7 @@ def compute_tech_year_bubble(df, settings, companies=None, level=None):
                "tickvals": list(range(len(top_techs))),
                "ticktext": [str(t)[:44 if drill_key == "path" else 22]
                             for t in top_techs],
-               "range": [-0.8, len(top_techs) - 0.2], "automargin": True},
+               "range": [-0.95, len(top_techs) - 0.05], "automargin": True},
         showlegend=bool(comps),
         height=max(440, 140 + 36 * len(top_techs)))}
 

@@ -158,10 +158,8 @@ def compute_executive_summary(df, settings, company=None):
             r["quadrant"] = quad(r)
         xs = [r["rel_share"] for r in bcg_rows]
         fig_bcg = {"data": [{
-            "type": "scatter", "mode": "markers+text",
+            "type": "scatter", "mode": "markers", "cliponaxis": False,
             "x": xs, "y": [r["growth"] for r in bcg_rows],
-            "text": [r["tech"][:14] for r in bcg_rows],
-            "textposition": "top center", "textfont": {"size": 9.5},
             "hovertext": ["<b>%s</b> — %s<br>시장 %s건 · 자사 %s건 · 상대점유 %.2f · "
                           "시장 성장률 %s"
                           % (r["tech"], r["quadrant"], fmt_num(r["market_n"]),
@@ -204,6 +202,14 @@ def compute_executive_summary(df, settings, company=None):
                     {"xref": "paper", "yref": "paper", "x": 0.01, "y": 0.03,
                      "text": "🐕 Dog", "showarrow": False,
                      "font": {"color": "#93a5b4", "size": 11}}])}
+        # 기술명 라벨: 지시선 주석 (시장 규모 순, 로그 X축 좌표 보정, 겹침 회피)
+        from src.viz_payload import leader_labels
+        lbl_bcg = sorted(bcg_rows, key=lambda r: -r["market_n"])
+        fig_bcg["layout"]["annotations"] += leader_labels(
+            [{"x": r["rel_share"], "y": r["growth"], "text": r["tech"][:14],
+              "color": quad_colors[r["quadrant"]],
+              "line_color": quad_colors[r["quadrant"]]}
+             for r in lbl_bcg[:20]], log_x=True, plot_h=480.0)
 
     # ---- ③ 경쟁 포지션 버블 -----------------------------------------------
     top_comps = list(counts.head(10).index)
@@ -233,11 +239,9 @@ def compute_executive_summary(df, settings, company=None):
         nmax = max(r["n"] for r in pos_rows)
         color_reg = {}
         fig_pos = {"data": [{
-            "type": "scatter", "mode": "markers+text",
+            "type": "scatter", "mode": "markers", "cliponaxis": False,
             "x": [r["growth"] for r in pos_rows],
             "y": [r["quality"] for r in pos_rows],
-            "text": [r["company"][:12] for r in pos_rows],
-            "textposition": "top center", "textfont": {"size": 9.5},
             "hovertext": ["%s%s — 출원 %s건 · 성장률 %s · %s %.2f"
                           % (r["company"], " (자사)" if r["is_focal"] else "",
                              fmt_num(r["n"]), fmt_pct(r["growth"]),
@@ -263,6 +267,16 @@ def compute_executive_summary(df, settings, company=None):
                 xaxis={"title": "최근 %d년 출원 성장률" % recent,
                        "tickformat": ".0%"},
                 yaxis={"title": quality_label}, height=500)}
+        # 회사명 라벨: 지시선 주석 (자사 우선·굵게, 규모 순, 겹침 회피)
+        from src.viz_payload import leader_labels
+        lbl_pos = sorted(pos_rows, key=lambda r: (not r["is_focal"], -r["n"]))
+        fig_pos["layout"].setdefault("annotations", [])
+        fig_pos["layout"]["annotations"] += leader_labels(
+            [{"x": r["growth"], "y": r["quality"], "text": r["company"][:12],
+              "bold": r["is_focal"],
+              "color": "#c0392b" if r["is_focal"] else "#38506b",
+              "line_color": "#c0392b" if r["is_focal"] else "#9fb2c2"}
+             for r in lbl_pos], plot_h=440.0, box_w=0.15)
 
     # ---- ④ 경영 alert ------------------------------------------------------
     alerts = []

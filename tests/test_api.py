@@ -405,8 +405,11 @@ def test_portfolio_index_pai_charts(client):
     data = _post(client, "/api/portfolio-index", {"filters": {}}).get_json()
     assert data["status"] == "ok"
     fb = data["family_bubble"]["data"][0]
-    assert fb["mode"] == "markers+text"          # 버블에 출원인 라벨 표시
-    assert fb["text"] and fb["customdata"][0]["m"]["families"] is not None
+    assert fb["mode"] == "markers"               # 라벨은 지시선 주석으로 표시
+    lbls = [a for a in data["family_bubble"]["layout"]["annotations"]
+            if a.get("showarrow") and a.get("text")]
+    assert lbls                                  # 출원인 지시선 라벨 존재
+    assert fb["customdata"][0]["m"]["families"] is not None
     assert data["family_bubble"]["layout"]["xaxis"]["title"] == "특허 패밀리 건수"
     assert "Competitive Impact" in data["family_bubble"]["layout"]["yaxis"]["title"]
     assert data["mc_bar"]["data"]

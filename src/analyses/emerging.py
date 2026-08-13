@@ -127,6 +127,19 @@ def compute_emerging(df, settings):
         colorbar_title="Lift")
     if fig:
         fig["layout"]["xaxis"]["type"] = "log"
+        # 로그축 range 는 log10 단위 — bubble_chart 가 넣은 선형 range 를 재계산
+        x_lo = max(min(x_vals), 1.0)
+        fig["layout"]["xaxis"]["range"] = [
+            float(np.log10(x_lo)) - 0.1, float(np.log10(max(x_vals))) + 0.1]
+        # 상위 조합 라벨: 지시선 주석 (Score 순, 로그 X 좌표 보정, 겹침 회피)
+        from src.viz_payload import leader_labels
+        fig["layout"].setdefault("annotations", [])
+        fig["layout"]["annotations"] += leader_labels(
+            [{"x": max(r["n_ab"], 1), "y": r["growth"],
+              "text": "%s×%s" % (r["a"][:8], r["b"][:8]),
+              "bold": i == 0}
+             for i, r in enumerate(shown[:12])], log_x=True, plot_h=460.0,
+            box_w=0.15)
 
     sentences, metrics = [], {}
     top = shown[0] if shown else None
