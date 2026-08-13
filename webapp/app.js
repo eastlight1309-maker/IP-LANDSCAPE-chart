@@ -1655,6 +1655,45 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
     };
   }
 
+  /* 복수 출원인 선택 컨트롤 (공용) — '회사 추가…'로 골라 칩으로 표시, 칩 클릭=제거.
+     선택 시 body 에 companies 배열을 실어 재계산한다. */
+  function multiCompanyControls(labelText) {
+    return function (c, reload) {
+      var chosen = [];
+      var chips = Ui.el('<span style="display:inline-flex;gap:4px;flex-wrap:wrap;align-items:center"></span>');
+      var sel = Ui.el('<select><option value="">회사 추가… (미선택=전체)</option></select>');
+      ((State.filterOptions || {}).applicants || []).slice(0, 60).forEach(function (a) {
+        var o = document.createElement('option'); o.value = a; o.textContent = a;
+        sel.appendChild(o);
+      });
+      function renderChips() {
+        chips.innerHTML = '';
+        chosen.forEach(function (name) {
+          var chip = Ui.el('<span class="badge" style="cursor:pointer" title="클릭하여 제거">' +
+            Ui.esc(name) + ' ✕</span>');
+          chip.addEventListener('click', function () {
+            chosen = chosen.filter(function (x) { return x !== name; });
+            renderChips();
+            reload({ companies: chosen.length ? chosen.slice() : null });
+          });
+          chips.appendChild(chip);
+        });
+      }
+      sel.addEventListener('change', function () {
+        if (sel.value && chosen.indexOf(sel.value) < 0) {
+          chosen.push(sel.value);
+          renderChips();
+          reload({ companies: chosen.slice() });
+        }
+        sel.value = '';
+      });
+      c.controls.prepend(chips);
+      c.controls.prepend(sel);
+      c.controls.prepend(Ui.el('<span style="font-size:11.5px;color:#647b8d">' +
+        Ui.esc(labelText || '회사 선택') + '</span>'));
+    };
+  }
+
   /* ---------- 1.5 공용 탭 팩토리 (전체 동향·기술 분석·심층 시그널 공용) ---------- */
     function statsTab(title, help, keys, guide, withCompany) {
       return function (h) {
@@ -2330,8 +2369,9 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
       } },
       { label: '기술 생애주기', render: function (h) {
         analysisCard({
-          analysis: 'lifecycle', holder: h, title: '기술 생애주기 Phase Map',
-          help: 'X=성숙도(경과연수·누적건수 정규화), Y=모멘텀(성장률·신규출원인 정규화). 단계: Emerging/Growing/Competitive/Mature/Declining/Re-emerging. 화살표=전년 대비 이동.',
+          analysis: 'lifecycle', holder: h, title: '기술 생애주기 Phase Map (출원인 선택 가능)',
+          controls: companySelectControls('출원인 선택'),
+          help: 'X=성숙도(경과연수·누적건수 정규화), Y=모멘텀(성장률·신규출원인 정규화). 단계: Emerging/Growing/Competitive/Mature/Declining/Re-emerging. 화살표=전년 대비 이동. 출원인을 선택하면 그 회사(공동출원 포함) 문헌 기준으로 재계산되며, 이때 경쟁 강도(출원인 수) 색은 의미가 없어 단일 색으로 표시됩니다.',
           renderOk: function (r, c, setTarget) {
             var holder = Ui.el('<div class="chart-holder"></div>');
             c.body.appendChild(holder);
@@ -2853,8 +2893,9 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
       { label: 'Patent Asset Index', render: function (h) {
         analysisCard({
           analysis: 'portfolio-index', holder: h,
-          title: 'Patent Asset Index · Competitive Impact · Market Coverage',
-          help: '공개 방법론(Ernst & Omland 2011, Patent Asset Index)에 따라 TR(연도×기술분야 코호트 보정 피인용), MC(보호국 GNI 가중, 미국=1), CI=TR×MC, PAI=유효특허 CI 합계를 계산합니다. 아래 지표 정의표와 각 차트의 해석 설명을 참고하세요.',
+          title: 'Patent Asset Index · Competitive Impact · Market Coverage (회사 선택 가능)',
+          controls: multiCompanyControls('회사 선택'),
+          help: '공개 방법론(Ernst & Omland 2011, Patent Asset Index)에 따라 TR(연도×기술분야 코호트 보정 피인용), MC(보호국 GNI 가중, 미국=1), CI=TR×MC, PAI=유효특허 CI 합계를 계산합니다. 상단에서 필요한 회사만 골라 비교할 수 있으며(지표 값은 전체 데이터 기준으로 계산되어 동일), 아래 지표 정의표와 각 차트의 해석 설명을 참고하세요.',
           renderOk: function (r, c, setTarget) {
             c.body.appendChild(definitionsTable(r.definitions, r.official_diff));
             var fb = Ui.el('<div class="chart-holder tall"></div>');
@@ -2886,8 +2927,9 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
       { label: 'Portfolio 종합', render: function (h) {
         analysisCard({
           analysis: 'portfolio-index', holder: h,
-          title: '포트폴리오 가치 지표 종합 (Patent Asset Index 방법론)',
-          help: '공개 방법론(Ernst & Omland 2011)에 따른 PAI/CI/TR/MC 로 포트폴리오의 양과 질을 종합 진단합니다. 각 지표의 정의·산식·해석은 아래 지표 정의표를, 각 차트의 읽는 법은 차트 아래 설명을 참고하세요.',
+          title: '포트폴리오 가치 지표 종합 (Patent Asset Index 방법론 · 회사 선택 가능)',
+          controls: multiCompanyControls('회사 선택'),
+          help: '공개 방법론(Ernst & Omland 2011)에 따른 PAI/CI/TR/MC 로 포트폴리오의 양과 질을 종합 진단합니다. 상단에서 필요한 회사만 골라 비교할 수 있습니다 (지표 값은 전체 데이터 기준으로 계산되어 동일). 각 지표의 정의·산식·해석은 아래 지표 정의표를, 각 차트의 읽는 법은 차트 아래 설명을 참고하세요.',
           renderOk: function (r, c, setTarget) {
             c.body.appendChild(definitionsTable(r.definitions, r.official_diff));
             var rank = Ui.el('<div class="chart-holder"></div>');

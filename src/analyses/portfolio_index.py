@@ -127,8 +127,12 @@ def _mc_from_country_list(series):
     return series.map(one)
 
 
-def compute_portfolio_index(df, settings):
-    """Patent Asset Index 방법론(Ernst & Omland 2011) 기반 포트폴리오 지표 계산."""
+def compute_portfolio_index(df, settings, companies=None):
+    """Patent Asset Index 방법론(Ernst & Omland 2011) 기반 포트폴리오 지표 계산.
+
+    companies 지정 시 순위·버블·추이·CI 상위 특허를 그 회사들만으로 표시한다.
+    지표 값 자체(TR 코호트·MC)는 전체 데이터 기준으로 계산되어 비교 가능하다.
+    """
     if not len(df):
         return empty_result()
     if "cites_forward" not in df.columns:
@@ -264,14 +268,24 @@ def compute_portfolio_index(df, settings):
     if not rows:
         return empty_result("최소 표본(%d건) 이상의 기업이 없습니다." % int(min_n))
     rows.sort(key=lambda r: -r["portfolio_index"])
-    shown = rows[:30]
+    comps_sel = [str(c) for c in (companies or []) if str(c).strip()]
+    if comps_sel:
+        wanted_set = set(comps_sel)
+        shown = [r for r in rows if r["company"] in wanted_set]
+        if not shown:
+            return empty_result("선택한 출원인(%s) 중 최소 표본(%d건) 이상인 회사가 "
+                                "없습니다." % (", ".join(comps_sel[:5]), int(min_n)))
+        scoped = scoped[scoped["applicant_display"].astype(str).isin(wanted_set)]
+    else:
+        shown = rows[:30]
 
     # ① PI 순위 막대
     top_bar = shown[:top_n]
     fig_rank = bar_chart(
         [r["company"] for r in top_bar][::-1],
         [r["portfolio_index"] for r in top_bar][::-1],
-        title="Patent Asset Index 순위 — %s 기준" % scope_label,
+        title="Patent Asset Index 순위 — %s 기준%s"
+              % (scope_label, " · 선택 %d개사" % len(shown) if comps_sel else ""),
         orientation="h", x_title="Patent Asset Index (Σ Competitive Impact)",
         hovertext=["%s — PI %s / %s건 / 평균 CI %s (TR %s × MC %s)"
                    % (r["company"], fmt_num(r["portfolio_index"]), fmt_num(r["n"]),

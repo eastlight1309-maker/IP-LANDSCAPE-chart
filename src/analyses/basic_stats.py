@@ -543,22 +543,11 @@ def compute_company_focus(df, settings, company=None):
 
     top_main = {r["tech"] for r in sorted(rows, key=lambda r: -r["total"])[:3]}
     xs, ys, sizes, colors, hovers, customs = [], [], [], [], [], []
-    texts, text_colors = [], []
     for r in rows:
         xs.append(r["total"])
         ys.append(r["recent_share"])
         sizes.append(float(max(9.0, min(44.0, 8 + 9 * np.sqrt(r["recent"])))))
         colors.append("#E15759" if r["rising"] else "#4E79A7")
-        # 의미 있는 버블은 글자로도 표시: 급부상=빨강 '★', 주력 Top3=파랑
-        if r["rising"]:
-            texts.append("★ " + r["tech"][:12])
-            text_colors.append("#c0392b")
-        elif r["tech"] in top_main:
-            texts.append(r["tech"][:12])
-            text_colors.append("#2e5f8a")
-        else:
-            texts.append("")
-            text_colors.append("#999999")
         hovers.append(
             "<b>%s</b><br>누적 %d건 · 최근 %d년 %d건 (비중 %s)<br>직전 %d년 %d건 · "
             "전체 시장 %d건 중 점유 %s%s"
@@ -575,9 +564,8 @@ def compute_company_focus(df, settings, company=None):
                               "급부상": "예" if r["rising"] else ""}})
     x_max = max(xs)
     fig = {"data": [{
-        "type": "scatter", "mode": "markers+text",
-        "x": xs, "y": ys, "text": texts, "textposition": "top center",
-        "textfont": {"size": 9.5, "color": text_colors},
+        "type": "scatter", "mode": "markers",
+        "x": xs, "y": ys,
         "hovertext": hovers, "hoverinfo": "text", "customdata": customs,
         "marker": {"size": sizes, "color": colors, "opacity": 0.85,
                    "line": {"width": 0.8, "color": "#5b7a8a"}}}],
@@ -595,7 +583,49 @@ def compute_company_focus(df, settings, company=None):
                 {"x": np.log10(max(2.0, x_max)), "y": 1.04, "xref": "x",
                  "yref": "y", "showarrow": False, "xanchor": "right",
                  "text": "주력 기술 ▶", "font": {"size": 11, "color": "#2e5f8a"}}],
-            height=520)}
+            height=560)}
+
+    # 기술명 라벨: 대부분의 버블에 표시하되, 겹치면 지시선(화살표)으로 밖에 배치.
+    # 그리디 충돌 회피 — 로그축이므로 x 는 log10 정규화 좌표로 거리 계산.
+    lx_min, lx_max = np.log10(max(min(xs), 1.0)), np.log10(max(x_max, 2.0))
+    lx_span = max(lx_max - lx_min, 1e-6)
+
+    def _npos(x, y, ax_px=0, ay_px=0):
+        # 근사 정규화 좌표 (플롯 ~900×470px 가정, ay 는 위가 음수)
+        return (float((np.log10(max(x, 1.0)) - lx_min) / lx_span + ax_px / 900.0),
+                float(y - ay_px / 470.0))
+
+    label_rows = sorted(rows, key=lambda r: (-r["rising"], -r["recent"],
+                                             -r["total"]))[:35]
+    placed = []  # (nx, ny) 라벨 중심들
+    offsets = [(0, -30), (55, -30), (-55, -30), (70, -60), (-70, -60),
+               (85, 20), (-85, 20), (0, -85), (100, -40), (-100, -40)]
+    lbl_anns = []
+    for r in label_rows:
+        best = None
+        for ax_px, ay_px in offsets:
+            nx, ny = _npos(r["total"], r["recent_share"], ax_px, ay_px)
+            if all(abs(nx - px) > 0.11 or abs(ny - py) > 0.05
+                   for px, py in placed):
+                best = (ax_px, ay_px, nx, ny)
+                break
+        if best is None:  # 자리가 전혀 없으면 라벨 생략 (겹쳐 쓰지 않음)
+            continue
+        ax_px, ay_px, nx, ny = best
+        placed.append((nx, ny))
+        rising = r["rising"]
+        lbl_anns.append({
+            "x": np.log10(max(r["total"], 1.0)), "y": r["recent_share"],
+            "xref": "x", "yref": "y", "showarrow": True,
+            "arrowhead": 0, "arrowwidth": 0.8,
+            "arrowcolor": "#c0392b" if rising else "#9fb2c2",
+            "ax": ax_px, "ay": ay_px, "standoff": 4,
+            "text": ("★ " if rising else "") + str(r["tech"])[:14],
+            "font": {"size": 9.5,
+                     "color": "#c0392b" if rising else
+                     ("#2e5f8a" if r["tech"] in top_main else "#54677a")},
+            "bgcolor": "rgba(255,255,255,0.72)", "borderpad": 1})
+    fig["layout"]["annotations"] = fig["layout"].get("annotations", []) + lbl_anns
 
     top10 = sorted(rows, key=lambda r: -r["total"])[:10]
     fig_top = bar_chart(

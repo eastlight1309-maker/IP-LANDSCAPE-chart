@@ -94,8 +94,18 @@ def _phase_of(row, settings):
     return "Mature"
 
 
-def compute_lifecycle(df, settings):
-    """기술 생애주기 Phase Map 계산."""
+def compute_lifecycle(df, settings, company=None):
+    """기술 생애주기 Phase Map 계산.
+
+    company 지정 시 그 출원인(공동출원 포함) 문헌만으로 계산한다. 이때
+    경쟁 강도(출원인 수) 색은 의미가 없으므로 단일 색으로 통일해 표시한다.
+    """
+    if company:
+        from src.analyses.common import applicant_mask
+        df = df[applicant_mask(df, company, scope="any")]
+        if not len(df):
+            return empty_result("출원인 '%s'의 문헌이 없습니다 (공동출원 포함 검색)."
+                                % company)
     if not len(df):
         return empty_result()
     mode = settings.get("multiclass_mode", "duplicate")
@@ -243,7 +253,8 @@ def compute_lifecycle(df, settings):
     fig = bubble_chart(points, "기술 성숙도 (정규화) — 오른쪽=오래되고 축적 큼",
                        "최근 성장 모멘텀 (정규화) — 위=최근 출원 급증",
                        title="기술 생애주기 Phase Map — 어떤 기술이 뜨고(좌상) "
-                             "주도하고(우상) 저무는지(우하 아래)",
+                             "주도하고(우상) 저무는지(우하 아래)"
+                             + (" · %s" % company if company else ""),
                        quadrants={"x_mid": 0.5, "y_mid": 0.5,
                                   "labels": [
                                       "🌱 신생·급성장 (Emerging) — 초기 선점 검토",
@@ -251,6 +262,14 @@ def compute_lifecycle(df, settings):
                                       "🏛 성숙·안정 (Mature) — 유지·효율 관리",
                                       "❄ 초기·정체 — 관망 (신호 약함)"]},
                        colorbar_title="경쟁 강도(출원인 수)")
+    if fig and company:
+        # 단일 회사 보기: 출원인 수 = 그 회사(+공동출원사)뿐이라 경쟁 강도
+        # 색이 무의미 — 동일 단색으로 표시하고 색상 범례를 숨긴다
+        mk = fig["data"][0]["marker"]
+        mk["color"] = "#4E79A7"
+        mk["showscale"] = False
+        mk.pop("colorscale", None)
+        mk.pop("colorbar", None)
     if fig:
         fig["layout"].setdefault("annotations", [])
         # 상위 버블에 기술명 라벨 — 차트만 봐도 어떤 기술이 어느 국면인지 읽히도록

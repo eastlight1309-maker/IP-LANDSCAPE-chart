@@ -59,11 +59,19 @@ def compute_inventor_mobility(df, settings, include_uncertain=False):
     # 발명자 이름별 기록 구축
     records_by_name = {}
     name_doc_counts = {}
+    has_coapps = "_co_applicants_display" in work.columns
     for idx, row in work.iterrows():
         invs = row.get("_inventor_list") or []
         app = str(row.get("applicant_display") or "")
         if not app:
             continue
+        # 공동출원 문헌은 출원인 '집합'으로 기록 — 발명자가 공동출원사 중
+        # 어느 소속인지는 데이터로 알 수 없으므로, 집합이 겹치는 연속 문헌을
+        # 이동으로 세지 않기 위한 근거로 사용한다
+        apps_set = set(a for a in ((row.get("_co_applicants_display") or [])
+                                   if has_coapps else []) if str(a).strip())
+        if not apps_set:
+            apps_set = {app}
         year = int(row["_base_year"])
         techs = set(row.get("_tech_list") or [])
         country = str(row.get("country") or "").upper() if "country" in work.columns else ""
@@ -74,7 +82,7 @@ def compute_inventor_mobility(df, settings, include_uncertain=False):
                 continue
             name_doc_counts[inv] = name_doc_counts.get(inv, 0) + 1
             records_by_name.setdefault(inv, []).append({
-                "year": year, "app": app, "techs": techs,
+                "year": year, "app": app, "apps": apps_set, "techs": techs,
                 "coinv": set(i for i in invs if i != inv),
                 "country": country, "pid": pid})
     if not records_by_name:
@@ -87,6 +95,11 @@ def compute_inventor_mobility(df, settings, include_uncertain=False):
         seen_pairs = set()
         for prev, cur in zip(recs, recs[1:]):
             if prev["app"] == cur["app"]:
+                continue
+            # 공동출원 보정: 이전·현재 문헌의 출원인 집합이 겹치면 같은 소속이
+            # 이어지는 것 (예: B 단독 → A·B 공동출원은 B 소속 지속) — 대표
+            # 출원인만 보면 B→A 가짜 이동이 만들어진다
+            if prev["apps"] & cur["apps"]:
                 continue
             pair = (prev["app"], cur["app"])
             if pair in seen_pairs:
@@ -194,7 +207,12 @@ def compute_inventor_mobility(df, settings, include_uncertain=False):
                                         "inventor_applicant_overlap": round(overlap, 3)},
                             small_sample=check_small_sample(len(used), settings))
     years_all = sorted(set(y for e in edges for y in e["years"]))
-    meta = {"note": "네트워크의 노드=기업(출원인), 엣지=이동 발명자 수입니다. 개별 "
+    meta = {"coapplicant_note":
+                "공동출원 보정: 공동출원 문헌은 출원인 집합으로 취급하며, 이전·현재 "
+                "문헌의 출원인 집합이 겹치면(예: B 단독 → A·B 공동출원) 같은 소속의 "
+                "지속으로 보고 이동으로 세지 않습니다 — 대표 출원인만 보면 생기는 "
+                "가짜 이동 방지.",
+            "note": "네트워크의 노드=기업(출원인), 엣지=이동 발명자 수입니다. 개별 "
                     "발명자는 아래 이동 목록 표와 엣지 클릭에서 확인하세요. 동명이인 "
                     "가능성이 있어 이동은 식별 신뢰도 기반 추정입니다."}
     if mapping_warning:

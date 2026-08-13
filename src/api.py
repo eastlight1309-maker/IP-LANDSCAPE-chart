@@ -480,7 +480,9 @@ def register_routes(app):
         "emerging-combinations": _analysis_route(
             "emerging-combinations", lambda df, s, b: compute_emerging(df, s)),
         "lifecycle": _analysis_route(
-            "lifecycle", lambda df, s, b: compute_lifecycle(df, s)),
+            "lifecycle",
+            lambda df, s, b: compute_lifecycle(df, s, company=b.get("company")),
+            extra_key_fields=("company",)),
         "opportunity": _analysis_route(
             "opportunity",
             lambda df, s, b: compute_opportunity(df, s, company=b.get("company")),
@@ -533,7 +535,10 @@ def register_routes(app):
             lambda df, s, b: compute_basic_stats(df, s, company=b.get("company")),
             extra_key_fields=("company",)),
         "portfolio-index": _analysis_route(
-            "portfolio-index", lambda df, s, b: compute_portfolio_index(df, s)),
+            "portfolio-index",
+            lambda df, s, b: compute_portfolio_index(df, s,
+                                                     companies=b.get("companies")),
+            extra_key_fields=("companies",)),
         "advanced-stats": _analysis_route(
             "advanced-stats", lambda df, s, b: compute_advanced_stats(df, s)),
         "scope-entropy": _analysis_route(

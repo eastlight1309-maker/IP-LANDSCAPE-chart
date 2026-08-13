@@ -822,6 +822,85 @@ def test_embedding_file_feeds_semantic_analysis(tmp_path, monkeypatch, settings)
     assert "column" in str(out["methods"].get("embedding", ""))
 
 
+def test_lifecycle_company_uniform_color(settings):
+    """생애주기: 출원인 선택 시 재계산 + 경쟁강도 색 단일화."""
+    from src.analyses.lifecycle import compute_lifecycle
+    df = make_prepared(generate_sample(n=500, seed=42))
+    comp = df["applicant_display"].value_counts().index[0]
+    r = compute_lifecycle(df, settings, company=comp)
+    if r["status"] == "ok":  # 표본 충분 시
+        mk = r["figure"]["data"][0]["marker"]
+        assert mk["color"] == "#4E79A7" and mk.get("showscale") is False
+        assert comp in r["figure"]["layout"]["title"]["text"]
+    r0 = compute_lifecycle(df, settings)
+    mk0 = r0["figure"]["data"][0]["marker"]
+    assert isinstance(mk0["color"], list)  # 전체 보기는 경쟁 강도 색 유지
+    assert compute_lifecycle(df, settings, company="없는회사X")["status"] == "empty"
+
+
+def test_portfolio_index_company_selection(settings):
+    """PAI: 선택한 회사만 순위·버블에 표시, 지표 값은 전체 기준과 동일."""
+    from src.analyses.portfolio_index import compute_portfolio_index
+    df = make_prepared(generate_sample(n=500, seed=42))
+    full = compute_portfolio_index(df, settings)
+    two = [r["company"] for r in full["ranking"][:2]] \
+        if "ranking" in full else [r["company"] for r in full["companies"][:2]]
+    r = compute_portfolio_index(df, settings, companies=two)
+    assert r["status"] == "ok"
+    key = "ranking" if "ranking" in r else "companies"
+    names = [x["company"] for x in r[key]]
+    assert set(names) == set(two)
+    # 같은 회사의 PAI 값은 전체 보기와 동일 (선택이 지표를 바꾸지 않음)
+    f0 = {x["company"]: x["portfolio_index"] for x in full[key]}
+    for x in r[key]:
+        assert abs(x["portfolio_index"] - f0[x["company"]]) < 1e-6
+    bad = compute_portfolio_index(df, settings, companies=["없는회사X"])
+    assert bad["status"] == "empty"
+
+
+def test_company_focus_leader_line_labels(settings):
+    """출원인 포커스: 대부분의 버블에 지시선 라벨, 겹침 없이 배치."""
+    from src.analyses.basic_stats import compute_company_focus
+    df = make_prepared(generate_sample(n=500, seed=11))
+    comp = df["applicant_display"].value_counts().index[0]
+    r = compute_company_focus(df, settings, company=comp)
+    assert r["status"] == "ok"
+    anns = [a for a in r["figure"]["layout"]["annotations"]
+            if a.get("showarrow") and a.get("ax") is not None]
+    n_pts = len(r["figure"]["data"][0]["x"])
+    assert len(anns) >= min(n_pts, 5)  # 대부분 라벨링
+    # 라벨 위치(오프셋 반영)가 서로 같지 않음 — 그리디 배치 동작 확인
+    pos = [(round(a["x"], 3), round(a["y"], 3), a["ax"], a["ay"]) for a in anns]
+    assert len(set(pos)) == len(pos)
+    # 급부상은 ★ 접두
+    if r["rising"]:
+        assert any(a["text"].startswith("★") for a in anns)
+
+
+def test_inventor_mobility_joint_filing_no_fake_move(settings):
+    """공동출원 문헌이 가짜 발명자 이동을 만들지 않는다."""
+    import pandas as pd
+    from src.analyses.inventor_mobility import compute_inventor_mobility
+    rows = []
+    # X: B 단독(2018) → A;B 공동출원(2020) — 이동 아님 (B 소속 지속)
+    rows.append({"출원번호": "P1", "출원일": "2018-01-01", "출원인": "B전자",
+                 "발명자": "김철수", "기술분류": "T1", "국가": "KR"})
+    rows.append({"출원번호": "P2", "출원일": "2020-01-01", "출원인": "A전자; B전자",
+                 "발명자": "김철수", "기술분류": "T1", "국가": "KR"})
+    # Y: C 단독(2017) → D 단독(2019) — 진짜 이동
+    rows.append({"출원번호": "P3", "출원일": "2017-01-01", "출원인": "C전자",
+                 "발명자": "이영희", "기술분류": "T2", "국가": "KR"})
+    rows.append({"출원번호": "P4", "출원일": "2019-01-01", "출원인": "D전자",
+                 "발명자": "이영희", "기술분류": "T2", "국가": "KR"})
+    df = make_prepared(pd.DataFrame(rows))
+    r = compute_inventor_mobility(df, settings, include_uncertain=True)
+    assert r["status"] == "ok"
+    pairs = {(m["from"], m["to"]) for m in r["moves"]}
+    assert ("B전자", "A전자") not in pairs  # 과거: 공동출원이 가짜 이동 생성
+    assert ("C전자", "D전자") in pairs      # 진짜 이동은 유지
+    assert "공동출원" in r["meta"]["coapplicant_note"]
+
+
 # ---------------------------------------------------------------------------
 # 전수 감사(계산식·매핑 검증)에서 발견된 버그의 회귀 테스트
 # ---------------------------------------------------------------------------

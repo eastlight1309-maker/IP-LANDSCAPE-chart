@@ -6524,8 +6524,17 @@ def _phase_of(row, settings):
     return "Mature"
 
 
-def compute_lifecycle(df, settings):
-    """기술 생애주기 Phase Map 계산."""
+def compute_lifecycle(df, settings, company=None):
+    """기술 생애주기 Phase Map 계산.
+
+    company 지정 시 그 출원인(공동출원 포함) 문헌만으로 계산한다. 이때
+    경쟁 강도(출원인 수) 색은 의미가 없으므로 단일 색으로 통일해 표시한다.
+    """
+    if company:
+        df = df[applicant_mask(df, company, scope="any")]
+        if not len(df):
+            return empty_result("출원인 '%s'의 문헌이 없습니다 (공동출원 포함 검색)."
+                                % company)
     if not len(df):
         return empty_result()
     mode = settings.get("multiclass_mode", "duplicate")
@@ -6673,7 +6682,8 @@ def compute_lifecycle(df, settings):
     fig = bubble_chart(points, "기술 성숙도 (정규화) — 오른쪽=오래되고 축적 큼",
                        "최근 성장 모멘텀 (정규화) — 위=최근 출원 급증",
                        title="기술 생애주기 Phase Map — 어떤 기술이 뜨고(좌상) "
-                             "주도하고(우상) 저무는지(우하 아래)",
+                             "주도하고(우상) 저무는지(우하 아래)"
+                             + (" · %s" % company if company else ""),
                        quadrants={"x_mid": 0.5, "y_mid": 0.5,
                                   "labels": [
                                       "🌱 신생·급성장 (Emerging) — 초기 선점 검토",
@@ -6681,6 +6691,14 @@ def compute_lifecycle(df, settings):
                                       "🏛 성숙·안정 (Mature) — 유지·효율 관리",
                                       "❄ 초기·정체 — 관망 (신호 약함)"]},
                        colorbar_title="경쟁 강도(출원인 수)")
+    if fig and company:
+        # 단일 회사 보기: 출원인 수 = 그 회사(+공동출원사)뿐이라 경쟁 강도
+        # 색이 무의미 — 동일 단색으로 표시하고 색상 범례를 숨긴다
+        mk = fig["data"][0]["marker"]
+        mk["color"] = "#4E79A7"
+        mk["showscale"] = False
+        mk.pop("colorscale", None)
+        mk.pop("colorbar", None)
     if fig:
         fig["layout"].setdefault("annotations", [])
         # 상위 버블에 기술명 라벨 — 차트만 봐도 어떤 기술이 어느 국면인지 읽히도록
@@ -8859,11 +8877,19 @@ def compute_inventor_mobility(df, settings, include_uncertain=False):
     # 발명자 이름별 기록 구축
     records_by_name = {}
     name_doc_counts = {}
+    has_coapps = "_co_applicants_display" in work.columns
     for idx, row in work.iterrows():
         invs = row.get("_inventor_list") or []
         app = str(row.get("applicant_display") or "")
         if not app:
             continue
+        # 공동출원 문헌은 출원인 '집합'으로 기록 — 발명자가 공동출원사 중
+        # 어느 소속인지는 데이터로 알 수 없으므로, 집합이 겹치는 연속 문헌을
+        # 이동으로 세지 않기 위한 근거로 사용한다
+        apps_set = set(a for a in ((row.get("_co_applicants_display") or [])
+                                   if has_coapps else []) if str(a).strip())
+        if not apps_set:
+            apps_set = {app}
         year = int(row["_base_year"])
         techs = set(row.get("_tech_list") or [])
         country = str(row.get("country") or "").upper() if "country" in work.columns else ""
@@ -8874,7 +8900,7 @@ def compute_inventor_mobility(df, settings, include_uncertain=False):
                 continue
             name_doc_counts[inv] = name_doc_counts.get(inv, 0) + 1
             records_by_name.setdefault(inv, []).append({
-                "year": year, "app": app, "techs": techs,
+                "year": year, "app": app, "apps": apps_set, "techs": techs,
                 "coinv": set(i for i in invs if i != inv),
                 "country": country, "pid": pid})
     if not records_by_name:
@@ -8887,6 +8913,11 @@ def compute_inventor_mobility(df, settings, include_uncertain=False):
         seen_pairs = set()
         for prev, cur in zip(recs, recs[1:]):
             if prev["app"] == cur["app"]:
+                continue
+            # 공동출원 보정: 이전·현재 문헌의 출원인 집합이 겹치면 같은 소속이
+            # 이어지는 것 (예: B 단독 → A·B 공동출원은 B 소속 지속) — 대표
+            # 출원인만 보면 B→A 가짜 이동이 만들어진다
+            if prev["apps"] & cur["apps"]:
                 continue
             pair = (prev["app"], cur["app"])
             if pair in seen_pairs:
@@ -8994,7 +9025,12 @@ def compute_inventor_mobility(df, settings, include_uncertain=False):
                                         "inventor_applicant_overlap": round(overlap, 3)},
                             small_sample=check_small_sample(len(used), settings))
     years_all = sorted(set(y for e in edges for y in e["years"]))
-    meta = {"note": "네트워크의 노드=기업(출원인), 엣지=이동 발명자 수입니다. 개별 "
+    meta = {"coapplicant_note":
+                "공동출원 보정: 공동출원 문헌은 출원인 집합으로 취급하며, 이전·현재 "
+                "문헌의 출원인 집합이 겹치면(예: B 단독 → A·B 공동출원) 같은 소속의 "
+                "지속으로 보고 이동으로 세지 않습니다 — 대표 출원인만 보면 생기는 "
+                "가짜 이동 방지.",
+            "note": "네트워크의 노드=기업(출원인), 엣지=이동 발명자 수입니다. 개별 "
                     "발명자는 아래 이동 목록 표와 엣지 클릭에서 확인하세요. 동명이인 "
                     "가능성이 있어 이동은 식별 신뢰도 기반 추정입니다."}
     if mapping_warning:
@@ -9809,22 +9845,11 @@ def compute_company_focus(df, settings, company=None):
 
     top_main = {r["tech"] for r in sorted(rows, key=lambda r: -r["total"])[:3]}
     xs, ys, sizes, colors, hovers, customs = [], [], [], [], [], []
-    texts, text_colors = [], []
     for r in rows:
         xs.append(r["total"])
         ys.append(r["recent_share"])
         sizes.append(float(max(9.0, min(44.0, 8 + 9 * np.sqrt(r["recent"])))))
         colors.append("#E15759" if r["rising"] else "#4E79A7")
-        # 의미 있는 버블은 글자로도 표시: 급부상=빨강 '★', 주력 Top3=파랑
-        if r["rising"]:
-            texts.append("★ " + r["tech"][:12])
-            text_colors.append("#c0392b")
-        elif r["tech"] in top_main:
-            texts.append(r["tech"][:12])
-            text_colors.append("#2e5f8a")
-        else:
-            texts.append("")
-            text_colors.append("#999999")
         hovers.append(
             "<b>%s</b><br>누적 %d건 · 최근 %d년 %d건 (비중 %s)<br>직전 %d년 %d건 · "
             "전체 시장 %d건 중 점유 %s%s"
@@ -9841,9 +9866,8 @@ def compute_company_focus(df, settings, company=None):
                               "급부상": "예" if r["rising"] else ""}})
     x_max = max(xs)
     fig = {"data": [{
-        "type": "scatter", "mode": "markers+text",
-        "x": xs, "y": ys, "text": texts, "textposition": "top center",
-        "textfont": {"size": 9.5, "color": text_colors},
+        "type": "scatter", "mode": "markers",
+        "x": xs, "y": ys,
         "hovertext": hovers, "hoverinfo": "text", "customdata": customs,
         "marker": {"size": sizes, "color": colors, "opacity": 0.85,
                    "line": {"width": 0.8, "color": "#5b7a8a"}}}],
@@ -9861,7 +9885,49 @@ def compute_company_focus(df, settings, company=None):
                 {"x": np.log10(max(2.0, x_max)), "y": 1.04, "xref": "x",
                  "yref": "y", "showarrow": False, "xanchor": "right",
                  "text": "주력 기술 ▶", "font": {"size": 11, "color": "#2e5f8a"}}],
-            height=520)}
+            height=560)}
+
+    # 기술명 라벨: 대부분의 버블에 표시하되, 겹치면 지시선(화살표)으로 밖에 배치.
+    # 그리디 충돌 회피 — 로그축이므로 x 는 log10 정규화 좌표로 거리 계산.
+    lx_min, lx_max = np.log10(max(min(xs), 1.0)), np.log10(max(x_max, 2.0))
+    lx_span = max(lx_max - lx_min, 1e-6)
+
+    def _npos(x, y, ax_px=0, ay_px=0):
+        # 근사 정규화 좌표 (플롯 ~900×470px 가정, ay 는 위가 음수)
+        return (float((np.log10(max(x, 1.0)) - lx_min) / lx_span + ax_px / 900.0),
+                float(y - ay_px / 470.0))
+
+    label_rows = sorted(rows, key=lambda r: (-r["rising"], -r["recent"],
+                                             -r["total"]))[:35]
+    placed = []  # (nx, ny) 라벨 중심들
+    offsets = [(0, -30), (55, -30), (-55, -30), (70, -60), (-70, -60),
+               (85, 20), (-85, 20), (0, -85), (100, -40), (-100, -40)]
+    lbl_anns = []
+    for r in label_rows:
+        best = None
+        for ax_px, ay_px in offsets:
+            nx, ny = _npos(r["total"], r["recent_share"], ax_px, ay_px)
+            if all(abs(nx - px) > 0.11 or abs(ny - py) > 0.05
+                   for px, py in placed):
+                best = (ax_px, ay_px, nx, ny)
+                break
+        if best is None:  # 자리가 전혀 없으면 라벨 생략 (겹쳐 쓰지 않음)
+            continue
+        ax_px, ay_px, nx, ny = best
+        placed.append((nx, ny))
+        rising = r["rising"]
+        lbl_anns.append({
+            "x": np.log10(max(r["total"], 1.0)), "y": r["recent_share"],
+            "xref": "x", "yref": "y", "showarrow": True,
+            "arrowhead": 0, "arrowwidth": 0.8,
+            "arrowcolor": "#c0392b" if rising else "#9fb2c2",
+            "ax": ax_px, "ay": ay_px, "standoff": 4,
+            "text": ("★ " if rising else "") + str(r["tech"])[:14],
+            "font": {"size": 9.5,
+                     "color": "#c0392b" if rising else
+                     ("#2e5f8a" if r["tech"] in top_main else "#54677a")},
+            "bgcolor": "rgba(255,255,255,0.72)", "borderpad": 1})
+    fig["layout"]["annotations"] = fig["layout"].get("annotations", []) + lbl_anns
 
     top10 = sorted(rows, key=lambda r: -r["total"])[:10]
     fig_top = bar_chart(
@@ -10179,8 +10245,12 @@ def _mc_from_country_list(series):
     return series.map(one)
 
 
-def compute_portfolio_index(df, settings):
-    """Patent Asset Index 방법론(Ernst & Omland 2011) 기반 포트폴리오 지표 계산."""
+def compute_portfolio_index(df, settings, companies=None):
+    """Patent Asset Index 방법론(Ernst & Omland 2011) 기반 포트폴리오 지표 계산.
+
+    companies 지정 시 순위·버블·추이·CI 상위 특허를 그 회사들만으로 표시한다.
+    지표 값 자체(TR 코호트·MC)는 전체 데이터 기준으로 계산되어 비교 가능하다.
+    """
     if not len(df):
         return empty_result()
     if "cites_forward" not in df.columns:
@@ -10316,14 +10386,24 @@ def compute_portfolio_index(df, settings):
     if not rows:
         return empty_result("최소 표본(%d건) 이상의 기업이 없습니다." % int(min_n))
     rows.sort(key=lambda r: -r["portfolio_index"])
-    shown = rows[:30]
+    comps_sel = [str(c) for c in (companies or []) if str(c).strip()]
+    if comps_sel:
+        wanted_set = set(comps_sel)
+        shown = [r for r in rows if r["company"] in wanted_set]
+        if not shown:
+            return empty_result("선택한 출원인(%s) 중 최소 표본(%d건) 이상인 회사가 "
+                                "없습니다." % (", ".join(comps_sel[:5]), int(min_n)))
+        scoped = scoped[scoped["applicant_display"].astype(str).isin(wanted_set)]
+    else:
+        shown = rows[:30]
 
     # ① PI 순위 막대
     top_bar = shown[:top_n]
     fig_rank = bar_chart(
         [r["company"] for r in top_bar][::-1],
         [r["portfolio_index"] for r in top_bar][::-1],
-        title="Patent Asset Index 순위 — %s 기준" % scope_label,
+        title="Patent Asset Index 순위 — %s 기준%s"
+              % (scope_label, " · 선택 %d개사" % len(shown) if comps_sel else ""),
         orientation="h", x_title="Patent Asset Index (Σ Competitive Impact)",
         hovertext=["%s — PI %s / %s건 / 평균 CI %s (TR %s × MC %s)"
                    % (r["company"], fmt_num(r["portfolio_index"]), fmt_num(r["n"]),
@@ -15707,7 +15787,9 @@ def register_routes(app):
         "emerging-combinations": _analysis_route(
             "emerging-combinations", lambda df, s, b: compute_emerging(df, s)),
         "lifecycle": _analysis_route(
-            "lifecycle", lambda df, s, b: compute_lifecycle(df, s)),
+            "lifecycle",
+            lambda df, s, b: compute_lifecycle(df, s, company=b.get("company")),
+            extra_key_fields=("company",)),
         "opportunity": _analysis_route(
             "opportunity",
             lambda df, s, b: compute_opportunity(df, s, company=b.get("company")),
@@ -15760,7 +15842,10 @@ def register_routes(app):
             lambda df, s, b: compute_basic_stats(df, s, company=b.get("company")),
             extra_key_fields=("company",)),
         "portfolio-index": _analysis_route(
-            "portfolio-index", lambda df, s, b: compute_portfolio_index(df, s)),
+            "portfolio-index",
+            lambda df, s, b: compute_portfolio_index(df, s,
+                                                     companies=b.get("companies")),
+            extra_key_fields=("companies",)),
         "advanced-stats": _analysis_route(
             "advanced-stats", lambda df, s, b: compute_advanced_stats(df, s)),
         "scope-entropy": _analysis_route(
