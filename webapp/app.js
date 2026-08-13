@@ -1655,8 +1655,7 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
     };
   }
 
-  /* ---------- 1.5 Basic Statistics (WIPS·PatentSight 스타일) ---------- */
-  Views.basic = function (content) {
+  /* ---------- 1.5 공용 탭 팩토리 (전체 동향·기술 분석·심층 시그널 공용) ---------- */
     function statsTab(title, help, keys, guide, withCompany) {
       return function (h) {
         analysisCard({
@@ -2116,6 +2115,9 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
                 }).join(' · ') + ' — Settings → 컬럼 매핑에서 해당 WIPS 필드를 매핑하면 활성화됩니다.</div>'));
             }
     }
+
+  /* ---------- 2. 전체 동향 — 포트폴리오 전체의 기본 현황 ---------- */
+  Views.basic = function (content) {
     makeTabs(content, [
       { label: '출원 동향', render: statsTab('연도별 출원 동향 (WIPS형 기본 통계 · 출원인 선택 가능)',
           '연도별 전체 출원·등록·유효 건수 추이입니다. 연도는 출원일(없으면 우선일/공개일) 기준이며, 점을 클릭하면 해당 연도의 근거 특허 목록이 열립니다. 상단에서 출원인을 선택하면 그 회사의 출원 동향만 표시됩니다 (공동출원 건 포함).',
@@ -2125,126 +2127,6 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
           '국가별 출원 분포, 출원인 순위 Top, 출원인×출원연도 버블(크기=출원건수), 출원인×연도 활동 매트릭스(진할수록 활발)입니다. 막대·버블을 클릭하면 해당 국가/출원인(해당 연도)의 특허 목록이 열립니다. 공동출원 특허는 Settings → 분석 설정의 "공동출원 집계" 방식(기본: 각 공동출원인에게 1건씩)을 따라 집계됩니다.',
           ['country', 'applicants', 'applicant_year_bubble', 'applicant_year'],
           '국가별 분포: X축=국가, Y축=건수 — 어느 시장에 권리를 확보했는지 보여줍니다. 출원인 순위: X축=건수, Y축=출원인 — 이 분야의 주요 플레이어 순위입니다. 출원인×출원연도 버블: X축=출원연도(1년=1칸), Y축=출원인(위가 누적 1위), 버블 크기·색=그 해 출원건수 — 큰 버블이 이어지는 줄=꾸준한 투자 기업, 최근에만 큰 버블이 생긴 기업=신규 집중 투자, 버블이 사라진 기업=투자 축소 신호이며 버블 클릭 시 그 기업·연도 특허가 열립니다. 활동 매트릭스: 같은 데이터의 히트맵 보기입니다.') },
-      { label: '기술분류 동향', render: statsTab('기술분류별 건수 · 연도 동향 (출원인 선택 가능)',
-          '기술분류별 누적 건수 순위와 분류×연도 동향 매트릭스입니다. 상단에서 출원인을 선택하면 그 회사의 기술 포트폴리오만 표시됩니다. 다중분류는 Settings 의 처리방식을 따르지 않고 각 분류에 1건씩 계산합니다.',
-          ['tech', 'tech_year'],
-          '순위: X축=건수, Y축=기술분류 — 포트폴리오가 집중된 기술. 동향 매트릭스: X축=연도, Y축=기술분류, 색=그 해 건수. 읽는 법: 오른쪽(최근)으로 갈수록 진해지는 분류=성장 기술, 왼쪽만 진하고 최근이 옅은 분류=쇠퇴 기술입니다. 출원인을 선택하면 그 회사 기준으로 같은 해석을 적용하세요.', true) },
-      { label: '기술분류 트리', render: function (h) {
-        analysisCard({
-          analysis: 'tech-tree', holder: h,
-          title: '기술분류 트리맵 — 대·중·소 계층 (출원인 선택 가능)',
-          controls: companySelectControls('출원인 선택'),
-          help: '대분류>중분류>소분류 계층을 면적=문헌 수인 트리맵으로 봅니다. ' +
-            '각 문헌의 레벨별 대표(첫) 분류로 경로를 만들며, 하위 분류가 없는 문헌은 ' +
-            '있는 레벨까지만 집계됩니다. 상단에서 출원인을 선택하면 그 회사(공동출원 ' +
-            '포함) 포트폴리오의 트리가 됩니다.',
-          guide: '색=대분류(하위로 갈수록 연해짐), 면적=문헌 수. 읽는 법: 큰 칸=포트폴리오가 ' +
-            '집중된 기술, 부모 칸의 남는 여백=하위 분류 미기재 문헌입니다. 하위가 있는 칸을 ' +
-            '클릭하면 그 분류로 확대되고(상단 경로 바로 복귀), 최하위 칸을 클릭하면 근거 특허 ' +
-            '목록이 열립니다. 대/중/소 컬럼이 일부만 매핑된 경우 있는 레벨까지만 그려집니다.',
-          renderOk: function (r, c, setTarget) {
-            var holder = Ui.el('<div class="chart-holder tall"></div>');
-            c.body.appendChild(holder);
-            Render.plotly(holder, r.figure, function (drill, cd) {
-              if (cd && cd.leaf === false) return; // 상위 칸 클릭=확대만
-              plotlyDrill(drill);
-            });
-            setTarget({ kind: 'plotly', el: holder });
-          }
-        });
-      } },
-      { label: '기술×연도 버블', render: function (h) {
-        var sel1, sel2, sel3;
-        function selectedCompanies() {
-          return [sel1.value, sel2.value, sel3.value].filter(function (v) { return v; });
-        }
-        analysisCard({
-          analysis: 'tech-year-bubble', holder: h,
-          title: '기술분류 × 출원연도 버블 (출원인 선택·최대 3개사 비교)',
-          help: 'X축=출원연도(1년=1칸), Y축=기술분류, 버블 크기=해당 연도·분류의 출원건수입니다. ' +
-            '상단에서 출원인을 선택하면 그 회사만 표시되고, 2~3개사를 고르면 회사별 색으로 같은 축에 ' +
-            '겹쳐 비교합니다 (같은 기술 행에서 세로로 살짝 어긋나게 배치되어 겹침 없이 비교 가능). ' +
-            '아무도 선택하지 않으면 전체 데이터 기준입니다. 집계 기준: 전체 보기는 특허 1건=1번 ' +
-            '집계로 공동출원이어도 중복 계산되지 않습니다. 회사를 선택하면 공동출원 건이 그 회사 ' +
-            '것으로 포함되며, 공동출원 관계인 두 회사를 함께 선택한 경우에만 같은 특허가 양쪽 ' +
-            '시리즈에 나타납니다.',
-          guide: '읽는 법(단일/전체): 오른쪽으로 갈수록 최근이며, 행에서 버블이 커지는 기술=투자 확대, ' +
-            '사라지는 기술=철수 신호입니다. 읽는 법(비교): 같은 기술 행에서 색이 다른 버블의 등장 ' +
-            '시점을 비교하면 누가 먼저 진입했는지(선행), 크기를 비교하면 누가 더 크게 투자하는지 ' +
-            '보입니다. 한 회사에만 버블이 있는 행=그 회사의 독점 영역이자 상대 회사의 공백입니다. ' +
-            '버블 클릭 시 해당 (회사×)기술×연도 특허가 열립니다.',
-          controls: function (c, reload) {
-            function mkSel(ph) {
-              var s = Ui.el('<select><option value="">' + ph + '</option></select>');
-              ((State.filterOptions || {}).applicants || []).slice(0, 60).forEach(function (a) {
-                var o = document.createElement('option'); o.value = a; o.textContent = a;
-                s.appendChild(o);
-              });
-              s.addEventListener('change', function () {
-                reload({ companies: selectedCompanies() });
-              });
-              return s;
-            }
-            sel1 = mkSel('회사 1 (전체)'); sel2 = mkSel('회사 2'); sel3 = mkSel('회사 3');
-            c.controls.prepend(sel3); c.controls.prepend(sel2); c.controls.prepend(sel1);
-          },
-          renderOk: function (r, c, setTarget) {
-            var holder = Ui.el('<div class="chart-holder tall"></div>');
-            c.body.appendChild(holder);
-            Render.plotly(holder, r.figure, plotlyDrill);
-            setTarget({ kind: 'plotly', el: holder });
-          }
-        });
-      } },
-      { label: '출원인 포커스', render: function (h) {
-        analysisCard({
-          analysis: 'company-focus', holder: h,
-          title: '출원인 포커스 — 집중 기술 · 급부상 아이템 (출원인 선택 필수)',
-          controls: companySelectControls('출원인 선택'),
-          help: '한 회사를 골라 그 회사가 어떤 기술에 집중하는지, 그리고 누적 건수는 ' +
-            '작지만 최근 몇 년에 출원이 몰리기 시작한 "급부상 아이템"이 무엇인지 봅니다. ' +
-            '공동출원 건도 그 회사 것으로 포함됩니다.',
-          guide: '포커스 맵: X축=누적 출원 건수(로그축, 오른쪽=주력 기술), Y축=최근 3년 출원 ' +
-            '비중(위=최근에 몰림). 빨간 버블=급부상 후보 — 판정 규칙은 최근 3년 2건 이상, ' +
-            '출원의 절반 이상이 최근 3년, 직전 3년보다 증가, 누적은 회사 중앙값 이하로 ' +
-            '화면에 명시된 규칙만 사용합니다. 좌상단의 빨간 버블이 "작지만 새로 힘을 싣는 ' +
-            '아이템"입니다. 버블·막대 클릭 시 그 회사의 해당 분류 특허가 열립니다.',
-          renderOk: function (r, c, setTarget) {
-            var holder = Ui.el('<div class="chart-holder tall"></div>');
-            c.body.appendChild(holder);
-            Render.plotly(holder, r.figure, plotlyDrill);
-            setTarget({ kind: 'plotly', el: holder });
-            var h2 = Ui.el('<div class="chart-holder"></div>');
-            c.body.appendChild(h2);
-            Render.plotly(h2, r.fig_top, plotlyDrill);
-            var rows = (r.rising || []).map(function (x) {
-              var tr = document.createElement('tr');
-              var td0 = document.createElement('td');
-              td0.appendChild(drillCell(x.tech, x.drill));
-              tr.appendChild(td0);
-              tr.insertAdjacentHTML('beforeend',
-                '<td class="num">' + Ui.num(x.total, 0) + '</td>' +
-                '<td class="num">' + Ui.num(x.recent, 0) + '</td>' +
-                '<td class="num">' + Ui.num(x.prev, 0) + '</td>' +
-                '<td class="num">' + Ui.pct(x.recent_share) + '</td>' +
-                '<td class="num">' + Ui.num(x.market_total, 0) + '</td>' +
-                '<td class="num">' + Ui.pct(x.market_share) + '</td>');
-              return tr;
-            });
-            if (rows.length) {
-              c.body.appendChild(Ui.el('<div style="font-weight:700;font-size:13px;' +
-                'margin:12px 0 4px">★ 급부상 아이템 후보 (' + rows.length + '개)</div>'));
-              var tbl = Ui.el(simpleTable(
-                ['기술분류', '누적', '최근 ' + (r.recent_years || 3) + '년',
-                 '직전 ' + (r.recent_years || 3) + '년', '최근 비중', '시장 전체', '시장 점유'], []));
-              rows.forEach(function (tr) { tbl.querySelector('tbody').appendChild(tr); });
-              var wrap = Ui.el('<div style="overflow-x:auto;max-height:280px;overflow-y:auto"></div>');
-              wrap.appendChild(tbl);
-              c.body.appendChild(wrap);
-            }
-          }
-        });
-      } },
       { label: '심화 분석', render: function (h) {
         analysisCard({
           analysis: 'advanced-stats', holder: h,
@@ -2328,7 +2210,13 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
             }
           }
         });
-      } },
+      } }
+    ]);
+  };
+
+  /* ---------- 2.5 심층 시그널 — 잘 안 쓰는 필드 기반 신호 6종 ---------- */
+  Views.deepsig = function (content) {
+    makeTabs(content, [
       deepTab('시그널: 수명·시장', ['survival', 'market_entry'],
         '심층 시그널 — 연차료 생존곡선 · 지정국 진입 순서',
         '연차료 소멸 기록으로 "기업 스스로 매긴 특허 가치"(생존곡선)를, 패밀리 지정국 진입 ' +
@@ -2353,99 +2241,91 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
       deepPlusTab('시그널: 거절·과학·심사관', ['rejection', 'science', 'examiner'],
         '특수 신호 — 거절 사유 · 과학 연계성 · 심사관',
         '거절 사유 유형 분포와 기업별 거절결정률(출원 전략 개선 지점), 비특허문헌(논문) 인용 기반 ' +
-        '과학 연계성(기초연구 근접도), 심사관별 처리 현황(개인 실명 — 내부 참고용)을 봅니다.'),
-      { label: 'Patent Asset Index', render: function (h) {
-        analysisCard({
-          analysis: 'portfolio-index', holder: h,
-          title: 'Patent Asset Index · Competitive Impact · Market Coverage',
-          help: '공개 방법론(Ernst & Omland 2011, Patent Asset Index)에 따라 TR(연도×기술분야 코호트 보정 피인용), MC(보호국 GNI 가중, 미국=1), CI=TR×MC, PAI=유효특허 CI 합계를 계산합니다. 아래 지표 정의표와 각 차트의 해석 설명을 참고하세요.',
-          renderOk: function (r, c, setTarget) {
-            c.body.appendChild(definitionsTable(r.definitions, r.official_diff));
-            var fb = Ui.el('<div class="chart-holder tall"></div>');
-            c.body.appendChild(fb);
-            Render.plotly(fb, r.family_bubble, plotlyDrill);
-            setTarget({ kind: 'plotly', el: fb });
-            c.body.appendChild(chartCap('X축=특허 패밀리 건수(양적 규모), Y축=평균 Competitive ' +
-              'Impact(질적 수준, 1.0=평균), 버블 크기=패밀리 건수, 색=평균 Market Coverage, ' +
-              '라벨=출원인. 읽는 법: 우상단=양·질 모두 우수한 선도기업, 좌상단=규모는 작지만 ' +
-              '질이 높은 강소기업(협력·인수 검토 후보), 우하단=양 위주 포트폴리오. 버블 클릭 시 ' +
-              '해당 출원인의 근거 특허가 열립니다.'));
-            if (r.mc_bar) {
-              var mc = Ui.el('<div class="chart-holder"></div>');
-              c.body.appendChild(mc);
-              Render.plotly(mc, r.mc_bar, plotlyDrill);
-              c.body.appendChild(chartCap('X축=기업별 평균 Market Coverage. 산출 기준: ' +
-                (r.mc_source || '') + '. 읽는 법: 값이 클수록 특허를 더 큰 시장(여러 국가)에서 ' +
-                '보호하고 있다는 뜻으로, 글로벌 사업 의지와 권리 투자 규모를 보여줍니다.'));
-            }
-            var pai = Ui.el('<div class="chart-holder"></div>');
-            c.body.appendChild(pai);
-            Render.plotly(pai, r.rank, plotlyDrill);
-            c.body.appendChild(chartCap('X축=Patent Asset Index(대상 특허 Competitive Impact 의 ' +
-              '합계), Y축=기업. 읽는 법: 특허의 양과 질을 함께 반영한 포트폴리오 총 가치 순위입니다. ' +
-              '건수 순위(기본 통계 탭)와 비교해 순위가 크게 다른 기업은 질적 편차가 큰 것입니다.'));
-          }
-        });
-      } },
-      { label: 'Portfolio 종합', render: function (h) {
-        analysisCard({
-          analysis: 'portfolio-index', holder: h,
-          title: '포트폴리오 가치 지표 종합 (Patent Asset Index 방법론)',
-          help: '공개 방법론(Ernst & Omland 2011)에 따른 PAI/CI/TR/MC 로 포트폴리오의 양과 질을 종합 진단합니다. 각 지표의 정의·산식·해석은 아래 지표 정의표를, 각 차트의 읽는 법은 차트 아래 설명을 참고하세요.',
-          renderOk: function (r, c, setTarget) {
-            c.body.appendChild(definitionsTable(r.definitions, r.official_diff));
-            var rank = Ui.el('<div class="chart-holder"></div>');
-            c.body.appendChild(rank);
-            Render.plotly(rank, r.rank, plotlyDrill);
-            setTarget({ kind: 'plotly', el: rank });
-            c.body.appendChild(chartCap('X축=Patent Asset Index(유효특허 CI 합계), Y축=기업. ' +
-              '읽는 법: 포트폴리오 총 가치 순위 — 양(건수)과 질(CI)이 모두 반영되므로 건수가 ' +
-              '적어도 질 높은 특허가 많으면 상위에 올 수 있습니다. 막대 클릭 시 해당 기업의 ' +
-              '특허 목록이 열립니다.'));
-            var bub = Ui.el('<div class="chart-holder tall"></div>');
-            c.body.appendChild(bub);
-            Render.plotly(bub, r.bubble, plotlyDrill);
-            c.body.appendChild(chartCap('X축=대상 특허 수(양), Y축=평균 Competitive Impact(질, ' +
-              '1.0=평균), 버블 크기=PAI, 색=최근 출원 성장률(초록=성장, 빨강=감소). 읽는 법: ' +
-              'PAI 가 비슷해도 우상단 기업(질 중심)과 우하단 기업(양 중심)은 전략이 다릅니다. ' +
-              '좌상단의 작지만 진한 초록 버블 = 질 높고 성장 중인 주목 기업입니다.'));
-            if (r.trend) {
-              var tr = Ui.el('<div class="chart-holder" style="min-height:320px"></div>');
-              c.body.appendChild(tr);
-              Render.plotly(tr, r.trend);
-              c.body.appendChild(chartCap('X축=출원연도, Y축=그 해 출원된 특허들의 CI 합계 ' +
-                '(상위 5개사). 읽는 법: 선이 최근으로 갈수록 높아지면 포트폴리오의 질이 개선되고 ' +
-                '있다는 뜻입니다. 단, 최근 연도는 인용이 아직 축적되지 않아 낮게 보이는 경향이 ' +
-                'TR 의 연도 보정으로 완화되지만 완전히 제거되지는 않습니다.'));
-            }
-            var rows = (r.top_patents || []).map(function (x) {
-              var trEl = document.createElement('tr');
-              var td0 = document.createElement('td');
-              td0.appendChild(drillCell(x.id, x.drill));
-              trEl.appendChild(td0);
-              trEl.insertAdjacentHTML('beforeend', '<td>' + Ui.esc(x.title) + '</td><td>' +
-                Ui.esc(x.applicant) + '</td><td class="num">' + x.ci + '</td>' +
-                '<td class="num">' + x.tr + '</td><td class="num">' + x.mc +
-                '</td><td class="num">' + x.cites + '</td>');
-              return trEl;
-            });
-            var tbl = Ui.el(simpleTable(['번호', '명칭', '출원인', 'CI', 'TR', 'MC', '피인용'], []));
-            rows.forEach(function (trEl) { tbl.querySelector('tbody').appendChild(trEl); });
-            c.body.appendChild(Ui.el('<div style="margin-top:6px"><b style="font-size:12px">' +
-              'Competitive Impact 상위 특허</b></div>'));
-            c.body.appendChild(tbl);
-            c.body.appendChild(chartCap('포트폴리오 가치를 견인하는 개별 핵심특허 목록입니다. ' +
-              'CI=TR×MC 이므로, TR 열이 큰 특허는 기술적 영향력이, MC 열이 큰 특허는 넓은 시장 ' +
-              '보호가 가치의 원천입니다. 번호 클릭 시 서지 정보가 열립니다.'));
-          }
-        });
-      } }
+        '과학 연계성(기초연구 근접도), 심사관별 처리 현황(개인 실명 — 내부 참고용)을 봅니다.')
     ]);
   };
 
-  /* ---------- 2. Technology Evolution ---------- */
+
+  /* ---------- 3. 기술 분석 (Technology) ---------- */
   Views.evolution = function (content) {
     makeTabs(content, [
+      { label: '기술분류 동향', render: statsTab('기술분류별 건수 · 연도 동향 (출원인 선택 가능)',
+          '기술분류별 누적 건수 순위와 분류×연도 동향 매트릭스입니다. 상단에서 출원인을 선택하면 그 회사의 기술 포트폴리오만 표시됩니다. 다중분류는 Settings 의 처리방식을 따르지 않고 각 분류에 1건씩 계산합니다.',
+          ['tech', 'tech_year'],
+          '순위: X축=건수, Y축=기술분류 — 포트폴리오가 집중된 기술. 동향 매트릭스: X축=연도, Y축=기술분류, 색=그 해 건수. 읽는 법: 오른쪽(최근)으로 갈수록 진해지는 분류=성장 기술, 왼쪽만 진하고 최근이 옅은 분류=쇠퇴 기술입니다. 출원인을 선택하면 그 회사 기준으로 같은 해석을 적용하세요.', true) },
+      { label: '기술분류 트리', render: function (h) {
+        analysisCard({
+          analysis: 'tech-tree', holder: h,
+          title: '기술분류 트리맵 — 대·중·소 계층 (출원인 선택 가능)',
+          controls: companySelectControls('출원인 선택'),
+          help: '대분류>중분류>소분류 계층을 면적=문헌 수인 트리맵으로 봅니다. ' +
+            '각 문헌의 레벨별 대표(첫) 분류로 경로를 만들며, 하위 분류가 없는 문헌은 ' +
+            '있는 레벨까지만 집계됩니다. 상단에서 출원인을 선택하면 그 회사(공동출원 ' +
+            '포함) 포트폴리오의 트리가 됩니다.',
+          guide: '색=대분류(하위로 갈수록 연해짐), 면적=문헌 수. 읽는 법: 큰 칸=포트폴리오가 ' +
+            '집중된 기술, 부모 칸의 남는 여백=하위 분류 미기재 문헌입니다. 하위가 있는 칸을 ' +
+            '클릭하면 그 분류로 확대되고(상단 경로 바로 복귀), 최하위 칸을 클릭하면 근거 특허 ' +
+            '목록이 열립니다. 대/중/소 컬럼이 일부만 매핑된 경우 있는 레벨까지만 그려집니다.',
+          renderOk: function (r, c, setTarget) {
+            var holder = Ui.el('<div class="chart-holder tall"></div>');
+            c.body.appendChild(holder);
+            Render.plotly(holder, r.figure, function (drill, cd) {
+              if (cd && cd.leaf === false) return; // 상위 칸 클릭=확대만
+              plotlyDrill(drill);
+            });
+            setTarget({ kind: 'plotly', el: holder });
+          }
+        });
+      } },
+      { label: '기술×연도 버블', render: function (h) {
+        var sel1, sel2, sel3, lvlSel;
+        function selectedCompanies() {
+          return [sel1.value, sel2.value, sel3.value].filter(function (v) { return v; });
+        }
+        analysisCard({
+          analysis: 'tech-year-bubble', holder: h,
+          title: '기술분류 × 출원연도 버블 (대·중·소 선택 · 출원인 최대 3개사 비교)',
+          help: 'X축=출원연도(1년=1칸), Y축=기술분류, 버블 크기=해당 연도·분류의 출원건수입니다. ' +
+            '상단에서 출원인을 선택하면 그 회사만 표시되고, 2~3개사를 고르면 회사별 색으로 같은 축에 ' +
+            '겹쳐 비교합니다 (같은 기술 행에서 세로로 살짝 어긋나게 배치되어 겹침 없이 비교 가능). ' +
+            '아무도 선택하지 않으면 전체 데이터 기준입니다. 집계 기준: 전체 보기는 특허 1건=1번 ' +
+            '집계로 공동출원이어도 중복 계산되지 않습니다. 회사를 선택하면 공동출원 건이 그 회사 ' +
+            '것으로 포함되며, 공동출원 관계인 두 회사를 함께 선택한 경우에만 같은 특허가 양쪽 ' +
+            '시리즈에 나타납니다.',
+          guide: '읽는 법(단일/전체): 오른쪽으로 갈수록 최근이며, 행에서 버블이 커지는 기술=투자 확대, ' +
+            '사라지는 기술=철수 신호입니다. 읽는 법(비교): 같은 기술 행에서 색이 다른 버블의 등장 ' +
+            '시점을 비교하면 누가 먼저 진입했는지(선행), 크기를 비교하면 누가 더 크게 투자하는지 ' +
+            '보입니다. 한 회사에만 버블이 있는 행=그 회사의 독점 영역이자 상대 회사의 공백입니다. ' +
+            '버블 클릭 시 해당 (회사×)기술×연도 특허가 열립니다.',
+          controls: function (c, reload) {
+            function go() {
+              reload({ companies: selectedCompanies(), level: lvlSel.value || null });
+            }
+            function mkSel(ph) {
+              var s = Ui.el('<select><option value="">' + ph + '</option></select>');
+              ((State.filterOptions || {}).applicants || []).slice(0, 60).forEach(function (a) {
+                var o = document.createElement('option'); o.value = a; o.textContent = a;
+                s.appendChild(o);
+              });
+              s.addEventListener('change', go);
+              return s;
+            }
+            lvlSel = Ui.el('<select><option value="">분류: 통합</option>' +
+              '<option value="l1">분류: 대</option><option value="l2">분류: 중</option>' +
+              '<option value="l3">분류: 소</option></select>');
+            lvlSel.addEventListener('change', go);
+            sel1 = mkSel('회사 1 (전체)'); sel2 = mkSel('회사 2'); sel3 = mkSel('회사 3');
+            c.controls.prepend(sel3); c.controls.prepend(sel2); c.controls.prepend(sel1);
+            c.controls.prepend(lvlSel);
+          },
+          renderOk: function (r, c, setTarget) {
+            var holder = Ui.el('<div class="chart-holder tall"></div>');
+            c.body.appendChild(holder);
+            Render.plotly(holder, r.figure, plotlyDrill);
+            setTarget({ kind: 'plotly', el: holder });
+          }
+        });
+      } },
       { label: '기술 생애주기', render: function (h) {
         analysisCard({
           analysis: 'lifecycle', holder: h, title: '기술 생애주기 Phase Map',
@@ -2595,8 +2475,30 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
       { label: '신흥 기술 탐지 (임베딩)', render: function (h) {
         analysisCard({
           analysis: 'emerging-clusters', holder: h,
-          title: '신흥 기술 조기 탐지 — Emerging Cluster Detection (출원인 선택 가능)',
-          controls: companySelectControls('출원인 선택'),
+          title: '신흥 기술 조기 탐지 — Emerging Cluster Detection (출원인·기간 선택 가능)',
+          controls: function (c, reload) {
+            var cur = { company: null, recent_years: null };
+            var ySel = Ui.el('<select><option value="">최근 3년 기준</option>' +
+              '<option value="2">최근 2년</option><option value="4">최근 4년</option>' +
+              '<option value="5">최근 5년</option></select>');
+            ySel.addEventListener('change', function () {
+              cur.recent_years = ySel.value ? parseInt(ySel.value, 10) : null;
+              reload(cur);
+            });
+            var sel = Ui.el('<select><option value="">전체 출원인</option></select>');
+            ((State.filterOptions || {}).applicants || []).slice(0, 60).forEach(function (a) {
+              var o = document.createElement('option'); o.value = a; o.textContent = a;
+              sel.appendChild(o);
+            });
+            sel.addEventListener('change', function () {
+              cur.company = sel.value || null;
+              reload(cur);
+            });
+            c.controls.prepend(ySel);
+            c.controls.prepend(sel);
+            c.controls.prepend(Ui.el('<span style="font-size:11.5px;color:#647b8d">' +
+              '출원인·Y축 기간</span>'));
+          },
           help: '전체 문헌 텍스트(요약·독립청구항)를 KR-SBERT 임베딩으로 군집화한 뒤 각 군집의 ' +
             '출원 시점 분포를 봅니다. 최근 3년에 몰려 있고, 신규 출원인이 늘고, 이전에 없던 ' +
             '새 군집이면 신흥 기술 후보입니다. 군집 라벨은 중심에 가까운 특허들의 특징 키워드로 ' +
@@ -2660,6 +2562,55 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
   /* ---------- 3. Competitor Intelligence ---------- */
   Views.competitor = function (content) {
     makeTabs(content, [
+      { label: '출원인 포커스', render: function (h) {
+        analysisCard({
+          analysis: 'company-focus', holder: h,
+          title: '출원인 포커스 — 집중 기술 · 급부상 아이템 (출원인 선택 필수)',
+          controls: companySelectControls('출원인 선택'),
+          help: '한 회사를 골라 그 회사가 어떤 기술에 집중하는지, 그리고 누적 건수는 ' +
+            '작지만 최근 몇 년에 출원이 몰리기 시작한 "급부상 아이템"이 무엇인지 봅니다. ' +
+            '공동출원 건도 그 회사 것으로 포함됩니다.',
+          guide: '포커스 맵: X축=누적 출원 건수(로그축, 오른쪽=주력 기술), Y축=최근 3년 출원 ' +
+            '비중(위=최근에 몰림). 빨간 버블=급부상 후보 — 판정 규칙은 최근 3년 2건 이상, ' +
+            '출원의 절반 이상이 최근 3년, 직전 3년보다 증가, 누적은 회사 중앙값 이하로 ' +
+            '화면에 명시된 규칙만 사용합니다. 좌상단의 빨간 버블이 "작지만 새로 힘을 싣는 ' +
+            '아이템"입니다. 버블·막대 클릭 시 그 회사의 해당 분류 특허가 열립니다.',
+          renderOk: function (r, c, setTarget) {
+            var holder = Ui.el('<div class="chart-holder tall"></div>');
+            c.body.appendChild(holder);
+            Render.plotly(holder, r.figure, plotlyDrill);
+            setTarget({ kind: 'plotly', el: holder });
+            var h2 = Ui.el('<div class="chart-holder"></div>');
+            c.body.appendChild(h2);
+            Render.plotly(h2, r.fig_top, plotlyDrill);
+            var rows = (r.rising || []).map(function (x) {
+              var tr = document.createElement('tr');
+              var td0 = document.createElement('td');
+              td0.appendChild(drillCell(x.tech, x.drill));
+              tr.appendChild(td0);
+              tr.insertAdjacentHTML('beforeend',
+                '<td class="num">' + Ui.num(x.total, 0) + '</td>' +
+                '<td class="num">' + Ui.num(x.recent, 0) + '</td>' +
+                '<td class="num">' + Ui.num(x.prev, 0) + '</td>' +
+                '<td class="num">' + Ui.pct(x.recent_share) + '</td>' +
+                '<td class="num">' + Ui.num(x.market_total, 0) + '</td>' +
+                '<td class="num">' + Ui.pct(x.market_share) + '</td>');
+              return tr;
+            });
+            if (rows.length) {
+              c.body.appendChild(Ui.el('<div style="font-weight:700;font-size:13px;' +
+                'margin:12px 0 4px">★ 급부상 아이템 후보 (' + rows.length + '개)</div>'));
+              var tbl = Ui.el(simpleTable(
+                ['기술분류', '누적', '최근 ' + (r.recent_years || 3) + '년',
+                 '직전 ' + (r.recent_years || 3) + '년', '최근 비중', '시장 전체', '시장 점유'], []));
+              rows.forEach(function (tr) { tbl.querySelector('tbody').appendChild(tr); });
+              var wrap = Ui.el('<div style="overflow-x:auto;max-height:280px;overflow-y:auto"></div>');
+              wrap.appendChild(tbl);
+              c.body.appendChild(wrap);
+            }
+          }
+        });
+      } },
       { label: '기술 DNA', render: function (h) {
         analysisCard({
           analysis: 'company-dna', holder: h, title: '경쟁사 기술 DNA Fingerprint',
@@ -2894,6 +2845,92 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
               c.body.appendChild(o);
               Render.plotly(o, r.overlap);
             }
+          }
+        });
+      } },
+      { label: 'Patent Asset Index', render: function (h) {
+        analysisCard({
+          analysis: 'portfolio-index', holder: h,
+          title: 'Patent Asset Index · Competitive Impact · Market Coverage',
+          help: '공개 방법론(Ernst & Omland 2011, Patent Asset Index)에 따라 TR(연도×기술분야 코호트 보정 피인용), MC(보호국 GNI 가중, 미국=1), CI=TR×MC, PAI=유효특허 CI 합계를 계산합니다. 아래 지표 정의표와 각 차트의 해석 설명을 참고하세요.',
+          renderOk: function (r, c, setTarget) {
+            c.body.appendChild(definitionsTable(r.definitions, r.official_diff));
+            var fb = Ui.el('<div class="chart-holder tall"></div>');
+            c.body.appendChild(fb);
+            Render.plotly(fb, r.family_bubble, plotlyDrill);
+            setTarget({ kind: 'plotly', el: fb });
+            c.body.appendChild(chartCap('X축=특허 패밀리 건수(양적 규모), Y축=평균 Competitive ' +
+              'Impact(질적 수준, 1.0=평균), 버블 크기=패밀리 건수, 색=평균 Market Coverage, ' +
+              '라벨=출원인. 읽는 법: 우상단=양·질 모두 우수한 선도기업, 좌상단=규모는 작지만 ' +
+              '질이 높은 강소기업(협력·인수 검토 후보), 우하단=양 위주 포트폴리오. 버블 클릭 시 ' +
+              '해당 출원인의 근거 특허가 열립니다.'));
+            if (r.mc_bar) {
+              var mc = Ui.el('<div class="chart-holder"></div>');
+              c.body.appendChild(mc);
+              Render.plotly(mc, r.mc_bar, plotlyDrill);
+              c.body.appendChild(chartCap('X축=기업별 평균 Market Coverage. 산출 기준: ' +
+                (r.mc_source || '') + '. 읽는 법: 값이 클수록 특허를 더 큰 시장(여러 국가)에서 ' +
+                '보호하고 있다는 뜻으로, 글로벌 사업 의지와 권리 투자 규모를 보여줍니다.'));
+            }
+            var pai = Ui.el('<div class="chart-holder"></div>');
+            c.body.appendChild(pai);
+            Render.plotly(pai, r.rank, plotlyDrill);
+            c.body.appendChild(chartCap('X축=Patent Asset Index(대상 특허 Competitive Impact 의 ' +
+              '합계), Y축=기업. 읽는 법: 특허의 양과 질을 함께 반영한 포트폴리오 총 가치 순위입니다. ' +
+              '건수 순위(기본 통계 탭)와 비교해 순위가 크게 다른 기업은 질적 편차가 큰 것입니다.'));
+          }
+        });
+      } },
+      { label: 'Portfolio 종합', render: function (h) {
+        analysisCard({
+          analysis: 'portfolio-index', holder: h,
+          title: '포트폴리오 가치 지표 종합 (Patent Asset Index 방법론)',
+          help: '공개 방법론(Ernst & Omland 2011)에 따른 PAI/CI/TR/MC 로 포트폴리오의 양과 질을 종합 진단합니다. 각 지표의 정의·산식·해석은 아래 지표 정의표를, 각 차트의 읽는 법은 차트 아래 설명을 참고하세요.',
+          renderOk: function (r, c, setTarget) {
+            c.body.appendChild(definitionsTable(r.definitions, r.official_diff));
+            var rank = Ui.el('<div class="chart-holder"></div>');
+            c.body.appendChild(rank);
+            Render.plotly(rank, r.rank, plotlyDrill);
+            setTarget({ kind: 'plotly', el: rank });
+            c.body.appendChild(chartCap('X축=Patent Asset Index(유효특허 CI 합계), Y축=기업. ' +
+              '읽는 법: 포트폴리오 총 가치 순위 — 양(건수)과 질(CI)이 모두 반영되므로 건수가 ' +
+              '적어도 질 높은 특허가 많으면 상위에 올 수 있습니다. 막대 클릭 시 해당 기업의 ' +
+              '특허 목록이 열립니다.'));
+            var bub = Ui.el('<div class="chart-holder tall"></div>');
+            c.body.appendChild(bub);
+            Render.plotly(bub, r.bubble, plotlyDrill);
+            c.body.appendChild(chartCap('X축=대상 특허 수(양), Y축=평균 Competitive Impact(질, ' +
+              '1.0=평균), 버블 크기=PAI, 색=최근 출원 성장률(초록=성장, 빨강=감소). 읽는 법: ' +
+              'PAI 가 비슷해도 우상단 기업(질 중심)과 우하단 기업(양 중심)은 전략이 다릅니다. ' +
+              '좌상단의 작지만 진한 초록 버블 = 질 높고 성장 중인 주목 기업입니다.'));
+            if (r.trend) {
+              var tr = Ui.el('<div class="chart-holder" style="min-height:320px"></div>');
+              c.body.appendChild(tr);
+              Render.plotly(tr, r.trend);
+              c.body.appendChild(chartCap('X축=출원연도, Y축=그 해 출원된 특허들의 CI 합계 ' +
+                '(상위 5개사). 읽는 법: 선이 최근으로 갈수록 높아지면 포트폴리오의 질이 개선되고 ' +
+                '있다는 뜻입니다. 단, 최근 연도는 인용이 아직 축적되지 않아 낮게 보이는 경향이 ' +
+                'TR 의 연도 보정으로 완화되지만 완전히 제거되지는 않습니다.'));
+            }
+            var rows = (r.top_patents || []).map(function (x) {
+              var trEl = document.createElement('tr');
+              var td0 = document.createElement('td');
+              td0.appendChild(drillCell(x.id, x.drill));
+              trEl.appendChild(td0);
+              trEl.insertAdjacentHTML('beforeend', '<td>' + Ui.esc(x.title) + '</td><td>' +
+                Ui.esc(x.applicant) + '</td><td class="num">' + x.ci + '</td>' +
+                '<td class="num">' + x.tr + '</td><td class="num">' + x.mc +
+                '</td><td class="num">' + x.cites + '</td>');
+              return trEl;
+            });
+            var tbl = Ui.el(simpleTable(['번호', '명칭', '출원인', 'CI', 'TR', 'MC', '피인용'], []));
+            rows.forEach(function (trEl) { tbl.querySelector('tbody').appendChild(trEl); });
+            c.body.appendChild(Ui.el('<div style="margin-top:6px"><b style="font-size:12px">' +
+              'Competitive Impact 상위 특허</b></div>'));
+            c.body.appendChild(tbl);
+            c.body.appendChild(chartCap('포트폴리오 가치를 견인하는 개별 핵심특허 목록입니다. ' +
+              'CI=TR×MC 이므로, TR 열이 큰 특허는 기술적 영향력이, MC 열이 큰 특허는 넓은 시장 ' +
+              '보호가 가치의 원천입니다. 번호 클릭 시 서지 정보가 열립니다.'));
           }
         });
       } }
@@ -3849,12 +3886,17 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
     section('🗺️ 메뉴 안내',
       '<table class="ipls-table"><thead><tr><th>메뉴</th><th>내용</th></tr></thead><tbody>' +
       '<tr><td>📊 Executive Overview</td><td>경영 요약(KPI·경보·BCG 매트릭스·경쟁 포지션) + 경영 차트 6종: 📅만료 절벽 / 💰R&amp;D 효율 사분면 / 👤키맨 리스크 / ⏱️추격 시계 / 🚨위협 레이더 / ✂️포트폴리오 다이어트 (탭마다 자사 기준 선택 가능)</td></tr>' +
-      '<tr><td>📈 Basic Statistics</td><td>연도/국가/출원인/기술분류 기본 통계(차트별 인사이트 포함), 기술분류 트리맵(대·중·소 계층, 면적=문헌 수), 출원인×연도 버블, 기술×연도 버블(최대 3사 비교),출원인 포커스(선택한 회사의 집중 기술 + 작지만 최근 급부상하는 아이템 탐지), 심화 분석, 심층 시그널 4개 탭(수명·시장 / 심사 이력 / 출원 행태 / 분쟁·국가과제), 특수 신호 2개 탭(실시권·표준특허·권리변동 / 거절 사유·과학 연계성·심사관), Patent Asset Index(공식 방법론 기반 TR·MC·CI·PAI + 공식 지수와의 차이 명시) — 출원 동향·기술분류 동향·심층 시그널·특수 신호는 출원인 선택 가능</td></tr>' +
-      '<tr><td>🧬 Technology Evolution</td><td>기술 생애주기, 전이 Sankey, Emerging Radar, 조합 네트워크, 분류축 교차(A·B·C), 신흥 기술 탐지(임베딩)</td></tr>' +
-      '<tr><td>🏢 Competitor Intelligence</td><td>기업 DNA, 기술 궤적, 선도–추종, 권리범위 엔트로피, 전략 유사도·중첩도</td></tr>' +
-      '<tr><td>🎯 White Space &amp; R&amp;D</td><td>Opportunity Matrix(자사=출원인 선택 가능, ◇=자사 역량 보유), 미점유 조합 UpSet, 문제–해결수단 매트릭스(C축=해결과제 × B축=해결수단 분류 기반 — 두 축 매핑 시 활성), 추천 R&amp;D 테마</td></tr>' +
-      '<tr><td>⚖️ Patent Power</td><td>핵심특허 영향력(출원인 선택 가능 — 점수는 전체 기준 유지), 인용 확산, 청구항 밀집도, 발명자 이동, 출원인·현재권리자 관계(양도 네트워크·순매수/매도), 의미 기반 영향력(임베딩), 권리 중첩 네트워크(임베딩)</td></tr>' +
-      '<tr><td>🧪 Data Quality</td><td>분류 품질 진단(Confusion Map·응집도), 출원인 표준화 검토</td></tr></tbody></table>');
+      '<tr><td>📈 전체 동향</td><td>포트폴리오 전체의 기본 현황: 연도별 출원 동향(출원인 선택 가능), 국가별 분포·출원인 순위·활동 매트릭스, 심화 분석(심사기간·만료 타임라인·청구항·공동출원·IPC)</td></tr>' +
+      '<tr><td colspan="2" style="background:#f4f8fb;font-weight:700">🔬 기술 분석 — "어떤 기술이 어디로 가는가"</td></tr>' +
+      '<tr><td>🔬 기술 분석</td><td>기술분류 동향(출원인 선택 가능), 기술분류 트리맵(대·중·소 계층, 면적=문헌 수), 기술×연도 버블(대·중·소 선택 + 최대 3사 비교), 기술 생애주기 Phase Map, 전이 Sankey, Emerging Radar, 조합 네트워크, 분류축 교차(A·B·C), 신흥 기술 탐지(임베딩 — 출원인·기간 선택 가능)</td></tr>' +
+      '<tr><td>🎯 White Space &amp; R&amp;D</td><td>Opportunity Matrix(자사=출원인 선택 가능, ◇=자사 역량 보유, 상위 기회 주석 표시), 미점유 조합 UpSet, 문제–해결수단 매트릭스(C축=해결과제 × B축=해결수단 — 두 축 매핑 시 활성), 추천 R&amp;D 테마</td></tr>' +
+      '<tr><td colspan="2" style="background:#f4f8fb;font-weight:700">🏢 기업(출원인) 분석 — "이 회사는 무엇을 하는가"</td></tr>' +
+      '<tr><td>🏢 기업 분석</td><td>출원인 포커스(집중 기술 + 급부상 아이템), 기업 DNA(12지표 계산식 정의표 포함), 기술 궤적, 선도–추종, 권리범위 엔트로피, 출원인·현재권리자 관계(양도 네트워크), 전략 유사도·중첩도, Patent Asset Index(공식 방법론 TR·MC·CI·PAI), Portfolio 종합</td></tr>' +
+      '<tr><td>⚖️ Patent Power</td><td>특허 한 건 단위의 힘: 핵심특허 영향력(출원인 선택 가능 — 점수는 전체 기준 유지), 인용 확산, 청구항 밀집도, 발명자 이동, 의미 기반 영향력(임베딩), 권리 중첩 네트워크(임베딩)</td></tr>' +
+      '<tr><td colspan="2" style="background:#f4f8fb;font-weight:700">🔎 심층·품질</td></tr>' +
+      '<tr><td>🔎 심층 시그널</td><td>잘 안 쓰는 WIPS 필드 기반 신호 6개 탭(모두 출원인 선택 가능): 수명·시장(생존곡선·진입 시차) / 심사 이력(심사관 인용·우선심사·이상탐지) / 출원 행태(대리인·분할·개시 충실도) / 분쟁·국가과제 / 라이선스·표준·양도 / 거절·과학·심사관</td></tr>' +
+      '<tr><td>🧪 Data Quality</td><td>분류 품질 진단(Confusion Map·응집도), 출원인 표준화 검토</td></tr></tbody></table>' +
+      '<div style="color:#647b8d;font-size:11.5px;margin-top:6px">좌측 메뉴는 ① 전체 동향 → ② 기술 분석(어떤 기술) → ③ 기업 분석(어느 회사) → ④ 심층·품질 순서로 배열되어 있습니다 — 전체를 훑고, 기술을 고르고, 회사를 파고드는 흐름입니다.</div>');
     section('🖱️ 차트 공통 기능',
       '<ul style="padding-left:18px;line-height:1.9">' +
       '<li><b>드릴다운</b>: 차트의 점·막대·셀·노드를 클릭하면 근거 특허 목록이 열립니다. 표의 파란 텍스트도 클릭 가능합니다.</li>' +
@@ -4743,7 +4785,7 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
   /* ------------------------------------------------------------- 부트 */
   document.getElementById('btn-apply-filters').addEventListener('click', Filters.apply);
   document.getElementById('btn-reset-filters').addEventListener('click', Filters.reset);
-  document.querySelectorAll('#ipls-menu li').forEach(function (li) {
+  document.querySelectorAll('#ipls-menu li[data-view]').forEach(function (li) {
     li.addEventListener('click', function () { Views.render(li.getAttribute('data-view')); });
   });
 

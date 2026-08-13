@@ -224,13 +224,34 @@ def compute_lifecycle(df, settings):
                                             "active_ratio": r["active_ratio"],
                                             "combo_growth": r["combo_growth"],
                                             "avg_citations": r["avg_citations"]}}})
-    fig = bubble_chart(points, "기술 성숙도 (정규화)", "최근 성장 모멘텀 (정규화)",
-                       title="기술 생애주기 Phase Map",
+    fig = bubble_chart(points, "기술 성숙도 (정규화) — 오른쪽=오래되고 축적 큼",
+                       "최근 성장 모멘텀 (정규화) — 위=최근 출원 급증",
+                       title="기술 생애주기 Phase Map — 어떤 기술이 뜨고(좌상) "
+                             "주도하고(우상) 저무는지(우하 아래)",
                        quadrants={"x_mid": 0.5, "y_mid": 0.5,
-                                  "labels": ["Emerging/Growing", "Growing 핵심", "Mature", "초기 미성숙"]},
+                                  "labels": [
+                                      "🌱 신생·급성장 (Emerging) — 초기 선점 검토",
+                                      "🚀 성장 주도 (Growing) — 투자 확대 구간",
+                                      "🏛 성숙·안정 (Mature) — 유지·효율 관리",
+                                      "❄ 초기·정체 — 관망 (신호 약함)"]},
                        colorbar_title="경쟁 강도(출원인 수)")
-    if fig and arrows:
+    if fig:
         fig["layout"].setdefault("annotations", [])
+        # 상위 버블에 기술명 라벨 — 차트만 봐도 어떤 기술이 어느 국면인지 읽히도록
+        tr0 = fig["data"][0]
+        tr0["mode"] = "markers+text"
+        top_lbl = {r["tech"] for r in shown[:8]}
+        tr0["text"] = [(p["label"][:12] if p["label"] in top_lbl else "")
+                       for p in points]
+        tr0["textposition"] = "top center"
+        tr0["textfont"] = {"size": 9.5, "color": "#38506b"}
+        fig["layout"]["annotations"].append({
+            "x": 0.5, "y": -0.14, "xref": "paper", "yref": "paper",
+            "showarrow": False,
+            "text": "버블 크기=유효 특허 수 · 색=경쟁 강도(출원인 수, 진할수록 붐빔) · "
+                    "회색 화살표=직전 기간 → 현재 위치 이동 (위로 향하면 재부상)",
+            "font": {"size": 10.5, "color": "#8aa0b2"}})
+    if fig and arrows:
         for a in arrows[:60]:
             fig["layout"]["annotations"].append({
                 "x": a["x1"], "y": a["y1"], "ax": a["x0"], "ay": a["y0"],

@@ -327,6 +327,36 @@ def compute_opportunity(df, settings, company=None):
             {"x": 0.03, "y": 0.97, "xref": "x", "yref": "y", "text": "저매력·저장벽",
              "showarrow": False, "font": {"size": 11, "color": "#888"}, "xanchor": "left"}])}
 
+    # 핵심 버블 주석: Opportunity Score 상위 5개를 선으로 연결해 이름·성격 표시
+    def _bubble_note(r):
+        if r["attractiveness"] >= 0.5 and r["entry_possibility"] >= 0.5:
+            what = "우선 공략 후보"
+        elif r["attractiveness"] >= 0.5:
+            what = "매력적이나 장벽 높음"
+        elif r["entry_possibility"] >= 0.5:
+            what = "진입 쉬우나 신호 약함"
+        else:
+            what = "관망"
+        return what
+
+    key_anns = []
+    for rank, r in enumerate(shown[:5], start=1):
+        side = 1 if rank % 2 else -1
+        key_anns.append({
+            "x": r["attractiveness"], "y": r["entry_possibility"],
+            "xref": "x", "yref": "y", "showarrow": True,
+            "arrowhead": 2, "arrowsize": 0.9, "arrowwidth": 1.2,
+            "arrowcolor": "#5b7a8a",
+            "ax": side * 70, "ay": -46 - (rank // 2) * 22,
+            "text": "<b>%d위 %s</b><br>기회 %.2f · %s"
+                    % (rank, str(r["tech"])[:14], r["opportunity_score"],
+                       _bubble_note(r)),
+            "font": {"size": 10, "color": "#2c3e50"},
+            "bgcolor": "rgba(255,255,255,0.85)",
+            "bordercolor": "#c9d7e4", "borderwidth": 1, "borderpad": 3,
+            "align": "left"})
+    fig["layout"]["annotations"] = (fig["layout"].get("annotations") or []) + key_anns
+
     sentences, metrics = [], {}
     top = shown[0] if shown else None
     if top:

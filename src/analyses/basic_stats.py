@@ -541,13 +541,24 @@ def compute_company_focus(df, settings, company=None):
     rows.sort(key=lambda r: (-r["rising"], -(r["recent_share"] * r["recent"]),
                              -r["total"]))
 
-    xs, ys, sizes, colors, hovers, customs, texts = [], [], [], [], [], [], []
+    top_main = {r["tech"] for r in sorted(rows, key=lambda r: -r["total"])[:3]}
+    xs, ys, sizes, colors, hovers, customs = [], [], [], [], [], []
+    texts, text_colors = [], []
     for r in rows:
         xs.append(r["total"])
         ys.append(r["recent_share"])
         sizes.append(float(max(9.0, min(44.0, 8 + 9 * np.sqrt(r["recent"])))))
         colors.append("#E15759" if r["rising"] else "#4E79A7")
-        texts.append(r["tech"][:14] if r["rising"] else "")
+        # 의미 있는 버블은 글자로도 표시: 급부상=빨강 '★', 주력 Top3=파랑
+        if r["rising"]:
+            texts.append("★ " + r["tech"][:12])
+            text_colors.append("#c0392b")
+        elif r["tech"] in top_main:
+            texts.append(r["tech"][:12])
+            text_colors.append("#2e5f8a")
+        else:
+            texts.append("")
+            text_colors.append("#999999")
         hovers.append(
             "<b>%s</b><br>누적 %d건 · 최근 %d년 %d건 (비중 %s)<br>직전 %d년 %d건 · "
             "전체 시장 %d건 중 점유 %s%s"
@@ -566,7 +577,7 @@ def compute_company_focus(df, settings, company=None):
     fig = {"data": [{
         "type": "scatter", "mode": "markers+text",
         "x": xs, "y": ys, "text": texts, "textposition": "top center",
-        "textfont": {"size": 9.5, "color": "#c0392b"},
+        "textfont": {"size": 9.5, "color": text_colors},
         "hovertext": hovers, "hoverinfo": "text", "customdata": customs,
         "marker": {"size": sizes, "color": colors, "opacity": 0.85,
                    "line": {"width": 0.8, "color": "#5b7a8a"}}}],
@@ -626,18 +637,29 @@ def compute_company_focus(df, settings, company=None):
 # ---------------------------------------------------------------------------
 # 기술분류 × 출원연도 버블 (출원인 선택·다사 비교)
 # ---------------------------------------------------------------------------
-def compute_tech_year_bubble(df, settings, companies=None):
+def compute_tech_year_bubble(df, settings, companies=None, level=None):
     """X=출원연도, Y=기술분류 버블 (크기=출원건수).
 
     companies 미지정: 전체 데이터 1개 시리즈 (색=건수).
     companies 1~4개: 회사별 색 + 같은 셀에서 겹치지 않도록 세로 미세 오프셋 —
     두세 회사의 기술별 투자 시점·규모를 한 화면에서 비교한다.
+    level: 'l1'|'l2'|'l3' → 대/중/소 분류 레벨 선택 (미지정=통합 기술분류).
     Drill: 버블 클릭 → 해당 (기술분류 × 연도 [× 출원인]) 특허.
     """
     from src.viz_payload import color_for
+    level = level if level in ("l1", "l2", "l3") else None
+    tech_col, level_label, drill_key = "_tech_list", "통합", "tech"
+    if level:
+        cand = "_tech_%s_list" % level
+        names = {"l1": "대분류", "l2": "중분류", "l3": "소분류"}
+        if cand not in df.columns or not df[cand].map(lambda v: bool(v)).any():
+            return empty_result("%s 컬럼이 매핑되지 않았거나 값이 없습니다 — Settings → "
+                                "컬럼 매핑에서 기술분류(%s)를 매핑하세요."
+                                % (names[level], names[level]))
+        tech_col, level_label, drill_key = cand, names[level], "tech_%s" % level
     if not len(df) or not df["_base_year"].notna().any():
         return empty_result(diagnose_year_tech(df))
-    if not df["_tech_list"].map(lambda v: bool(v)).any():
+    if not df[tech_col].map(lambda v: bool(v)).any():
         return empty_result(diagnose_year_tech(df))
     comps = [str(c) for c in (companies or []) if str(c).strip()][:4]
     if comps:  # 공동출원 건 포함 매칭
@@ -652,17 +674,24 @@ def compute_tech_year_bubble(df, settings, companies=None):
                             % ", ".join(comps))
 
     max_rows = min(int(get_limit(settings, "matrix_max_rows")), 15)
-    tech_counts = pd.Series([t for lst in scope["_tech_list"] for t in (lst or [])])
+    tech_counts = pd.Series([t for lst in scope[tech_col] for t in (lst or [])])
     if not len(tech_counts):
-        return empty_result("기술분류 값이 없습니다.")
+        return empty_result("기술분류(%s) 값이 없습니다." % level_label)
     top_techs = tech_counts.value_counts().head(max_rows).index.tolist()
     tpos = {t: i for i, t in enumerate(top_techs)}
     year_lo = int(scope["_base_year"].dropna().min())
     year_hi = int(scope["_base_year"].dropna().max())
 
+    def _t_drill(t, y=None):
+        d = ({"type": "tech", "tech": str(t)} if drill_key == "tech"
+             else {drill_key: str(t)})
+        if y is not None:
+            d["year"] = int(y)
+        return d
+
     def cell_counts(sub):
         counts = {}
-        for lst, y in zip(sub["_tech_list"], sub["_base_year"]):
+        for lst, y in zip(sub[tech_col], sub["_base_year"]):
             if y is None or (isinstance(y, float) and np.isnan(y)):
                 continue
             for t in set(lst or []):
@@ -691,7 +720,7 @@ def compute_tech_year_bubble(df, settings, companies=None):
             sizes.append(float(max(7.0, min(40.0, 6 + 30 * np.sqrt(n / vmax)))))
             colors.append(n)
             hovers.append("%s — %s %d년: %s건" % (name, t, y, fmt_num(n)))
-            drill = {"type": "tech", "tech": str(t), "year": int(y)}
+            drill = _t_drill(t, y)
             if g:
                 drill["applicant"] = g
                 drill["applicant_scope"] = "any"  # 공동출원 건 포함
@@ -707,8 +736,9 @@ def compute_tech_year_bubble(df, settings, companies=None):
         traces.append({"type": "scatter", "mode": "markers", "name": name,
                        "x": xs, "y": ys, "hovertext": hovers, "hoverinfo": "text",
                        "customdata": customs, "marker": marker})
-    title = ("기술분류 × 출원연도 버블 — %s 비교 (크기=출원건수)" % " vs ".join(comps)
-             if comps else "기술분류 × 출원연도 버블 (크기·색=출원건수, 전체)")
+    title = ("기술분류(%s) × 출원연도 버블 — %s 비교 (크기=출원건수)"
+             % (level_label, " vs ".join(comps)) if comps else
+             "기술분류(%s) × 출원연도 버블 (크기·색=출원건수, 전체)" % level_label)
     fig = {"data": traces, "layout": base_layout(
         title,
         xaxis={"title": "출원연도", "dtick": 1, "tickformat": "d",

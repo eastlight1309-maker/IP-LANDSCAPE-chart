@@ -196,7 +196,7 @@ def _llm_cluster_names(clusters, settings):
 # ---------------------------------------------------------------------------
 # 1) 신흥 기술 조기 탐지
 # ---------------------------------------------------------------------------
-def compute_emerging_clusters(df, settings, company=None):
+def compute_emerging_clusters(df, settings, company=None, recent_years=None):
     """임베딩 군집 × 출원 시점 분포로 신흥 기술 후보 탐지 + 키워드 자동 라벨.
 
     company 지정 시 해당 출원인의 문헌만으로 군집화 — "이 회사가 어떤 신흥
@@ -224,7 +224,13 @@ def compute_emerging_clusters(df, settings, company=None):
     labels = km.fit_predict(vectors)
     centers = km.cluster_centers_
 
-    recent_n = int(get_threshold(settings, "recent_years"))
+    # recent_years 인자로 Y축 '최근 N년' 창을 조절할 수 있다 (2~10년 클램프)
+    try:
+        recent_n = int(recent_years) if recent_years else \
+            int(get_threshold(settings, "recent_years"))
+    except (TypeError, ValueError):
+        recent_n = int(get_threshold(settings, "recent_years"))
+    recent_n = max(2, min(10, recent_n))
     max_year = int(work["_base_year"].dropna().max())
     recent_from = max_year - recent_n + 1
     recent_share_min = float(get_threshold(settings, "emerging_cluster_recent_share"))

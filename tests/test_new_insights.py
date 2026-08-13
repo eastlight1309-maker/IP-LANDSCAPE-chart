@@ -822,6 +822,108 @@ def test_embedding_file_feeds_semantic_analysis(tmp_path, monkeypatch, settings)
     assert "column" in str(out["methods"].get("embedding", ""))
 
 
+def test_km_curve_verified_against_manual():
+    """Kaplan-Meier 곡선: product-limit 공식 수기 계산과 일치."""
+    from src.analyses.wips_deep import _km_curve, _km_at, _km_median
+    # 이벤트: t=2(1건 소멸/5 관측), t=4(중도절단 1), t=6(1건 소멸/3 관측)
+    dur = [2.0, 3.0, 4.0, 6.0, 8.0]
+    ev = [1, 0, 0, 1, 0]
+    times, probs = _km_curve(dur, ev)
+    # S(2)=1-1/5=0.8, S(6)=0.8*(1-1/2)=0.4 (t=6 시점 at-risk={6,8}=2)
+    assert abs(_km_at(times, probs, 2.0) - 0.8) < 1e-9
+    assert abs(_km_at(times, probs, 5.9) - 0.8) < 1e-9
+    assert abs(_km_at(times, probs, 6.0) - 0.4) < 1e-9
+    assert _km_median(times, probs) == 6.0  # 처음으로 50% 이하가 되는 시점
+
+
+def test_survival_overlap_offset_and_dash(settings):
+    """생존곡선: 완전 겹침(전부 100%) 곡선은 미세 오프셋 + hover 실제값."""
+    from src.analyses.wips_deep import compute_wips_deep
+    df = make_prepared(generate_sample(n=300, seed=7))
+    df = df.drop(columns=[c for c in ("lapse_date", "expiry_date")
+                          if c in df.columns])  # 소멸 정보 없음 → 전 곡선 100%
+    r = compute_wips_deep(df, settings, only_sections=["survival"])
+    traces = r["sections"]["survival"]["fig"]["data"]
+    if len(traces) >= 2:
+        # 첫 곡선은 원래 위치, 겹치는 곡선은 아래로 내려가고 실제값은 customdata
+        assert max(traces[0]["y"]) == 1.0
+        off = [tr for tr in traces if tr.get("customdata")]
+        assert off, "겹침 곡선 오프셋 없음"
+        for tr in off:
+            assert max(tr["y"]) < 1.0            # 표시용 오프셋
+            assert max(tr["customdata"]) == 1.0  # 실제값 보존
+            assert "customdata" in tr["hovertemplate"]
+        assert "겹침" in r["sections"]["survival"]["fig"]["layout"]["title"]["text"]
+    # 대시 스타일로도 구분
+    assert len({tr["line"].get("dash") for tr in traces}) >= min(len(traces), 2)
+
+
+def test_tech_year_bubble_level_selector(settings):
+    """기술×연도 버블: 대/중/소 레벨 선택."""
+    from src.analyses.basic_stats import compute_tech_year_bubble
+    from src.analyses.common import select_patents
+    df = make_prepared(generate_sample(n=400, seed=21))
+    r = compute_tech_year_bubble(df, settings, level="l1")
+    assert r["status"] == "ok" and "대분류" in r["figure"]["layout"]["title"]["text"]
+    l1_vals = {t for lst in df["_tech_l1_list"] for t in (lst or [])}
+    assert set(r["techs"]) <= l1_vals
+    cd = r["figure"]["data"][0]["customdata"][0]["drill"]
+    assert "tech_l1" in cd
+    picked = select_patents(df, cd)
+    assert len(picked) > 0
+    assert picked["_tech_l1_list"].map(
+        lambda lst: cd["tech_l1"] in (lst or [])).all()
+    # 없는 레벨(l3 미매핑 시) → 안내 empty
+    if "_tech_l3_list" not in df.columns:
+        r3 = compute_tech_year_bubble(df, settings, level="l3")
+        assert r3["status"] == "empty" and "소분류" in r3["message"]
+
+
+def test_emerging_recent_years_param(settings):
+    """신흥 기술 탐지: Y축 최근 N년 창 선택."""
+    from src.analyses.semantic_insights import compute_emerging_clusters
+    df = make_prepared(generate_sample(n=200, seed=9))
+    r2 = compute_emerging_clusters(df, settings, recent_years=2)
+    r5 = compute_emerging_clusters(df, settings, recent_years=5)
+    assert r2["status"] == "ok" and r5["status"] == "ok"
+    assert "최근 2년" in str(r2["figure"]["layout"]["yaxis"])
+    assert "최근 5년" in str(r5["figure"]["layout"]["yaxis"])
+    # 창이 넓을수록 최근 비중은 커지거나 같아야 함 (같은 군집 가정은 어려우니 평균 비교)
+    avg2 = sum(c["recent_share"] for c in r2["clusters"]) / len(r2["clusters"])
+    avg5 = sum(c["recent_share"] for c in r5["clusters"]) / len(r5["clusters"])
+    assert avg5 >= avg2 - 1e-9
+
+
+def test_opportunity_key_bubble_annotations(settings):
+    """Opportunity Matrix: 상위 기회 버블에 이름·성격 주석(연결선)."""
+    from src.analyses.whitespace import compute_opportunity
+    df = make_prepared(generate_sample(n=400, seed=21))
+    r = compute_opportunity(df, settings)
+    anns = r["figure"]["layout"]["annotations"]
+    key = [a for a in anns if a.get("showarrow") and "위" in str(a.get("text"))]
+    assert 1 <= len(key) <= 5
+    top = r["areas"][0]
+    assert any(("1위" in a["text"] and str(top["tech"])[:8] in a["text"])
+               for a in key)
+    for a in key:
+        assert a["x"] is not None and a["y"] is not None  # 버블 좌표에 연결
+
+
+def test_lifecycle_phase_map_readable(settings):
+    """Phase Map: 4분면 의미 라벨 + 상위 버블 기술명 + 범례 주석."""
+    from src.analyses.lifecycle import compute_lifecycle
+    df = make_prepared(generate_sample(n=400, seed=21))
+    r = compute_lifecycle(df, settings)
+    assert r["status"] == "ok"
+    lay = r["figure"]["layout"]
+    txts = " ".join(str(a.get("text")) for a in lay["annotations"])
+    assert "Emerging" in txts and "Mature" in txts and "투자 확대" in txts
+    assert "버블 크기" in txts and "화살표" in txts  # 읽는 법 주석
+    tr = r["figure"]["data"][0]
+    assert tr["mode"] == "markers+text"
+    assert any(t for t in tr["text"])  # 상위 기술명 라벨
+
+
 def test_tech_year_bubble_no_joint_double_count(settings):
     """기술×연도 버블: 전체 보기는 공동출원이어도 특허 1건=1번 집계."""
     from src.analyses.basic_stats import compute_tech_year_bubble

@@ -352,7 +352,8 @@ def test_bubble_customdata_metrics(client):
         data = _post(client, path, {"filters": {}}).get_json()
         assert data["status"] == "ok", path
         traces = data[key]["data"]
-        marker_traces = [t for t in traces if t.get("mode") == "markers"
+        marker_traces = [t for t in traces
+                         if str(t.get("mode", "")).startswith("markers")
                          and t.get("customdata")]
         assert marker_traces, path
         cd = marker_traces[0]["customdata"][0]

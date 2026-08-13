@@ -544,9 +544,10 @@ def register_routes(app):
             "combo-upset", lambda df, s, b: compute_combo_upset(df, s)),
         "emerging-clusters": _analysis_route(
             "emerging-clusters",
-            lambda df, s, b: compute_emerging_clusters(df, s,
-                                                       company=b.get("company")),
-            extra_key_fields=("company",)),
+            lambda df, s, b: compute_emerging_clusters(
+                df, s, company=b.get("company"),
+                recent_years=b.get("recent_years")),
+            extra_key_fields=("company", "recent_years")),
         "semantic-influence": _analysis_route(
             "semantic-influence", lambda df, s, b: compute_semantic_influence(df, s)),
         "similarity-network": _analysis_route(
@@ -575,8 +576,9 @@ def register_routes(app):
         "tech-year-bubble": _analysis_route(
             "tech-year-bubble",
             lambda df, s, b: compute_tech_year_bubble(df, s,
-                                                      companies=b.get("companies")),
-            extra_key_fields=("companies",)),
+                                                      companies=b.get("companies"),
+                                                      level=b.get("level")),
+            extra_key_fields=("companies", "level")),
         "company-focus": _analysis_route(
             "company-focus",
             lambda df, s, b: compute_company_focus(df, s, company=b.get("company")),

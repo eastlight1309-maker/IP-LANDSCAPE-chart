@@ -196,8 +196,28 @@ def _survival_section(df, settings):
         # 분류가 부족하면 전체 곡선 하나
         trace, _t, _p = _km_trace(sub, "전체")
         traces.append(trace)
+    # 가독성: 곡선이 완전히 겹치면(예: 여러 분류가 모두 100% 유지) 무엇이
+    # 무엇인지 구분되지 않으므로, 겹치는 곡선만 0.8%p 간격으로 살짝 내려
+    # 표시한다. hover 의 생존율은 실제값을 그대로 보여준다 (시각 구분용 오프셋).
+    dashes = ["solid", "dash", "dot", "dashdot", "longdash", "longdashdot"]
+    seen_shapes = {}
+    n_offset = 0
+    for ti, tr in enumerate(traces):
+        tr["line"]["dash"] = dashes[ti % len(dashes)]
+        shape_key = (tuple(tr["x"]), tuple(round(v, 4) for v in tr["y"]))
+        k = seen_shapes.get(shape_key, 0)
+        seen_shapes[shape_key] = k + 1
+        if k:
+            n_offset += 1
+            real = list(tr["y"])
+            tr["customdata"] = real
+            tr["y"] = [max(v - 0.008 * k, 0.0) for v in real]
+            tr["hovertemplate"] = (str(tr["name"]) +
+                                   " · %{x:.0f}년차 생존율 %{customdata:.0%}"
+                                   "<extra></extra>")
     fig = {"data": traces, "layout": base_layout(
-        "연차료 생존곡선 (Kaplan-Meier) — 기업 스스로 매긴 특허 가치",
+        "연차료 생존곡선 (Kaplan-Meier) — 기업 스스로 매긴 특허 가치"
+        + (" · 완전 겹침 곡선은 구분용으로 살짝 내려 표시" if n_offset else ""),
         xaxis={"title": "등록 후 경과 (년)", "range": [0, 21], "dtick": 2},
         yaxis={"title": "권리 유지 비율", "range": [0, 1.02], "tickformat": ".0%"})}
 
