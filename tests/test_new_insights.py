@@ -2139,3 +2139,40 @@ def test_mapping_rename_guard_two_concepts_one_column(settings):
                                     "assignee": "출원인",
                                     "app_number": "번호"})
     assert "applicant" in df.columns
+
+
+def test_company_focus_new_entry_detection(settings):
+    """출원인 포커스: 신규 진입(최근 N년 내 첫 출원) 판정 — 독립 재계산 대조."""
+    from src.analyses.basic_stats import compute_company_focus
+    from src.config import get_threshold
+    df = make_prepared(generate_sample(n=500, seed=11))
+    comp = df["applicant_display"].value_counts().index[0]
+    r = compute_company_focus(df, settings, company=comp)
+    assert r["status"] == "ok"
+    assert "new_entries" in r
+    recent = int(get_threshold(settings, "recent_years"))
+    y_max = int(df["_base_year"].dropna().max())
+    recent_from = y_max - recent + 1
+    # 독립 재계산: 그 회사(공동출원 포함) 문헌으로 기술별 최초 출원연도
+    from src.analyses.common import applicant_mask
+    sub = df[applicant_mask(df, comp, scope="any")]
+    first = {}
+    for lst, y in zip(sub["_tech_list"], sub["_base_year"]):
+        if y is None or (isinstance(y, float) and pd.isna(y)):
+            continue
+        for t in set(lst or []):
+            first[t] = min(first.get(t, 9999), int(y))
+    expect_new = {t for t, fy in first.items() if fy >= recent_from}
+    got_new = {e["tech"] for e in r["new_entries"]}
+    assert got_new <= expect_new           # 지어낸 신규 진입 없음
+    if expect_new:
+        # 상한(15개) 안에서는 전부 보고
+        assert len(got_new) == min(len(expect_new), 15)
+        e0 = r["new_entries"][0]
+        assert e0["first_year"] >= recent_from
+    # 색 규칙: 신규 진입=초록, 급부상=빨강 (제목에 범례 명시)
+    assert "신규 진입" in r["figure"]["layout"]["title"]["text"]
+    mk = r["figure"]["data"][0]["marker"]
+    assert isinstance(mk["color"], list)
+    if expect_new:
+        assert "#2E9E5B" in mk["color"]

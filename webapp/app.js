@@ -1168,19 +1168,24 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
         { v: 'evolution', t: '신흥 기술 탐지 (임베딩)', why: '분류 체계에 아직 안 잡힌 신흥 주제를 텍스트 군집으로 조기 포착' }],
       secondary: [
         { v: 'evolution', t: 'Emerging Radar', why: '성장률×Lift 기준 뜨는 기술 조합' },
+        { v: 'evolution', t: '조합 네트워크', why: '기술 간 연결 구조 — 융합이 일어나는 축 확인' },
+        { v: 'power', t: '인용 확산 Sankey', why: '어느 기술이 후속 기술을 낳는지 — 파급의 방향' },
         { v: 'evolution', t: '기술분류 트리', why: '대›중›소 구성비 전체 조망' },
         { v: 'basic', t: '출원 동향', why: '전체 출원량의 큰 흐름 확인' }] },
     { key: 'competitor', icon: '🏢', label: '경쟁사 분석',
       desc: '경쟁사가 무엇을 개발하는지', users: '전략기획, IP팀',
       primary: [
-        { v: 'competitor', t: '출원인 포커스', why: '선택한 경쟁사의 집중 기술과 "작지만 최근 급부상한" 신규 베팅 탐지' },
+        { v: 'competitor', t: '출원인 포커스', why: '경쟁사의 집중 기술(주력) + 🆕 신규 진입 기술(최근 N년 첫 출원) + ★ 급부상 아이템을 한 화면에서' },
+        { v: 'evolution', t: '기술×연도 버블', why: '경쟁사 선택 — 어떤 기술에 언제 진입해 얼마나 투자했는지 시점·규모 비교 (최대 3사)' },
         { v: 'overview', t: '경영 요약', why: '경쟁 포지션 맵·BCG — 성장률×질 기준 경쟁사 위치 비교' },
         { v: 'overview', t: '🚨 위협 레이더', why: '자사 주력 기술에 새로 진입한 경쟁자 조기 경보' },
         { v: 'competitor', t: '기술 DNA', why: '경쟁사별 12지표 프로파일 — 어떤 유형의 플레이어인지' },
         { v: 'competitor', t: '유사도·중첩도', why: '자사와 포트폴리오가 겹치는 회사 순위 — 직접 경쟁 상대 식별' }],
       secondary: [
         { v: 'competitor', t: '기술 궤적', why: '경쟁사의 연도별 기술 이동 경로' },
+        { v: 'evolution', t: '신흥 기술 탐지 (임베딩)', why: '경쟁사 선택 — 분류에 아직 안 잡힌 그 회사의 새 주제(신규 진입) 조기 포착' },
         { v: 'power', t: '발명자 이동', why: '경쟁사 간 인력 이동 — 기술 유출입 신호' },
+        { v: 'deepsig', t: '시그널: 심사 이력', why: '경쟁사 선택 — 우선심사 급등 기술 = 사업화 임박 신호' },
         { v: 'basic', t: '국가·출원인', why: '출원인 순위·활동 매트릭스 기본 비교' },
         { v: 'competitor', t: 'Patent Asset Index', why: '경쟁사 포트폴리오 가치 정량 비교' }] },
     { key: 'rnd_direction', icon: '🧭', label: 'R&D 방향 수립',
@@ -1192,6 +1197,7 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
         { v: 'evolution', t: '기술 생애주기', why: '도입기/성장기 기술 = 투자 적기 판단' }],
       secondary: [
         { v: 'evolution', t: 'Emerging Radar', why: '뜨는 기술 조합에서 융합 테마 발굴' },
+        { v: 'evolution', t: '기술 전이 Sankey', why: '기존 기술이 어디로 이동 중인지 — 다음 단계 예측 재료' },
         { v: 'competitor', t: '선도–추종', why: '선행 지표 기업의 방향 = 미래 힌트' },
         { v: 'whitespace', t: '문제–해결수단', why: '과제×수단 매트릭스의 빈 칸 = 미해결 문제' },
         { v: 'overview', t: '💰 R&D 효율', why: '자원 배분 전 현재 효율 진단' },
@@ -1206,6 +1212,7 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
         { v: 'evolution', t: '분류축 교차 (A·B·C)', why: '분류축 교차의 희소 셀 = 공백 후보' },
         { v: 'evolution', t: '조합 네트워크', why: '연결이 약한 기술 쌍 = 미개척 융합' },
         { v: 'evolution', t: '신흥 기술 탐지 (임베딩)', why: '공백이 채워지기 시작하는 신호 감시' },
+        { v: 'evolution', t: '기술분류 트리', why: '분류 구조에서 유난히 작은 가지 = 미발달 영역 후보' },
         { v: 'whitespace', t: '추천 R&D 테마', why: '공백 기반 추천 테마로 연결' }] },
     { key: 'design_around', icon: '🛠️', label: '특허 회피 (Design Around)',
       desc: '침해를 피할 기술 찾기', users: '개발팀',
@@ -1218,6 +1225,7 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
       secondary: [
         { v: 'competitor', t: '권리범위 엔트로피', why: '권리범위가 넓은 출원인/특허 파악' },
         { v: 'deepsig', t: '시그널: 수명·시장', why: '연차료 미납 소멸 특허 = 자유 사용 후보 (등록원부 확인 필수)' },
+        { v: 'deepsig', t: '시그널: 심사 이력', why: '심사관 인용이 유난히 많은 기술 = 회피 대신 무효 검토가 유효할 수 있는 영역' },
         { v: 'basic', t: '심화 분석', why: '만료 타임라인 — 곧 풀리는 특허 확인' },
         { v: 'power', t: '인용 확산 Sankey', why: '장벽 특허의 후속 인용 흐름 파악' }] },
     { key: 'fto', icon: '⚖️', label: 'FTO (자유실시조사)',
@@ -1231,6 +1239,7 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
       secondary: [
         { v: 'deepsig', t: '시그널: 라이선스·표준·양도', why: 'SEP(표준특허) 선언 여부 — 회피 불가 특허 확인' },
         { v: 'power', t: '권리 중첩 네트워크 (임베딩)', why: '자사 제품 기술과 의미상 근접한 타사 특허 스크리닝' },
+        { v: 'basic', t: '국가·출원인', why: '출시 대상 국가에 권리를 보유한 주체 분포 확인' },
         { v: 'basic', t: '심화 분석', why: '만료 타임라인으로 잔존 권리 기간 확인' }] },
     { key: 'portfolio', icon: '📂', label: '특허 포트폴리오 평가',
       desc: '우리 특허의 강약점 분석', users: 'IP팀',
@@ -1245,6 +1254,8 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
         { v: 'competitor', t: '권리범위 엔트로피', why: '권리범위 다양성 — 집중형인지 분산형인지' },
         { v: 'overview', t: '👤 키맨 리스크', why: '핵심 발명자 의존도 = 조직 리스크' },
         { v: 'power', t: '청구항 밀집도', why: '청구항 구조의 촘촘함 — 권리 강도 보조 지표' },
+        { v: 'competitor', t: '출원인 포커스', why: '자사 선택 — 집중 기술과 신규 진입·급부상까지 자사 포트폴리오의 움직임 확인' },
+        { v: 'overview', t: '📅 만료 절벽', why: '자사 핵심특허 만료 시점 = 방어 공백 리스크' },
         { v: 'quality', t: '검증 리포트', why: '평가 근거 데이터의 정합성 먼저 확인' }] },
     { key: 'ma_investment', icon: '💼', label: 'M&A/투자 검토',
       desc: '기업 기술력 평가', users: '투자부서',
@@ -1258,6 +1269,8 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
         { v: 'competitor', t: '출원인·권리자 관계', why: '이미 양도된 권리·담보 설정 여부 확인' },
         { v: 'deepsig', t: '시그널: 분쟁·국가과제', why: '진행 중 분쟁 = 우발 부채 후보' },
         { v: 'deepsig', t: '시그널: 라이선스·표준·양도', why: '실시권 수익·SEP 보유 = 가치 가산 요소' },
+        { v: 'competitor', t: 'Portfolio 종합', why: '규모·질·성장 종합 — 대상 기업의 전체 체력' },
+        { v: 'deepsig', t: '시그널: 수명·시장', why: '연차료 유지 행태 = 스스로 매긴 특허 가치·관리 품질' },
         { v: 'competitor', t: '기술 궤적', why: '기술 방향의 일관성 — 전략 실행력 방증' }] },
     { key: 'national_rnd', icon: '🏛️', label: '국가 R&D 기획',
       desc: '국가 연구과제 선정', users: '정부기관',
@@ -1270,6 +1283,7 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
         { v: 'deepsig', t: '시그널: 분쟁·국가과제', why: '기존 국가과제가 만든 특허 지형 — 중복 투자 방지' },
         { v: 'basic', t: '국가·출원인', why: '국가별 분포 — 해외 대비 국내 위치 확인' },
         { v: 'whitespace', t: '미점유 조합 (UpSet)', why: '아무도 안 하는 조합 — 선도 투자 후보' },
+        { v: 'evolution', t: 'Emerging Radar', why: '융합 조합의 성장 신호 — 학제간 과제 발굴' },
         { v: 'competitor', t: '선도–추종', why: '해외 선행 → 국내 추종 시차 = 추격 전략 재료' }] },
     { key: 'license', icon: '🤝', label: '라이선스 전략',
       desc: '기술 이전 대상 발굴', users: '사업부',
@@ -1281,6 +1295,7 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
         { v: 'competitor', t: '유사도·중첩도', why: '자사 기술과 겹치는 회사 = 이전·제휴 대상 후보' },
         { v: 'competitor', t: '출원인·권리자 관계', why: '양도 네트워크에서 활발한 매수자 식별' },
         { v: 'deepsig', t: '시그널: 수명·시장', why: '지정국 진입 패턴 — 어느 시장에서 권리가 필요한지' },
+        { v: 'power', t: '의미 기반 영향력 (임베딩)', why: '인용이 없어도 의미상 후속인 특허 = 숨은 수요 후보' },
         { v: 'overview', t: '📅 만료 절벽', why: '잔존 기간 — 라이선스 가치의 시간 축' }] },
   ];
 
@@ -2866,16 +2881,17 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
       { label: '출원인 포커스', render: function (h) {
         analysisCard({
           analysis: 'company-focus', holder: h,
-          title: '출원인 포커스 — 집중 기술 · 급부상 아이템 (출원인 선택 필수)',
+          title: '출원인 포커스 — 집중 기술 · 신규 진입 · 급부상 (출원인 선택 필수)',
           controls: companySelectControls('출원인 선택'),
-          help: '한 회사를 골라 그 회사가 어떤 기술에 집중하는지, 그리고 누적 건수는 ' +
-            '작지만 최근 몇 년에 출원이 몰리기 시작한 "급부상 아이템"이 무엇인지 봅니다. ' +
-            '공동출원 건도 그 회사 것으로 포함됩니다.',
+          help: '한 회사를 골라 ① 어떤 기술에 집중하는지(주력), ② 최근 몇 년 안에 처음 ' +
+            '진입한 신규 기술이 무엇인지(🆕 초록), ③ 누적은 작지만 최근 출원이 몰리는 ' +
+            '급부상 아이템(★ 빨강)이 무엇인지 봅니다. 공동출원 건도 그 회사 것으로 포함됩니다.',
           guide: '포커스 맵: X축=누적 출원 건수(로그축, 오른쪽=주력 기술), Y축=최근 3년 출원 ' +
-            '비중(위=최근에 몰림). 빨간 버블=급부상 후보 — 판정 규칙은 최근 3년 2건 이상, ' +
-            '출원의 절반 이상이 최근 3년, 직전 3년보다 증가, 누적은 회사 중앙값 이하로 ' +
-            '화면에 명시된 규칙만 사용합니다. 좌상단의 빨간 버블이 "작지만 새로 힘을 싣는 ' +
-            '아이템"입니다. 버블·막대 클릭 시 그 회사의 해당 분류 특허가 열립니다.',
+            '비중(위=최근에 몰림). 초록 버블(🆕)=신규 진입 — 그 회사의 해당 분류 최초 출원이 ' +
+            '최근 3년 안 (그 전엔 0건). 빨간 버블(★)=급부상 후보 — 최근 3년 2건 이상, ' +
+            '출원의 절반 이상이 최근 3년, 직전 3년보다 증가, 누적은 회사 중앙값 이하. ' +
+            '초록 버블에 빨간 테두리 = 신규 진입이면서 급부상(가장 강한 신호). 화면에 ' +
+            '명시된 규칙만 사용하며, 버블·막대 클릭 시 그 회사의 해당 분류 특허가 열립니다.',
           renderOk: function (r, c, setTarget) {
             var holder = Ui.el('<div class="chart-holder tall"></div>');
             c.body.appendChild(holder);
@@ -2884,6 +2900,39 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
             var h2 = Ui.el('<div class="chart-holder"></div>');
             c.body.appendChild(h2);
             Render.plotly(h2, r.fig_top, plotlyDrill);
+            var ry = r.recent_years || 3;
+            // 🆕 신규 진입 기술 (최근 N년 내 첫 출원 — 회사가 새로 여는 영역)
+            var newRows = (r.new_entries || []).map(function (x) {
+              var tr = document.createElement('tr');
+              var td0 = document.createElement('td');
+              td0.appendChild(drillCell(x.tech, x.drill));
+              tr.appendChild(td0);
+              tr.insertAdjacentHTML('beforeend',
+                '<td class="num">' + (x.first_year || '-') + '</td>' +
+                '<td class="num">' + Ui.num(x.total, 0) + '</td>' +
+                '<td class="num">' + Ui.num(x.recent, 0) + '</td>' +
+                '<td class="num">' + Ui.num(x.market_total, 0) + '</td>' +
+                '<td class="num">' + Ui.pct(x.market_share) + '</td>' +
+                '<td>' + (x.rising ? '<span class="badge warn">★ 급부상 동시</span>' : '') +
+                '</td>');
+              return tr;
+            });
+            if (newRows.length) {
+              c.body.appendChild(Ui.el('<div style="font-weight:700;font-size:13px;' +
+                'margin:12px 0 4px;color:#1e7a45">🆕 신규 진입 기술 (' + newRows.length +
+                '개 — 최근 ' + ry + '년 내 첫 출원, 그 전엔 0건)</div>'));
+              var ntbl = Ui.el(simpleTable(
+                ['기술분류', '최초 출원', '누적', '최근 ' + ry + '년', '시장 전체',
+                 '시장 점유', '신호'], []));
+              newRows.forEach(function (tr) { ntbl.querySelector('tbody').appendChild(tr); });
+              var nwrap = Ui.el('<div style="overflow-x:auto;max-height:280px;overflow-y:auto"></div>');
+              nwrap.appendChild(ntbl);
+              c.body.appendChild(nwrap);
+            } else {
+              c.body.appendChild(Ui.el('<div style="color:#647b8d;font-size:12px;' +
+                'margin:12px 0 4px">🆕 최근 ' + ry + '년 내 처음 진입한 기술분류는 ' +
+                '없습니다 — 기존 영역 중심의 포트폴리오입니다.</div>'));
+            }
             var rows = (r.rising || []).map(function (x) {
               var tr = document.createElement('tr');
               var td0 = document.createElement('td');
@@ -2900,10 +2949,10 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
             });
             if (rows.length) {
               c.body.appendChild(Ui.el('<div style="font-weight:700;font-size:13px;' +
-                'margin:12px 0 4px">★ 급부상 아이템 후보 (' + rows.length + '개)</div>'));
+                'margin:12px 0 4px;color:#c0392b">★ 급부상 아이템 후보 (' + rows.length + '개)</div>'));
               var tbl = Ui.el(simpleTable(
-                ['기술분류', '누적', '최근 ' + (r.recent_years || 3) + '년',
-                 '직전 ' + (r.recent_years || 3) + '년', '최근 비중', '시장 전체', '시장 점유'], []));
+                ['기술분류', '누적', '최근 ' + ry + '년',
+                 '직전 ' + ry + '년', '최근 비중', '시장 전체', '시장 점유'], []));
               rows.forEach(function (tr) { tbl.querySelector('tbody').appendChild(tr); });
               var wrap = Ui.el('<div style="overflow-x:auto;max-height:280px;overflow-y:auto"></div>');
               wrap.appendChild(tbl);
@@ -4254,7 +4303,7 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
       '<tr><td>🔬 기술 분석</td><td>기술분류 동향(출원인 선택 가능), 기술분류 트리맵(대·중·소 계층, 면적=문헌 수), 기술×연도 버블(대·중·소 선택 + 최대 3사 비교), 기술 생애주기 Phase Map, 전이 Sankey, Emerging Radar, 조합 네트워크, 분류축 교차(A·B·C), 신흥 기술 탐지(임베딩 — 출원인·기간 선택 가능)</td></tr>' +
       '<tr><td>🎯 White Space &amp; R&amp;D</td><td>Opportunity Matrix(자사=출원인 선택 가능, ◇=자사 역량 보유, 상위 기회 주석 표시), 미점유 조합 UpSet, 문제–해결수단 매트릭스(C축=해결과제 × B축=해결수단 — 두 축 매핑 시 활성), 추천 R&amp;D 테마</td></tr>' +
       '<tr><td colspan="2" style="background:#f4f8fb;font-weight:700">🏢 기업(출원인) 분석 — "이 회사는 무엇을 하는가"</td></tr>' +
-      '<tr><td>🏢 기업 분석</td><td>출원인 포커스(집중 기술 + 급부상 아이템), 기업 DNA(12지표 계산식 정의표 포함), 기술 궤적, 선도–추종, 권리범위 엔트로피, 출원인·현재권리자 관계(양도 네트워크), 전략 유사도·중첩도, Patent Asset Index(공식 방법론 TR·MC·CI·PAI), Portfolio 종합</td></tr>' +
+      '<tr><td>🏢 기업 분석</td><td>출원인 포커스(집중 기술 + 🆕 신규 진입 기술(최근 N년 내 첫 출원) + ★ 급부상 아이템), 기업 DNA(12지표 계산식 정의표 포함), 기술 궤적, 선도–추종, 권리범위 엔트로피, 출원인·현재권리자 관계(양도 네트워크), 전략 유사도·중첩도, Patent Asset Index(공식 방법론 TR·MC·CI·PAI), Portfolio 종합</td></tr>' +
       '<tr><td>⚖️ Patent Power</td><td>특허 한 건 단위의 힘: 핵심특허 영향력(출원인 선택 가능 — 점수는 전체 기준 유지), 인용 확산, 청구항 밀집도, 발명자 이동, 의미 기반 영향력(임베딩), 권리 중첩 네트워크(임베딩)</td></tr>' +
       '<tr><td colspan="2" style="background:#f4f8fb;font-weight:700">🔎 심층·품질</td></tr>' +
       '<tr><td>🔎 심층 시그널</td><td>잘 안 쓰는 WIPS 필드 기반 신호 6개 탭(모두 출원인 선택 가능): 수명·시장(생존곡선·진입 시차) / 심사 이력(심사관 인용·우선심사·이상탐지) / 출원 행태(대리인·분할·개시 충실도) / 분쟁·국가과제 / 라이선스·표준·양도 / 거절·과학·심사관</td></tr>' +

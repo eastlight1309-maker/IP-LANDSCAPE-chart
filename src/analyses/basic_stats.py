@@ -518,8 +518,11 @@ def compute_company_focus(df, settings, company=None):
     for lst, y in zip(sub["_tech_list"], sub["_base_year"]):
         yv = None if (y is None or (isinstance(y, float) and np.isnan(y))) else int(y)
         for t in set(lst or []):
-            st = stats.setdefault(t, {"total": 0, "recent": 0, "prev": 0})
+            st = stats.setdefault(t, {"total": 0, "recent": 0, "prev": 0,
+                                      "first": None})
             st["total"] += 1
+            if yv is not None and (st["first"] is None or yv < st["first"]):
+                st["first"] = yv
             if yv is not None and yv >= recent_from:
                 st["recent"] += 1
             elif yv is not None and prev_from <= yv < recent_from:
@@ -536,39 +539,55 @@ def compute_company_focus(df, settings, company=None):
         share_recent = st["recent"] / float(st["total"])
         rising = (st["recent"] >= 2 and share_recent >= 0.5
                   and st["recent"] > st["prev"] and st["total"] <= median_total)
+        # 신규 진입: 이 회사의 그 기술 최초 출원이 최근 N년 안 (그 전엔 0건)
+        new_entry = bool(st["first"] is not None and st["first"] >= recent_from)
         rows.append({
             "tech": str(t), "total": int(st["total"]),
             "recent": int(st["recent"]), "prev": int(st["prev"]),
             "recent_share": round(share_recent, 3),
+            "first_year": st["first"],
             "market_total": int(market.get(t, 0)),
             "market_share": round(st["total"] / float(market.get(t, 1) or 1), 3),
-            "rising": bool(rising),
+            "rising": bool(rising), "new_entry": new_entry,
             "drill": {"type": "tech", "tech": str(t), "applicant": str(company),
                       "applicant_scope": "any"},
         })
-    rows.sort(key=lambda r: (-r["rising"], -(r["recent_share"] * r["recent"]),
+    rows.sort(key=lambda r: (-(r["rising"] or r["new_entry"]),
+                             -(r["recent_share"] * r["recent"]),
                              -r["total"]))
 
     top_main = {r["tech"] for r in sorted(rows, key=lambda r: -r["total"])[:3]}
-    xs, ys, sizes, colors, hovers, customs = [], [], [], [], [], []
+    xs, ys, sizes, colors, line_colors, hovers, customs = [], [], [], [], [], [], []
     for r in rows:
         xs.append(r["total"])
         ys.append(r["recent_share"])
         sizes.append(float(max(9.0, min(44.0, 8 + 9 * np.sqrt(r["recent"])))))
-        colors.append("#E15759" if r["rising"] else "#4E79A7")
+        # 색: 초록=신규 진입(최근 N년 내 첫 출원), 빨강=급부상, 파랑=기존
+        colors.append("#2E9E5B" if r["new_entry"]
+                      else ("#E15759" if r["rising"] else "#4E79A7"))
+        # 신규 진입이면서 급부상이면 빨간 테두리로 이중 신호 표시
+        line_colors.append("#E15759" if (r["new_entry"] and r["rising"])
+                           else "#5b7a8a")
+        flags = ""
+        if r["new_entry"]:
+            flags += "<br>🆕 최근 %d년 내 첫 진입 (최초 출원 %d년)" \
+                % (recent, r["first_year"])
+        if r["rising"]:
+            flags += "<br>★ 급부상 아이템 후보"
         hovers.append(
             "<b>%s</b><br>누적 %d건 · 최근 %d년 %d건 (비중 %s)<br>직전 %d년 %d건 · "
             "전체 시장 %d건 중 점유 %s%s"
             % (r["tech"], r["total"], recent, r["recent"],
                fmt_pct(r["recent_share"]), recent, r["prev"], r["market_total"],
-               fmt_pct(r["market_share"]),
-               "<br>★ 급부상 아이템 후보" if r["rising"] else ""))
+               fmt_pct(r["market_share"]), flags))
         customs.append({"drill": r["drill"],
                         "m": {"기술분류": r["tech"], "누적 건수": r["total"],
                               "최근 %d년 건수" % recent: r["recent"],
                               "직전 %d년 건수" % recent: r["prev"],
                               "최근 비중": r["recent_share"],
+                              "최초 출원연도": r["first_year"],
                               "전체 시장 건수": r["market_total"],
+                              "신규 진입": "예" if r["new_entry"] else "",
                               "급부상": "예" if r["rising"] else ""}})
     x_max = max(xs)
     # 로그축은 기본값으로 두면 보조 눈금(2,3,…,9)이 매 자리수마다 찍혀 축 아래가
@@ -580,9 +599,10 @@ def compute_company_focus(df, settings, company=None):
         "x": xs, "y": ys,
         "hovertext": hovers, "hoverinfo": "text", "customdata": customs,
         "marker": {"size": sizes, "color": colors, "opacity": 0.85,
-                   "line": {"width": 0.8, "color": "#5b7a8a"}}}],
+                   "line": {"width": 1.2, "color": line_colors}}}],
         "layout": base_layout(
-            "'%s' 기술 포커스 맵 — X=누적 출원, Y=최근 %d년 비중 (빨강=급부상 후보)"
+            "'%s' 기술 포커스 맵 — X=누적 출원, Y=최근 %d년 비중 "
+            "(초록=신규 진입, 빨강=급부상)"
             % (company, recent),
             xaxis={"title": "누적 출원 건수 (로그축)", "type": "log",
                    "tickvals": x_ticks,
@@ -616,8 +636,8 @@ def compute_company_focus(df, settings, company=None):
         return (float((np.log10(max(x, 1.0)) - lx_min) / lx_span + ax_px / 900.0),
                 float(y - ay_px / 470.0))
 
-    label_rows = sorted(rows, key=lambda r: (-r["rising"], -r["recent"],
-                                             -r["total"]))[:35]
+    label_rows = sorted(rows, key=lambda r: (-(r["rising"] or r["new_entry"]),
+                                             -r["recent"], -r["total"]))[:35]
     placed = []  # (nx, ny) 라벨 중심들
     offsets = [(0, -30), (55, -30), (-55, -30), (70, -60), (-70, -60),
                (85, 20), (-85, 20), (0, -85), (100, -40), (-100, -40)]
@@ -634,17 +654,20 @@ def compute_company_focus(df, settings, company=None):
             continue
         ax_px, ay_px, nx, ny = best
         placed.append((nx, ny))
-        rising = r["rising"]
+        rising, newe = r["rising"], r["new_entry"]
+        prefix = ("🆕" if newe else "") + ("★" if rising else "")
+        col = ("#1e7a45" if newe and not rising else
+               "#c0392b" if rising else
+               ("#2e5f8a" if r["tech"] in top_main else "#54677a"))
         lbl_anns.append({
             "x": np.log10(max(r["total"], 1.0)), "y": r["recent_share"],
             "xref": "x", "yref": "y", "showarrow": True,
             "arrowhead": 0, "arrowwidth": 0.8,
-            "arrowcolor": "#c0392b" if rising else "#9fb2c2",
+            "arrowcolor": "#1e7a45" if newe else
+            ("#c0392b" if rising else "#9fb2c2"),
             "ax": ax_px, "ay": ay_px, "standoff": 4,
-            "text": ("★ " if rising else "") + str(r["tech"])[:14],
-            "font": {"size": 9.5,
-                     "color": "#c0392b" if rising else
-                     ("#2e5f8a" if r["tech"] in top_main else "#54677a")},
+            "text": (prefix + " " if prefix else "") + str(r["tech"])[:14],
+            "font": {"size": 9.5, "color": col},
             "bgcolor": "rgba(255,255,255,0.72)", "borderpad": 1})
     fig["layout"]["annotations"] = fig["layout"].get("annotations", []) + lbl_anns
 
@@ -659,12 +682,24 @@ def compute_company_focus(df, settings, company=None):
         customdata=[{"drill": r["drill"]} for r in top10][::-1])
 
     rising_rows = [r for r in rows if r["rising"]][:15]
+    new_rows = sorted([r for r in rows if r["new_entry"]],
+                      key=lambda r: (-(r["first_year"] or 0), -r["recent"]))[:15]
     sentences = []
     if top10:
         t0 = top10[0]
         sentences.append("'%s'의 최대 집중 기술은 '%s'(누적 %s건, 시장 점유 %s)입니다."
                          % (company, t0["tech"], fmt_num(t0["total"]),
                             fmt_pct(t0["market_share"])))
+    if new_rows:
+        names = ", ".join("'%s'(%d년~)" % (r["tech"], r["first_year"])
+                          for r in new_rows[:3])
+        sentences.append("최근 %d년 내 처음 진입한 기술은 %s 등 %s개입니다 — 이 "
+                         "회사가 새로 열고 있는 영역으로, 진입 시점이 최신일수록 "
+                         "전략 변화 신호에 가깝습니다."
+                         % (recent, names, fmt_num(len(new_rows))))
+    else:
+        sentences.append("최근 %d년 내 처음 진입한 기술분류는 없습니다 — 기존 "
+                         "영역 중심의 포트폴리오입니다." % recent)
     if rising_rows:
         names = ", ".join("'%s'" % r["tech"] for r in rising_rows[:3])
         sentences.append("급부상 아이템 후보는 %s 등 %s개 — 누적 건수는 회사 중앙값 "
@@ -678,9 +713,11 @@ def compute_company_focus(df, settings, company=None):
                          "회사의 신규 베팅 신호는 아직 약합니다." % recent)
     insight = build_insight(
         sentences, {"company": company, "n_techs": len(rows),
-                    "n_rising": len(rising_rows), "recent_years": recent},
+                    "n_rising": len(rising_rows), "n_new": len(new_rows),
+                    "recent_years": recent},
         small_sample=check_small_sample(len(sub), settings))
     return ok_result({"figure": fig, "fig_top": fig_top, "rising": rising_rows,
+                      "new_entries": new_rows,
                       "company": company, "recent_years": recent,
                       "n_docs": int(len(sub))}, insight=insight)
 
