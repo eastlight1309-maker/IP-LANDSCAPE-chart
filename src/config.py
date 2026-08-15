@@ -211,9 +211,25 @@ ERR_NOT_IMPLEMENTED = 501
 ERR_INTERNAL = 500
 
 # 데모 모드 기본값 (사용자가 Settings 에서 명시적으로 켠 경우에만 샘플 데이터 사용)
+# 분석 목적 (분석 시작 전 선택 — 목적별 추천 차트 우선 표시). 키만 서버에서
+# 검증하고, 표시명·차트 연결은 프론트(app.js PURPOSES)에서 관리한다.
+ANALYSIS_PURPOSES = [
+    "tech_trend",      # 1. 기술 동향 분석
+    "competitor",      # 2. 경쟁사 분석
+    "rnd_direction",   # 3. R&D 방향 수립
+    "white_space",     # 4. White Space 발굴
+    "design_around",   # 5. 특허 회피 (Design Around)
+    "fto",             # 6. FTO (자유실시조사) — 법률 자문 아님 고지 필수
+    "portfolio",       # 7. 특허 포트폴리오 평가
+    "ma_investment",   # 8. M&A/투자 검토
+    "national_rnd",    # 9. 국가 R&D 기획
+    "license",         # 10. 라이선스 전략
+]
+
 DEFAULT_SETTINGS = {
     "dataset": None,
     "demo_mode": False,
+    "analysis_purpose": None,   # ANALYSIS_PURPOSES 중 하나 (미선택 None)
     "analysis_unit": DEFAULT_ANALYSIS_UNIT,
     "multiclass_mode": DEFAULT_MULTICLASS_MODE,
     "coapplicant_mode": DEFAULT_COAPPLICANT_MODE,

@@ -227,9 +227,25 @@ ERR_NOT_IMPLEMENTED = 501
 ERR_INTERNAL = 500
 
 # 데모 모드 기본값 (사용자가 Settings 에서 명시적으로 켠 경우에만 샘플 데이터 사용)
+# 분석 목적 (분석 시작 전 선택 — 목적별 추천 차트 우선 표시). 키만 서버에서
+# 검증하고, 표시명·차트 연결은 프론트(app.js PURPOSES)에서 관리한다.
+ANALYSIS_PURPOSES = [
+    "tech_trend",      # 1. 기술 동향 분석
+    "competitor",      # 2. 경쟁사 분석
+    "rnd_direction",   # 3. R&D 방향 수립
+    "white_space",     # 4. White Space 발굴
+    "design_around",   # 5. 특허 회피 (Design Around)
+    "fto",             # 6. FTO (자유실시조사) — 법률 자문 아님 고지 필수
+    "portfolio",       # 7. 특허 포트폴리오 평가
+    "ma_investment",   # 8. M&A/투자 검토
+    "national_rnd",    # 9. 국가 R&D 기획
+    "license",         # 10. 라이선스 전략
+]
+
 DEFAULT_SETTINGS = {
     "dataset": None,
     "demo_mode": False,
+    "analysis_purpose": None,   # ANALYSIS_PURPOSES 중 하나 (미선택 None)
     "analysis_unit": DEFAULT_ANALYSIS_UNIT,
     "multiclass_mode": DEFAULT_MULTICLASS_MODE,
     "coapplicant_mode": DEFAULT_COAPPLICANT_MODE,
@@ -16056,7 +16072,7 @@ def compute_quality_report(df, settings):
 
 
 # 검증 리포트용 빌드 정보 (tools/build_backend.py 가 실측 집계)
-_QR_BUILD_INFO = {'built_at': '2026-08-15 14:40', 'modules': 46, 'test_functions': 243, 'test_files': 13, 'source': 'build'}
+_QR_BUILD_INFO = {'built_at': '2026-08-15 15:04', 'modules': 46, 'test_functions': 248, 'test_files': 14, 'source': 'build'}
 
 
 
@@ -16881,13 +16897,19 @@ def register_routes(app):
                 return _error(400, "잘못된 다중분류 처리방식: %s" % v)
             if k == "coapplicant_mode" and v not in COAPPLICANT_MODES:
                 return _error(400, "잘못된 공동출원 집계방식: %s" % v)
+            if k == "analysis_purpose" and v not in (None, "") \
+                    and v not in ANALYSIS_PURPOSES:
+                return _error(400, "잘못된 분석 목적: %s" % v)
             if k == "dataset" and v and validate_dataset_name(v) is None:
                 uploads_ensure_loaded(v)  # 업로드 dataset 자동 재적재 시도
                 if validate_dataset_name(v) is None:
                     return _error(400, "허용되지 않은 Dataset: %s" % v)
             current[k] = v
         storage.save_settings(current)
-        clear_all_caches()
+        # 분석 목적은 계산에 영향이 없으므로 목적만 바뀐 요청은 캐시 유지
+        touched = {k for k in body if k in allowed_keys}
+        if touched - {"analysis_purpose"}:
+            clear_all_caches()
         s = merged_settings(current)
         return {"status": "ok", "settings": {k: v for k, v in s.items() if k != "llm_id"}}
 

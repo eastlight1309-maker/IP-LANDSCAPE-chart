@@ -1154,6 +1154,232 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
     return true;
   }
 
+  /* ---------- 0. 목적 맞춤 분석 (분석 목적 → 추천 차트 우선 표시) ---------- */
+  // 각 항목: v=메뉴(view), t=탭 라벨(정확히 일치해야 딥링크 동작), why=이 목적에
+  // 왜 맞는지 한 줄. primary 배열=핵심 차트(순서=우선순위), secondary=보조 차트.
+  var PURPOSES = [
+    { key: 'tech_trend', icon: '📈', label: '기술 동향 분석',
+      desc: '어떤 기술이 성장·쇠퇴하는지', users: '연구소, CTO',
+      primary: [
+        { v: 'evolution', t: '기술 생애주기', why: '기술별 성숙도×모멘텀으로 성장/성숙/쇠퇴/재부상 단계를 한 화면에서 판정' },
+        { v: 'evolution', t: '기술분류 동향', why: '분류별 연도 추이 — 어떤 기술의 출원이 늘고 줄었는지 기본 확인' },
+        { v: 'evolution', t: '기술×연도 버블', why: '대·중·소 분류별 투자 시점·규모를 셀 단위로 비교 (회사 비교 가능)' },
+        { v: 'evolution', t: '기술 전이 Sankey', why: '기술 간 이동 흐름 — 어디에서 어디로 무게중심이 옮겨가는지' },
+        { v: 'evolution', t: '신흥 기술 탐지 (임베딩)', why: '분류 체계에 아직 안 잡힌 신흥 주제를 텍스트 군집으로 조기 포착' }],
+      secondary: [
+        { v: 'evolution', t: 'Emerging Radar', why: '성장률×Lift 기준 뜨는 기술 조합' },
+        { v: 'evolution', t: '기술분류 트리', why: '대›중›소 구성비 전체 조망' },
+        { v: 'basic', t: '출원 동향', why: '전체 출원량의 큰 흐름 확인' }] },
+    { key: 'competitor', icon: '🏢', label: '경쟁사 분석',
+      desc: '경쟁사가 무엇을 개발하는지', users: '전략기획, IP팀',
+      primary: [
+        { v: 'competitor', t: '출원인 포커스', why: '선택한 경쟁사의 집중 기술과 "작지만 최근 급부상한" 신규 베팅 탐지' },
+        { v: 'overview', t: '경영 요약', why: '경쟁 포지션 맵·BCG — 성장률×질 기준 경쟁사 위치 비교' },
+        { v: 'overview', t: '🚨 위협 레이더', why: '자사 주력 기술에 새로 진입한 경쟁자 조기 경보' },
+        { v: 'competitor', t: '기술 DNA', why: '경쟁사별 12지표 프로파일 — 어떤 유형의 플레이어인지' },
+        { v: 'competitor', t: '유사도·중첩도', why: '자사와 포트폴리오가 겹치는 회사 순위 — 직접 경쟁 상대 식별' }],
+      secondary: [
+        { v: 'competitor', t: '기술 궤적', why: '경쟁사의 연도별 기술 이동 경로' },
+        { v: 'power', t: '발명자 이동', why: '경쟁사 간 인력 이동 — 기술 유출입 신호' },
+        { v: 'basic', t: '국가·출원인', why: '출원인 순위·활동 매트릭스 기본 비교' },
+        { v: 'competitor', t: 'Patent Asset Index', why: '경쟁사 포트폴리오 가치 정량 비교' }] },
+    { key: 'rnd_direction', icon: '🧭', label: 'R&D 방향 수립',
+      desc: '앞으로 개발할 분야 선정', users: '연구소',
+      primary: [
+        { v: 'whitespace', t: '추천 R&D 테마', why: '기회 점수 기반 추천 테마 — 방향 후보를 바로 제시' },
+        { v: 'whitespace', t: 'Opportunity Matrix', why: '매력도×진입장벽으로 "지금 들어갈 만한" 영역 선별' },
+        { v: 'evolution', t: '신흥 기술 탐지 (임베딩)', why: '최근에 몰리는 신흥 주제 — 선점 후보' },
+        { v: 'evolution', t: '기술 생애주기', why: '도입기/성장기 기술 = 투자 적기 판단' }],
+      secondary: [
+        { v: 'evolution', t: 'Emerging Radar', why: '뜨는 기술 조합에서 융합 테마 발굴' },
+        { v: 'competitor', t: '선도–추종', why: '선행 지표 기업의 방향 = 미래 힌트' },
+        { v: 'whitespace', t: '문제–해결수단', why: '과제×수단 매트릭스의 빈 칸 = 미해결 문제' },
+        { v: 'overview', t: '💰 R&D 효율', why: '자원 배분 전 현재 효율 진단' },
+        { v: 'overview', t: '⏱️ 추격 시계', why: '따라잡기 가능한 분야 vs 불가능한 분야 구분' }] },
+    { key: 'white_space', icon: '🎯', label: 'White Space 발굴',
+      desc: '아직 특허가 없는 영역 찾기', users: '연구개발',
+      primary: [
+        { v: 'whitespace', t: 'Opportunity Matrix', why: '시장 매력도 대비 특허 장벽이 낮은 공백 영역 지도' },
+        { v: 'whitespace', t: '미점유 조합 (UpSet)', why: '기술 조합 중 아직 아무도 출원하지 않은 조합 목록' },
+        { v: 'whitespace', t: '문제–해결수단', why: '풀리지 않은 문제(빈 셀)와 대체 수단 후보' }],
+      secondary: [
+        { v: 'evolution', t: '분류축 교차 (A·B·C)', why: '분류축 교차의 희소 셀 = 공백 후보' },
+        { v: 'evolution', t: '조합 네트워크', why: '연결이 약한 기술 쌍 = 미개척 융합' },
+        { v: 'evolution', t: '신흥 기술 탐지 (임베딩)', why: '공백이 채워지기 시작하는 신호 감시' },
+        { v: 'whitespace', t: '추천 R&D 테마', why: '공백 기반 추천 테마로 연결' }] },
+    { key: 'design_around', icon: '🛠️', label: '특허 회피 (Design Around)',
+      desc: '침해를 피할 기술 찾기', users: '개발팀',
+      note: '⚠️ 이 화면들은 회피 검토의 출발점(통계 신호)입니다 — 실제 침해 판단·회피 설계는 청구항 해석이 필요하며 반드시 전문 대리인 검토를 거치세요.',
+      primary: [
+        { v: 'power', t: '핵심특허 영향력', why: '피해가야 할 장벽 특허(높은 영향력)를 먼저 특정' },
+        { v: 'power', t: '권리 중첩 네트워크 (임베딩)', why: '자사 아이디어와 의미상 겹치는 특허 군집 확인' },
+        { v: 'power', t: '청구항 밀집도', why: '청구항이 촘촘한 영역(회피 어려움) vs 성긴 영역(여지 있음)' },
+        { v: 'whitespace', t: '문제–해결수단', why: '같은 문제의 다른 해결수단 = 회피 설계 후보' }],
+      secondary: [
+        { v: 'competitor', t: '권리범위 엔트로피', why: '권리범위가 넓은 출원인/특허 파악' },
+        { v: 'deepsig', t: '시그널: 수명·시장', why: '연차료 미납 소멸 특허 = 자유 사용 후보 (등록원부 확인 필수)' },
+        { v: 'basic', t: '심화 분석', why: '만료 타임라인 — 곧 풀리는 특허 확인' },
+        { v: 'power', t: '인용 확산 Sankey', why: '장벽 특허의 후속 인용 흐름 파악' }] },
+    { key: 'fto', icon: '⚖️', label: 'FTO (자유실시조사)',
+      desc: '제품 출시 가능 여부', users: '특허팀',
+      note: '⚠️ 본 앱은 FTO 의 사전 스크리닝(통계 신호)만 제공합니다. 자유실시 여부는 국가별 유효 청구항 해석이 필요한 법률 판단으로, 반드시 변리사·변호사의 정식 FTO 의견으로 확인하세요.',
+      primary: [
+        { v: 'power', t: '핵심특허 영향력', why: '출시 예정 기술 영역의 강한 특허(피인용·패밀리)를 우선 식별' },
+        { v: 'overview', t: '📅 만료 절벽', why: '핵심 장벽 특허의 만료 시점 = 출시 타이밍 검토 재료' },
+        { v: 'deepsig', t: '시그널: 수명·시장', why: '법적 상태·연차료 생존 — 이미 소멸한 특허 구분 (원부 확인 필수)' },
+        { v: 'deepsig', t: '시그널: 분쟁·국가과제', why: '심판·소송이 몰린 기술 = 분쟁 리스크 높은 영역' }],
+      secondary: [
+        { v: 'deepsig', t: '시그널: 라이선스·표준·양도', why: 'SEP(표준특허) 선언 여부 — 회피 불가 특허 확인' },
+        { v: 'power', t: '권리 중첩 네트워크 (임베딩)', why: '자사 제품 기술과 의미상 근접한 타사 특허 스크리닝' },
+        { v: 'basic', t: '심화 분석', why: '만료 타임라인으로 잔존 권리 기간 확인' }] },
+    { key: 'portfolio', icon: '📂', label: '특허 포트폴리오 평가',
+      desc: '우리 특허의 강약점 분석', users: 'IP팀',
+      primary: [
+        { v: 'competitor', t: 'Patent Asset Index', why: '공식 방법론(TR×MC=CI)으로 자사 포트폴리오 가치를 경쟁사와 정량 비교' },
+        { v: 'competitor', t: 'Portfolio 종합', why: '규모·질·성장 종합 지표 한 화면' },
+        { v: 'overview', t: '💰 R&D 효율', why: '출원 규모 대비 질 — 자사가 어느 사분면인지' },
+        { v: 'overview', t: '✂️ 포트폴리오 다이어트', why: '유지비 재검토 후보 선별 — 약점 정리' },
+        { v: 'competitor', t: '기술 DNA', why: '자사 선택 시 12지표 강약점 프로파일' }],
+      secondary: [
+        { v: 'power', t: '핵심특허 영향력', why: '자사 선택 — 보유 핵심특허의 영향력 확인' },
+        { v: 'competitor', t: '권리범위 엔트로피', why: '권리범위 다양성 — 집중형인지 분산형인지' },
+        { v: 'overview', t: '👤 키맨 리스크', why: '핵심 발명자 의존도 = 조직 리스크' },
+        { v: 'power', t: '청구항 밀집도', why: '청구항 구조의 촘촘함 — 권리 강도 보조 지표' },
+        { v: 'quality', t: '검증 리포트', why: '평가 근거 데이터의 정합성 먼저 확인' }] },
+    { key: 'ma_investment', icon: '💼', label: 'M&A/투자 검토',
+      desc: '기업 기술력 평가', users: '투자부서',
+      primary: [
+        { v: 'competitor', t: 'Patent Asset Index', why: '대상 기업 포트폴리오 가치의 정량 평가 (공개 방법론)' },
+        { v: 'power', t: '핵심특허 영향력', why: '대상 기업 선택 — 진짜 가치 있는 핵심 자산 식별' },
+        { v: 'competitor', t: '기술 DNA', why: '대상 기업의 기술 체질 — 선점형인지 추격형인지' },
+        { v: 'power', t: '발명자 이동', why: '핵심 인력이 남아 있는가 — 이탈했다면 자산 가치 할인' }],
+      secondary: [
+        { v: 'overview', t: '👤 키맨 리스크', why: '소수 발명자 의존도 = 인수 후 리스크' },
+        { v: 'competitor', t: '출원인·권리자 관계', why: '이미 양도된 권리·담보 설정 여부 확인' },
+        { v: 'deepsig', t: '시그널: 분쟁·국가과제', why: '진행 중 분쟁 = 우발 부채 후보' },
+        { v: 'deepsig', t: '시그널: 라이선스·표준·양도', why: '실시권 수익·SEP 보유 = 가치 가산 요소' },
+        { v: 'competitor', t: '기술 궤적', why: '기술 방향의 일관성 — 전략 실행력 방증' }] },
+    { key: 'national_rnd', icon: '🏛️', label: '국가 R&D 기획',
+      desc: '국가 연구과제 선정', users: '정부기관',
+      primary: [
+        { v: 'evolution', t: '신흥 기술 탐지 (임베딩)', why: '민간이 이미 달리는 신흥 주제 vs 공백 주제 구분' },
+        { v: 'evolution', t: '기술 생애주기', why: '도입기 기술 = 정부 마중물 효과가 큰 후보' },
+        { v: 'whitespace', t: 'Opportunity Matrix', why: '민간 투자가 닿지 않은 공백 = 공공 투자 후보' },
+        { v: 'deepsig', t: '시그널: 거절·과학·심사관', why: '과학(논문) 연계성 — 기초연구에 가까운 기술 식별' }],
+      secondary: [
+        { v: 'deepsig', t: '시그널: 분쟁·국가과제', why: '기존 국가과제가 만든 특허 지형 — 중복 투자 방지' },
+        { v: 'basic', t: '국가·출원인', why: '국가별 분포 — 해외 대비 국내 위치 확인' },
+        { v: 'whitespace', t: '미점유 조합 (UpSet)', why: '아무도 안 하는 조합 — 선도 투자 후보' },
+        { v: 'competitor', t: '선도–추종', why: '해외 선행 → 국내 추종 시차 = 추격 전략 재료' }] },
+    { key: 'license', icon: '🤝', label: '라이선스 전략',
+      desc: '기술 이전 대상 발굴', users: '사업부',
+      primary: [
+        { v: 'deepsig', t: '시그널: 라이선스·표준·양도', why: '실제 실시권·양도 거래 기록 — 시장이 형성된 기술 확인' },
+        { v: 'power', t: '핵심특허 영향력', why: '라이선스 가치가 높은 자사 핵심특허 선별' },
+        { v: 'power', t: '인용 확산 Sankey', why: '자사 특허를 인용하는 회사 = 잠재 수요자 후보' }],
+      secondary: [
+        { v: 'competitor', t: '유사도·중첩도', why: '자사 기술과 겹치는 회사 = 이전·제휴 대상 후보' },
+        { v: 'competitor', t: '출원인·권리자 관계', why: '양도 네트워크에서 활발한 매수자 식별' },
+        { v: 'deepsig', t: '시그널: 수명·시장', why: '지정국 진입 패턴 — 어느 시장에서 권리가 필요한지' },
+        { v: 'overview', t: '📅 만료 절벽', why: '잔존 기간 — 라이선스 가치의 시간 축' }] },
+  ];
+
+  function purposeOf(key) {
+    for (var i = 0; i < PURPOSES.length; i++) {
+      if (PURPOSES[i].key === key) return PURPOSES[i];
+    }
+    return null;
+  }
+
+  function currentPurpose() {
+    var s = State.config && State.config.settings;
+    return purposeOf(s && s.analysis_purpose);
+  }
+
+  function savePurpose(key, thenView) {
+    return Api.post('/api/settings', { analysis_purpose: key || null })
+      .then(function (resp) {
+        State.config.settings = resp.settings;
+        if (thenView !== false) Views.render('purpose');
+      }).catch(errToast);
+  }
+
+  // 딥링크: 해당 메뉴로 이동 후 탭 라벨이 일치하는 탭을 클릭
+  function gotoChart(view, tabLabel) {
+    Views.render(view);
+    if (!tabLabel) return;
+    var btns = document.querySelectorAll('#ipls-content .view-tabs button');
+    for (var i = 0; i < btns.length; i++) {
+      if (btns[i].textContent.trim() === tabLabel) { btns[i].click(); return; }
+    }
+  }
+
+  Views.purpose = function (content) {
+    var cur = currentPurpose();
+    if (!cur) {
+      var c0 = card('🎯 분석 목적을 선택하세요',
+        '목적을 고르면 그 목적에 맞는 차트가 우선순위와 함께 추천되고, 각 차트로 바로 이동할 수 ' +
+        '있습니다. 목적은 언제든 이 화면이나 Settings 에서 바꿀 수 있으며 분석 결과 자체는 바뀌지 않습니다.');
+      content.appendChild(c0.root);
+      var grid = Ui.el('<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:10px"></div>');
+      PURPOSES.forEach(function (p) {
+        var cell = Ui.el('<div class="chart-holder" style="cursor:pointer;padding:14px 16px;min-height:0">' +
+          '<div style="font-size:15px;font-weight:800;color:#1f3864">' + p.icon + ' ' + Ui.esc(p.label) + '</div>' +
+          '<div style="font-size:12.5px;color:#46607a;margin-top:4px">' + Ui.esc(p.desc) + '</div>' +
+          '<div style="font-size:11px;color:#93a5b4;margin-top:6px">주요 사용자: ' + Ui.esc(p.users) +
+          ' · 핵심 차트 ' + p.primary.length + '개</div></div>');
+        cell.addEventListener('click', function () {
+          savePurpose(p.key);
+          Ui.toast('목적이 "' + p.label + '" 로 설정되었습니다.');
+        });
+        grid.appendChild(cell);
+      });
+      c0.body.appendChild(grid);
+      return;
+    }
+    var head = card(cur.icon + ' ' + cur.label + ' — 추천 차트',
+      '분석 내용: ' + cur.desc + ' · 주요 사용자: ' + cur.users +
+      '. 아래 순서가 이 목적의 권장 열람 순서입니다 — [열기]를 누르면 해당 차트로 바로 이동합니다.');
+    content.appendChild(head.root);
+    var chg = Ui.el('<button class="btn small">목적 변경</button>');
+    chg.addEventListener('click', function () { savePurpose(null); });
+    head.controls.appendChild(chg);
+    if (cur.note) {
+      head.body.appendChild(Ui.el('<div class="disclaimer" style="margin-bottom:8px">' +
+        Ui.esc(cur.note) + '</div>'));
+    }
+    function chartRow(item, i, isPrimary) {
+      var tr = document.createElement('tr');
+      tr.innerHTML = '<td style="white-space:nowrap">' +
+        (isPrimary ? '<span class="badge good">★ 핵심 ' + (i + 1) + '</span>'
+                   : '<span class="badge">보조</span>') + '</td>' +
+        '<td style="font-weight:700">' + Ui.esc(item.t) + '</td>' +
+        '<td>' + Ui.esc(item.why) + '</td>' +
+        '<td style="white-space:nowrap;color:#93a5b4;font-size:11px">' +
+        Ui.esc(menuLabelOf(item.v)) + '</td><td></td>';
+      var btn = Ui.el('<button class="btn small primary">열기</button>');
+      btn.addEventListener('click', function () { gotoChart(item.v, item.t); });
+      tr.lastElementChild.appendChild(btn);
+      return tr;
+    }
+    var tbl = Ui.el(simpleTable(['우선순위', '차트', '이 목적에 맞는 이유', '위치', ''], []));
+    var tb = tbl.querySelector('tbody');
+    cur.primary.forEach(function (it, i) { tb.appendChild(chartRow(it, i, true)); });
+    (cur.secondary || []).forEach(function (it, i) { tb.appendChild(chartRow(it, i, false)); });
+    head.body.appendChild(tbl);
+    var open1 = Ui.el('<button class="btn primary" style="margin-top:10px">▶ 1순위 차트 바로 열기 — ' +
+      Ui.esc(cur.primary[0].t) + '</button>');
+    open1.addEventListener('click', function () {
+      gotoChart(cur.primary[0].v, cur.primary[0].t);
+    });
+    head.body.appendChild(open1);
+  }
+
+  function menuLabelOf(view) {
+    var li = document.querySelector('#ipls-menu li[data-view="' + view + '"]');
+    return li ? li.textContent.trim() : view;
+  }
+
   /* ---------- 1. Executive Overview ---------- */
   Views.overview = function (content) {
     makeTabs(content, [
@@ -4016,10 +4242,12 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
       '<li><b>컬럼 매핑 확인</b> — Settings → 컬럼 매핑에서 자동 추천 결과를 확인하고, 잘못 잡힌 항목은 직접 수정 후 저장합니다. ' +
       '각 컬럼의 "예시 값"으로 실제 데이터를 확인할 수 있습니다.</li>' +
       '<li><b>분석 단위 선택</b> — 문헌(건별) 또는 패밀리 대표 중 선택합니다. 지정국 진입 시차 등 일부 분석은 문헌 단위가 필요합니다. <b>공동출원 집계 방식</b>(공동출원인 각각 집계 / 대표 출원인만)도 이 단계에서 Settings → 분석 설정으로 정해 두세요 — 출원인 순위·매트릭스·버블 등 출원인별 차트의 집계 기준이 됩니다.</li>' +
-      '<li><b>분석 시작</b> — 좌측 메뉴를 순서대로 탐색하세요. 필수 컬럼이 없는 분석은 비활성 안내와 함께 필요한 매핑을 알려줍니다.</li></ol>' +
+      '<li><b>분석 목적 선택</b> — 업로드 직후(또는 Settings → 분석 설정, 좌측 🎯 목적 맞춤 분석 메뉴) 기술 동향 / 경쟁사 / R&amp;D 방향 / White Space / 특허 회피 / FTO / 포트폴리오 평가 / M&amp;A·투자 / 국가 R&amp;D / 라이선스 중 목적을 고르면, 그 목적에 맞는 차트가 <b>우선순위·이유·바로가기</b>와 함께 추천됩니다. 목적은 언제든 변경 가능하며 분석 값 자체는 바뀌지 않습니다.</li>' +
+      '<li><b>분석 시작</b> — 목적 맞춤 추천 순서대로 보거나, 좌측 메뉴를 자유롭게 탐색하세요. 필수 컬럼이 없는 분석은 비활성 안내와 함께 필요한 매핑을 알려줍니다.</li></ol>' +
       '<div class="disclaimer">모든 분석은 매핑된 실제 데이터로만 계산되며 값을 임의로 만들지 않습니다. 데이터가 없는 항목은 "계산 불가 + 사유"로 표시됩니다.</div>');
     section('🗺️ 메뉴 안내',
       '<table class="ipls-table"><thead><tr><th>메뉴</th><th>내용</th></tr></thead><tbody>' +
+      '<tr><td>🎯 목적 맞춤 분석</td><td>분석 목적(기술 동향·경쟁사·R&amp;D 방향·White Space·특허 회피·FTO·포트폴리오·M&amp;A·국가 R&amp;D·라이선스) 선택 → 목적별 추천 차트를 우선순위·이유와 함께 표시, [열기]로 바로 이동. 특허 회피·FTO 목적에는 법률 자문 아님 고지가 함께 표시됩니다.</td></tr>' +
       '<tr><td>📊 Executive Overview</td><td>경영 요약(KPI·경보·BCG 매트릭스·경쟁 포지션) + 경영 차트 6종: 📅만료 절벽 / 💰R&amp;D 효율 사분면 / 👤키맨 리스크 / ⏱️추격 시계 / 🚨위협 레이더 / ✂️포트폴리오 다이어트 (탭마다 자사 기준 선택 가능)</td></tr>' +
       '<tr><td>📈 전체 동향</td><td>포트폴리오 전체의 기본 현황: 연도별 출원 동향(출원인 선택 가능), 국가별 분포·출원인 순위·활동 매트릭스, 심화 분석(심사기간·만료 타임라인·청구항·공동출원·IPC)</td></tr>' +
       '<tr><td colspan="2" style="background:#f4f8fb;font-weight:700">🔬 기술 분석 — "어떤 기술이 어디로 가는가"</td></tr>' +
@@ -4121,6 +4349,11 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
       return Api.post('/api/settings', { dataset: name }).then(function (resp) {
         State.config.settings = resp.settings;
         Ui.toast('분석 Dataset 이 "' + name + '" 로 설정되었습니다. 컬럼 매핑을 확인하세요.');
+        if (!resp.settings.analysis_purpose) {
+          // 분석 시작 전 목적 선택 유도 — 목적별 추천 차트 우선 표시
+          State.view = 'purpose';
+          Ui.toast('분석 목적을 선택하면 목적에 맞는 차트를 추천해 드립니다.');
+        }
         boot(true);
       }).catch(errToast);
     }
@@ -4565,6 +4798,13 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
       row.appendChild(sel);
       return row;
     }
+    c1.body.appendChild(selRow('분석 목적', 'analysis_purpose',
+      [{ v: '', l: '(선택 안 함)' }].concat(PURPOSES.map(function (p) {
+        return { v: p.key, l: p.icon + ' ' + p.label + ' — ' + p.desc };
+      })), s.analysis_purpose || ''));
+    c1.body.appendChild(Ui.el('<div style="color:#647b8d;font-size:11.5px;margin:-4px 0 8px">' +
+      '목적을 선택하면 좌측 <b>🎯 목적 맞춤 분석</b> 메뉴에 목적별 추천 차트가 우선순위와 함께 ' +
+      '표시됩니다. 분석 결과 값 자체는 목적과 무관하게 동일합니다.</div>'));
     c1.body.appendChild(selRow('분석 단위', 'analysis_unit',
       [{ v: 'family', l: '패밀리 (기본)' }, { v: 'publication', l: '공개' },
        { v: 'application', l: '출원' }, { v: 'registration', l: '등록' }],
@@ -4950,7 +5190,9 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
         return;
       }
       Filters.load().then(function () {
-        Views.render(keepView ? State.view : 'overview');
+        // 목적이 설정되어 있으면 목적 맞춤 화면을 첫 화면으로 (추천 차트 우선)
+        var landing = cfg.settings.analysis_purpose ? 'purpose' : 'overview';
+        Views.render(keepView ? State.view : landing);
         refreshProjects();
       }).catch(function (e) {
         errToast(e);

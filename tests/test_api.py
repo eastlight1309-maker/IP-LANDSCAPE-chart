@@ -601,3 +601,19 @@ def test_quality_report_endpoint(client):
         == len(d["checks"])
     # 빌드 정보의 테스트 수는 실측 (개발 모드=저장소 집계)
     assert d["build"]["test_functions"] > 100
+
+
+def test_settings_analysis_purpose(client):
+    """분석 목적: 저장·해제·검증 + 목적만 변경 시 캐시 유지."""
+    d = _post(client, "/api/settings", {"analysis_purpose": "fto"}).get_json()
+    assert d["settings"]["analysis_purpose"] == "fto"
+    bad = _post(client, "/api/settings", {"analysis_purpose": "떡볶이"})
+    assert bad.status_code == 400
+    # 목적만 바꾸는 요청은 분석 캐시를 비우지 않음 (재계산 낭비 방지)
+    body = {"filters": {}}
+    _post(client, "/api/overview", body)
+    _post(client, "/api/settings", {"analysis_purpose": "tech_trend"})
+    d2 = _post(client, "/api/overview", body).get_json()
+    assert d2["meta"]["cache_hit"] is True
+    d3 = _post(client, "/api/settings", {"analysis_purpose": None}).get_json()
+    assert d3["settings"]["analysis_purpose"] is None

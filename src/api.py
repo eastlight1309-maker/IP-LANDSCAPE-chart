@@ -60,7 +60,7 @@ import pandas as pd
 
 from src.config import (APP_NAME, APP_VERSION, ALLOWED_LLM_CANDIDATES, MESSAGES,
                         LEGAL_STATUS_CATEGORIES, ANALYSIS_UNITS, MULTICLASS_MODES,
-                        COAPPLICANT_MODES,
+                        COAPPLICANT_MODES, ANALYSIS_PURPOSES,
                         LIMITS, THRESHOLDS, WEIGHTS, DEFAULT_SETTINGS,
                         merged_settings, get_limit)
 from src.cache import cached_analysis, get_run_log, clear_all_caches
@@ -862,13 +862,19 @@ def register_routes(app):
                 return _error(400, "잘못된 다중분류 처리방식: %s" % v)
             if k == "coapplicant_mode" and v not in COAPPLICANT_MODES:
                 return _error(400, "잘못된 공동출원 집계방식: %s" % v)
+            if k == "analysis_purpose" and v not in (None, "") \
+                    and v not in ANALYSIS_PURPOSES:
+                return _error(400, "잘못된 분석 목적: %s" % v)
             if k == "dataset" and v and validate_dataset_name(v) is None:
                 uploads_ensure_loaded(v)  # 업로드 dataset 자동 재적재 시도
                 if validate_dataset_name(v) is None:
                     return _error(400, "허용되지 않은 Dataset: %s" % v)
             current[k] = v
         storage.save_settings(current)
-        clear_all_caches()
+        # 분석 목적은 계산에 영향이 없으므로 목적만 바뀐 요청은 캐시 유지
+        touched = {k for k in body if k in allowed_keys}
+        if touched - {"analysis_purpose"}:
+            clear_all_caches()
         s = merged_settings(current)
         return {"status": "ok", "settings": {k: v for k, v in s.items() if k != "llm_id"}}
 
