@@ -22,7 +22,8 @@ analyses/lifecycle.py — 4.7 기술 생애주기 Phase Map.
 
 단계 판정 규칙 (임계값은 Settings thresholds 로 조정 가능):
   Re-emerging: 과거 reemerging_decline_years 간 감소·정체(합계 기울기<=0) AND
-               최근 3년 연속 증가 AND 신규 출원인 존재 AND 신규 기술조합 동반 증가
+               최근 recent_years 간 연속 증가 AND 신규 출원인 존재 AND
+               신규 기술조합 동반 증가
   Emerging   : age<=5 AND growth>=emerging_min_growth
   Growing    : growth>=emerging_min_growth
   Declining  : growth<-0.1
@@ -131,10 +132,12 @@ def compute_lifecycle(df, settings, company=None):
     rows = []
     for tech, series in mat.iterrows():
         total = float(series.sum())
-        if total < min_n:
-            continue
         in_tech = df["_tech_list"].map(lambda lst: tech in (lst or []))
         sub = df[in_tech]
+        # 최소 표본은 실제 문헌 수 기준 — fractional 가중 합으로 판정하면
+        # 다중분류 문헌이 많은 분류가 부당하게 탈락함
+        if len(sub) < min_n:
+            continue
         growth, g_method = robust_growth(series, recent_years=recent)
         first_year = int(series[series > 0].index.min()) if (series > 0).any() else None
         age = (y_max - first_year) if first_year is not None else None

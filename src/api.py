@@ -104,6 +104,7 @@ from src.analyses.inventor_mobility import compute_inventor_mobility
 from src.analyses.classification_quality import compute_classification_quality
 from src.analyses.basic_stats import compute_basic_stats, compute_tech_year_bubble, \
     compute_company_focus, compute_tech_tree
+from src.quality_report import compute_quality_report
 from src.analyses.portfolio_index import compute_portfolio_index
 from src.analyses.advanced_stats import compute_advanced_stats
 from src.analyses.scope_entropy import compute_scope_entropy
@@ -447,12 +448,20 @@ def register_routes(app):
         mapping = body.get("mapping") or {}
         cols = set(get_dataset_columns(name))
         clean = {}
+        used_cols = {}
         for concept, col in mapping.items():
             if concept not in CONCEPTS:
                 return _error(400, "알 수 없는 개념 컬럼: %s" % concept)
             if col:
                 if col not in cols:
                     return _error(400, "Dataset 에 없는 컬럼: %s" % col)
+                if col in used_cols:
+                    # 한 실제 컬럼을 두 개념에 매핑하면 한쪽이 조용히 사라짐 —
+                    # 저장 시점에 명시적으로 거부
+                    return _error(400, "'%s' 컬럼이 두 개념(%s, %s)에 중복 매핑"
+                                       "되었습니다 — 개념당 서로 다른 컬럼을 "
+                                       "지정하세요." % (col, used_cols[col], concept))
+                used_cols[col] = concept
                 clean[concept] = col
         storage.save_mapping_for(name, clean)
         clear_all_caches()
@@ -592,6 +601,8 @@ def register_routes(app):
             "tech-tree",
             lambda df, s, b: compute_tech_tree(df, s, company=b.get("company")),
             extra_key_fields=("company",)),
+        "quality-report": _analysis_route(
+            "quality-report", lambda df, s, b: compute_quality_report(df, s)),
         "deep-plus": _analysis_route(
             "deep-plus",
             lambda df, s, b: compute_deep_plus(df, s,
@@ -666,6 +677,14 @@ def register_routes(app):
         sheets = body.get("sheets")
         if not isinstance(sheets, list) or not sheets:
             return _error(400, "내보낼 차트 데이터가 없습니다.")
+        # 빈 시트만 있는 요청 사전 차단 — with 블록 안 return 은 openpyxl 의
+        # "At least one sheet must be visible" 내부 오류를 404 로 유출시킴
+        def _sheet_has_data(sh):
+            return (isinstance(sh, dict) and (sh.get("columns") or [])
+                    and any(isinstance(r, (list, tuple))
+                            for r in (sh.get("rows") or [])))
+        if not any(_sheet_has_data(sh) for sh in sheets[:20]):
+            return _error(400, "내보낼 차트 데이터가 없습니다.")
         buf = io.BytesIO()
         used_names = set()
         with pd.ExcelWriter(buf, engine="openpyxl") as writer:
@@ -712,8 +731,8 @@ def register_routes(app):
                 except Exception:  # 스타일 실패는 데이터 자체에 영향 없음
                     pass
                 wrote = True
-            if not wrote:
-                return _error(400, "내보낼 차트 데이터가 없습니다.")
+        if not wrote:
+            return _error(400, "내보낼 차트 데이터가 없습니다.")
         buf.seek(0)
         fname = str(body.get("filename") or "chart_data.xlsx")
         fname = "".join(ch for ch in fname if ch.isalnum() or ch in "._-가-힣") or "chart.xlsx"
@@ -1192,9 +1211,18 @@ def register_routes(app):
     @app.route("/api/insights-log/image", methods=["GET"])
     @wrap
     def api_insights_log_image():
-        """GET ?id= → 항목의 차트 캡처 이미지 스트림 (보관함 미리보기용)."""
-        data, mime = insight_get_image(request.args.get("id"),
-                                       request.args.get("i", 0))
+        """GET ?id= → 항목의 차트 캡처 이미지 스트림 (보관함 미리보기용).
+
+        목록과 같은 소유자 규칙 적용 — 목록에서 숨긴 항목의 이미지를 id 만으로
+        받아갈 수 없어야 한다.
+        """
+        iid = request.args.get("id")
+        me = _req_user()
+        entry = next((it for it in list_insights()
+                      if str(it.get("id")) == str(iid)), None)
+        if entry is None or not auth_can_see(entry.get("owner"), me):
+            raise LookupError("이미지가 없습니다.")
+        data, mime = insight_get_image(iid, request.args.get("i", 0))
         if data is None:
             raise LookupError("이미지가 없습니다.")
         return send_file(io.BytesIO(data), mimetype=mime)

@@ -555,7 +555,9 @@ def build_standard_frame(raw_df, mapping, applicant_rules=None):
     df.columns = [c for c in df.columns]  # 유지
     rename = {}
     for concept, col in cols.items():
-        if col not in rename.values():
+        # 같은 실제 컬럼이 두 개념에 매핑된 경우 첫 개념이 컬럼을 가져간다
+        # (rename.values() 는 개념명이므로 col 비교가 항상 거짓이던 버그 수정)
+        if col not in rename:
             rename[col] = concept
     df = df.rename(columns=rename)
     # 동일 실제 컬럼이 두 개념에 매핑될 수는 없음(automap 이 보장) — 방어적으로 중복 제거

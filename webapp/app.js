@@ -65,12 +65,21 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
       pending += on ? 1 : -1;
       if (pending < 0) pending = 0;
       var el = document.getElementById('ipls-spinner');
-      document.getElementById('spinner-text').textContent = text || '계산 중…';
+      // 라벨은 시작 요청만 설정 — 동시 요청 종료(spin(false))가 진행 중인
+      // 요청의 라벨을 기본값으로 되돌리지 않게 한다
+      if (on && text) document.getElementById('spinner-text').textContent = text;
+      if (pending === 0) document.getElementById('spinner-text').textContent = '계산 중…';
       el.classList.toggle('hidden', pending === 0);
     }
     function handle(resp) {
-      return resp.json().then(function (data) {
+      return resp.json().catch(function () {
+        // 게이트웨이 502/504 등 JSON 이 아닌 응답 — 파서 오류 대신 상태 코드 안내
+        throw new Error('서버 응답 오류 (HTTP ' + resp.status + ') — 잠시 후 다시 시도하세요.');
+      }).then(function (data) {
         if (data && data.status === 'error') { throw new Error(data.message || '오류'); }
+        if (!resp.ok && !(data && data.status)) {
+          throw new Error('서버 응답 오류 (HTTP ' + resp.status + ')');
+        }
         return data;
       });
     }
@@ -1086,12 +1095,31 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
   /* ---------------------------------------------------------------- Views */
   var Views = {};
 
+  // 컨테이너 비우기 전 차트 엔진 인스턴스 해제 — 장시간 탭 이동 시
+  // WebGL 컨텍스트·리스너 누수 방지 (해제 실패는 무시해도 무해)
+  function disposeCharts(container) {
+    if (!container || !container.querySelectorAll) return;
+    container.querySelectorAll('.ipls-chart, .ipls-cy, .ipls-echart')
+      .forEach(function (el) {
+        try {
+          if (el.classList.contains('ipls-chart') && window.Plotly && Plotly.purge) {
+            Plotly.purge(el);
+          } else if (el.__iplsCy && el.__iplsCy.destroy) {
+            el.__iplsCy.destroy();
+          } else if (el.__iplsChart && el.__iplsChart.dispose) {
+            el.__iplsChart.dispose();
+          }
+        } catch (e) { /* 해제 실패는 렌더에 영향 없음 */ }
+      });
+  }
+
   Views.render = function (view) {
     State.view = view;
     document.querySelectorAll('#ipls-menu li').forEach(function (li) {
       li.classList.toggle('active', li.getAttribute('data-view') === view);
     });
     var content = document.getElementById('ipls-content');
+    disposeCharts(content);
     content.innerHTML = '';
     (Views[view] || Views.overview)(content);
   };
@@ -1106,6 +1134,7 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
       b.addEventListener('click', function () {
         bar.querySelectorAll('button').forEach(function (x) { x.classList.remove('active'); });
         b.classList.add('active');
+        disposeCharts(holder);
         holder.innerHTML = '';
         t.render(holder);
       });
@@ -1170,7 +1199,7 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
         body: { sections: sectionKeys },
         controls: function (c, reload) {
           var sel = Ui.el('<select><option value="">자사 자동 선택</option></select>');
-          ((State.filterOptions || {}).applicants || []).slice(0, 60).forEach(function (a) {
+          ((State.filterOptions || {}).applicants || []).slice(0, 300).forEach(function (a) {
             var o = document.createElement('option'); o.value = a; o.textContent = a;
             sel.appendChild(o);
           });
@@ -1468,7 +1497,7 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
         '기업이 실질 위협입니다. 버블 클릭 시 근거 특허가 열립니다.',
       controls: function (c, reload) {
         var sel = Ui.el('<select><option value="">자사 자동 선택</option></select>');
-        ((State.filterOptions || {}).applicants || []).slice(0, 60).forEach(function (a) {
+        ((State.filterOptions || {}).applicants || []).slice(0, 300).forEach(function (a) {
           var o = document.createElement('option'); o.value = a; o.textContent = a;
           sel.appendChild(o);
         });
@@ -1613,6 +1642,7 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
     c.controls.appendChild(Render.excelButton(opts.analysis, function () { return c.body; }, opts.drill || null));
     function reload(extraBody) {
       var body = Object.assign({ filters: State.filters }, opts.body || {}, extraBody || {});
+      disposeCharts(c.body);
       c.body.innerHTML = '<div class="status-empty">불러오는 중…</div>';
       Api.post('/api/' + opts.analysis, body, opts.title + ' 계산 중…').then(function (r) {
         State.lastResults[opts.analysis] = r;
@@ -1642,7 +1672,7 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
   function companySelectControls(labelText) {
     return function (c, reload) {
       var sel = Ui.el('<select><option value="">전체 출원인</option></select>');
-      ((State.filterOptions || {}).applicants || []).slice(0, 60).forEach(function (a) {
+      ((State.filterOptions || {}).applicants || []).slice(0, 300).forEach(function (a) {
         var o = document.createElement('option'); o.value = a; o.textContent = a;
         sel.appendChild(o);
       });
@@ -1662,7 +1692,7 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
       var chosen = [];
       var chips = Ui.el('<span style="display:inline-flex;gap:4px;flex-wrap:wrap;align-items:center"></span>');
       var sel = Ui.el('<select><option value="">회사 추가… (미선택=전체)</option></select>');
-      ((State.filterOptions || {}).applicants || []).slice(0, 60).forEach(function (a) {
+      ((State.filterOptions || {}).applicants || []).slice(0, 300).forEach(function (a) {
         var o = document.createElement('option'); o.value = a; o.textContent = a;
         sel.appendChild(o);
       });
@@ -2346,7 +2376,7 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
             }
             function mkSel(ph) {
               var s = Ui.el('<select><option value="">' + ph + '</option></select>');
-              ((State.filterOptions || {}).applicants || []).slice(0, 60).forEach(function (a) {
+              ((State.filterOptions || {}).applicants || []).slice(0, 300).forEach(function (a) {
                 var o = document.createElement('option'); o.value = a; o.textContent = a;
                 s.appendChild(o);
               });
@@ -2451,7 +2481,7 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
               '<option value="company">선택 기업</option>' +
               '<option value="market_excl">선택 기업 제외</option></select>');
             var compSel = Ui.el('<select><option value="">기업 선택…</option></select>');
-            ((State.filterOptions || {}).applicants || []).slice(0, 60).forEach(function (a) {
+            ((State.filterOptions || {}).applicants || []).slice(0, 300).forEach(function (a) {
               var o = document.createElement('option'); o.value = a; o.textContent = a;
               compSel.appendChild(o);
             });
@@ -2531,7 +2561,7 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
               reload(cur);
             });
             var sel = Ui.el('<select><option value="">전체 출원인</option></select>');
-            ((State.filterOptions || {}).applicants || []).slice(0, 60).forEach(function (a) {
+            ((State.filterOptions || {}).applicants || []).slice(0, 300).forEach(function (a) {
               var o = document.createElement('option'); o.value = a; o.textContent = a;
               sel.appendChild(o);
             });
@@ -3334,7 +3364,7 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
           help: '독립청구항 임베딩→UMAP/PCA 2D→HDBSCAN 클러스터→KDE 밀도. 임베딩 우선순위: ① 사전 계산 임베딩 컬럼 ② KR-SBERT 특허 특화 모델(snunlp, 기본) ③ TF-IDF 폴백 — 실제 사용된 방식은 차트 아래 "방법"에 표시됩니다. 점=문헌(크기=피인용, 투명도=권리 유효성, 테두리=등록). FTO 판단이 아닌 우선 검토 스크리닝 도구입니다.',
           controls: function (c, reload) {
             var t = Ui.el('<select><option value="">전체 분류</option></select>');
-            ((State.filterOptions || {}).tech || []).slice(0, 50).forEach(function (x) {
+            ((State.filterOptions || {}).tech || []).slice(0, 300).forEach(function (x) {
               var o = document.createElement('option'); o.value = x; o.textContent = x;
               t.appendChild(o);
             });
@@ -3560,6 +3590,7 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
   /* ---------- 6. Data Quality ---------- */
   Views.quality = function (content) {
     makeTabs(content, [
+      { label: '검증 리포트', render: renderVerificationReport },
       { label: '분류 품질 진단', render: function (h) {
         analysisCard({
           analysis: 'classification-quality', holder: h, title: '기술분류 품질·경계 진단',
@@ -3633,6 +3664,63 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
       { label: '출원인 정비 상태', render: function (h) { renderApplicantManager(h, true); } }
     ]);
   };
+
+  function renderVerificationReport(h) {
+    var c = card('검증 리포트 — 이 앱은 어떻게 검증되었는가',
+      '아래 수치는 전부 실측입니다: 테스트 수는 빌드 시 저장소에서 직접 센 값, ' +
+      '셀프 체크는 지금 로딩된 데이터로 이 자리에서 다시 계산한 값입니다. ' +
+      '확인 불가 항목은 통과로 위장하지 않고 그대로 표시합니다.');
+    h.appendChild(c.root);
+    c.body.innerHTML = '<div class="status-empty">불러오는 중…</div>';
+    Api.post('/api/quality-report', { filters: State.filters }, '검증 리포트 계산 중…')
+      .then(function (r) {
+        c.body.innerHTML = '';
+        if (r.status !== 'ok') { c.body.innerHTML = Render.statusBlock(r); return; }
+        var b = r.build || {};
+        var badges = '';
+        if (b.test_functions) {
+          badges += '<span class="badge good">자동 테스트 ' + Ui.num(b.test_functions, 0) +
+            '개 (' + Ui.num(b.test_files || 0, 0) + '개 파일, 실측 집계)</span>';
+        }
+        if (b.modules) badges += '<span class="badge">병합 모듈 ' + b.modules + '개</span>';
+        if (b.built_at) badges += '<span class="badge">빌드 ' + Ui.esc(b.built_at) + '</span>';
+        var s = r.summary || {};
+        badges += '<span class="badge good">셀프 체크 통과 ' + (s.pass || 0) + '</span>' +
+          (s.warn ? '<span class="badge warn">주의 ' + s.warn + '</span>' : '') +
+          (s.na ? '<span class="badge">확인 불가 ' + s.na + '</span>' : '');
+        c.body.appendChild(Ui.el('<div style="margin-bottom:10px">' + badges + '</div>'));
+
+        c.body.appendChild(Ui.el('<b style="font-size:13px">① 데이터 정합성 셀프 체크 ' +
+          '(지금 로딩된 데이터 · 즉석 독립 재계산)</b>'));
+        var rows = (r.checks || []).map(function (x) {
+          var cls = x.status === '통과' ? 'good' : (x.status === '주의' ? 'warn' : '');
+          return '<td>' + Ui.esc(x.name) + '</td><td><span class="badge ' + cls + '">' +
+            Ui.esc(x.status) + '</span></td><td>' + Ui.esc(x.detail) + '</td>';
+        });
+        c.body.appendChild(Ui.el(simpleTable(['점검 항목', '판정', '상세 (재계산 근거)'], rows)));
+
+        c.body.appendChild(Ui.el('<b style="font-size:13px;display:block;margin-top:14px">' +
+          '② 검증 레지스트리 — 핵심 계산이 검증된 방법과 근거 테스트 (전부 저장소에 실존)</b>'));
+        var rows2 = (r.registry || []).map(function (x) {
+          return '<td>' + Ui.esc(x.area) + '</td><td>' + Ui.esc(x.claim) + '</td><td>' +
+            Ui.esc(x.method) + '</td><td style="color:#93a5b4;font-size:11px">' +
+            Ui.esc(x.test) + '</td>';
+        });
+        var wrap2 = Ui.el('<div style="max-height:340px;overflow:auto;margin-top:6px"></div>');
+        wrap2.appendChild(Ui.el(simpleTable(['검증 영역', '검증된 내용', '방법', '근거 테스트'], rows2)));
+        c.body.appendChild(wrap2);
+
+        c.body.appendChild(Ui.el('<b style="font-size:13px;display:block;margin-top:14px">' +
+          '③ 개발 원칙 (코드가 실제로 따르는 규칙만 기재)</b>'));
+        c.body.appendChild(Ui.el('<ul style="font-size:12px;color:#46607a;margin:6px 0 0 18px">' +
+          (r.principles || []).map(function (p) { return '<li>' + Ui.esc(p) + '</li>'; }).join('') +
+          '</ul>'));
+        if (r.insight && r.insight.sentences) {
+          c.body.appendChild(Ui.el('<div class="chart-guide" style="margin-top:10px"><b>요약</b>' +
+            Ui.esc(r.insight.sentences.join(' ')) + '</div>'));
+        }
+      }).catch(errToast);
+  }
 
   function renderMappingStatus(h, readOnly) {
     var c = card('컬럼 매핑 상태 · 분석 가용성 매트릭스',
@@ -3942,7 +4030,7 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
       '<tr><td>⚖️ Patent Power</td><td>특허 한 건 단위의 힘: 핵심특허 영향력(출원인 선택 가능 — 점수는 전체 기준 유지), 인용 확산, 청구항 밀집도, 발명자 이동, 의미 기반 영향력(임베딩), 권리 중첩 네트워크(임베딩)</td></tr>' +
       '<tr><td colspan="2" style="background:#f4f8fb;font-weight:700">🔎 심층·품질</td></tr>' +
       '<tr><td>🔎 심층 시그널</td><td>잘 안 쓰는 WIPS 필드 기반 신호 6개 탭(모두 출원인 선택 가능): 수명·시장(생존곡선·진입 시차) / 심사 이력(심사관 인용·우선심사·이상탐지) / 출원 행태(대리인·분할·개시 충실도) / 분쟁·국가과제 / 라이선스·표준·양도 / 거절·과학·심사관</td></tr>' +
-      '<tr><td>🧪 Data Quality</td><td>분류 품질 진단(Confusion Map·응집도), 출원인 표준화 검토</td></tr></tbody></table>' +
+      '<tr><td>🧪 Data Quality</td><td><b>검증 리포트</b>(엔진 검증 정보·데이터 정합성 셀프 체크·검증 레지스트리), 분류 품질 진단(Confusion Map·응집도), 출원인 표준화 검토</td></tr></tbody></table>' +
       '<div style="color:#647b8d;font-size:11.5px;margin-top:6px">좌측 메뉴는 ① 전체 동향 → ② 기술 분석(어떤 기술) → ③ 기업 분석(어느 회사) → ④ 심층·품질 순서로 배열되어 있습니다 — 전체를 훑고, 기술을 고르고, 회사를 파고드는 흐름입니다.</div>');
     section('🖱️ 차트 공통 기능',
       '<ul style="padding-left:18px;line-height:1.9">' +
@@ -3958,6 +4046,13 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
       '<li><b>📖 차트 해석</b>: 각 차트 아래 회색 박스에 축 의미와 읽는 법이 항상 표시됩니다.</li>' +
       '<li><b>🖱️ 휠 스크롤 보호</b>: 차트 영역은 흐린 테두리로 구분되어 있고, 차트 위에서 마우스 휠을 굴려도 차트가 확대/축소되지 않습니다 (페이지 스크롤만 동작). 확대가 필요하면 차트 우상단 도구 모음의 줌 버튼을 사용하세요.</li>' +
       '<li><b>🤝 공동출원 처리</b>: 출원인별 차트(순위·매트릭스·버블)는 Settings → 분석 설정의 "공동출원 집계"를 따릅니다 — 기본 "각각 집계"는 공동출원 1건을 각 공동출원인에게 1건씩 세고(합계가 전체 건수를 넘을 수 있음, 차트 아래에 안내 표시), "대표 출원인만"은 첫 출원인에게만 셉니다. 출원 동향·기술분류 동향·신흥 기술 탐지의 <b>출원인 선택</b>과 기업 필터는 어느 모드에서든 공동출원 건을 포함해 그 회사 문헌을 찾습니다. 협력 네트워크·공동출원 비율 등 공동출원 자체 분석은 이 설정과 무관합니다.</li></ul>');
+    section('✅ 검증 체계 — 이 앱의 수치를 신뢰할 수 있는 이유',
+      '<ul style="padding-left:18px;line-height:1.9">' +
+      '<li><b>검증 리포트 (Data Quality 첫 탭)</b>: 이 앱이 어떻게 검증되었는지가 화면에 그대로 공개됩니다. 표시되는 수치는 전부 실측입니다 — 자동 테스트 수는 빌드 시 저장소에서 직접 센 값이고, 셀프 체크는 지금 로딩된 데이터로 즉석에서 다시 계산한 값입니다.</li>' +
+      '<li><b>독립 재계산 검증</b>: 생존곡선(Kaplan-Meier)은 손계산 표본과, 기술 DNA 각 축은 공개된 정의표와, 차트 집계는 원본 데이터 수동 집계와 대조하는 테스트가 저장소에 남아 있습니다 (검증 리포트의 레지스트리에서 테스트 파일::함수 이름 확인 가능).</li>' +
+      '<li><b>함정 회귀 테스트</b>: 공동출원 중복 카운팅, 발명자 이동 오인, 법인 접미사 오분리, 역상관의 선행신호 오인, 실무 파일 결측(NaN) 왜곡 등 실제로 발견해 수정한 버그마다 재발 방지 테스트가 추가되어 있습니다.</li>' +
+      '<li><b>데이터 정합성 셀프 체크</b>: KPI ↔ 연도별 차트 합, 날짜 논리(등록일 ≥ 출원일), 미래 연도 이상치, 문헌번호 중복, 기술분류 계층 정합 등을 업로드된 데이터로 즉석 점검합니다. 컬럼이 매핑되지 않아 점검할 수 없는 항목은 <b>"확인 불가"로 정직하게 표시</b>되며 통과로 위장하지 않습니다.</li>' +
+      '<li><b>정직성 원칙</b>: 계산 불가는 이유와 함께 표시, 표본 부족은 경고 표시, 모든 점수의 계산식은 화면 공개, 모든 집계는 드릴다운으로 근거 특허까지 추적 가능합니다.</li></ul>');
     section('🧠 임베딩·군집·LLM 안내',
       '<ul style="padding-left:18px;line-height:1.9">' +
       '<li><b>임베딩 모델</b>: 사내 서버의 로컬 KR-SBERT 특허 특화 모델을 사용합니다 (네트워크 비용 없음). 실제 사용 방식은 각 카드 하단 "방법: 임베딩 adapter:sbert" 로 확인할 수 있으며, 모델 미가용 시 TF-IDF 폴백이 명시됩니다.</li>' +
@@ -4234,7 +4329,14 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
           });
           embList.appendChild(row);
         });
-      }).catch(function () { /* 미지원 백엔드 호환 */ });
+      }).catch(function (e) {
+        // 구버전 백엔드(엔드포인트 없음=404)만 조용히 무시 — 그 외 오류는
+        // 표시해야 "파일이 없는 것"과 "목록 로드 실패"를 구분할 수 있다
+        var msg = String((e && e.message) || '');
+        if (msg.indexOf('404') === -1 && msg.indexOf('LookupError') === -1) {
+          Ui.toast('임베딩 파일 목록을 불러오지 못했습니다: ' + msg);
+        }
+      });
     }
     embBtn.addEventListener('click', function () {
       var fileEl = embForm.querySelector('#emb-file');

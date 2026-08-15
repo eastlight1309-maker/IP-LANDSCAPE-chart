@@ -217,6 +217,10 @@ def compute_emerging_clusters(df, settings, company=None, recent_years=None):
         df, settings, get_limit(settings, "semantic_max_docs"))
     if work is None:
         return empty_result(methods)
+    if not work["_base_year"].notna().any():
+        # 전체 df 에는 연도가 있어도 텍스트 보유 문헌엔 없을 수 있음 (crash 방지)
+        return empty_result("초록·청구항 텍스트가 있는 문헌들의 출원연도를 해석할 수 "
+                            "없어 시점 기반 신흥 군집을 계산할 수 없습니다.")
 
     from sklearn.cluster import KMeans
     k = int(min(18, max(6, vectors.shape[0] // 40)))

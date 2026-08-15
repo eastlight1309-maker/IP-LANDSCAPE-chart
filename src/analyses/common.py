@@ -251,7 +251,23 @@ def select_patents(df, drill):
                      ("tech_l3", "_tech_l3_list")):
         if drill.get(_lk) and _lc in df.columns:
             _lv = str(drill[_lk])
-            mask &= df[_lc].map(lambda lst, v=_lv: v in (lst or []))
+            if drill.get("tech_levels_primary"):
+                # 트리맵·계층 버블은 문헌당 각 레벨의 첫(대표) 분류로 1회 집계 —
+                # drill 도 대표 분류 일치로 제한해야 차트 건수와 목록이 일치
+                mask &= df[_lc].map(
+                    lambda lst, v=_lv: bool(lst) and str(lst[0]) == v)
+            else:
+                mask &= df[_lc].map(lambda lst, v=_lv: v in (lst or []))
+    if drill.get("tech_path_next_empty"):
+        # 계층 경로가 중간에 끊긴 행의 drill: 다음 레벨 대표 분류가 비어 있는
+        # 문헌만 — 하위 경로 행과 목록이 겹치지 않게 한다
+        _nc = "_%s_list" % str(drill["tech_path_next_empty"])
+        if _nc in df.columns:
+            def _first_empty(lst):
+                v = (lst or [None])[0]
+                s = "" if v is None else str(v).strip()
+                return (not s) or s.lower() in ("nan", "none", "-")
+            mask &= df[_nc].map(_first_empty)
     if drill.get("npl_cited") is not None and "npl_count" in df.columns:
         from src.preprocessing import parse_numeric as _pnum
         npl = _pnum(df["npl_count"]).fillna(0)

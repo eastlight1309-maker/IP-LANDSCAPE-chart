@@ -138,11 +138,13 @@ def bubble_chart(points, x_title, y_title, title=None, quadrants=None,
             "opacity": 0.85,
         },
     }
-    # 축 여백: 가장자리 버블이 축 선과 겹치지 않도록 데이터 범위에 12% 패딩
+    # 축 여백: 가장자리 버블이 축 선과 겹치지 않도록 데이터 범위에 12% 패딩.
+    # 모든 점이 같은 좌표면(span 0) 마이크로 단위 축이 되지 않게 값 크기 기반 여백.
     xv = [float(p["x"]) for p in points]
     yv = [float(p["y"]) for p in points]
-    x_pad = max((max(xv) - min(xv)) * 0.12, 1e-6)
-    y_pad = max((max(yv) - min(yv)) * 0.12, 1e-6)
+    x_span, y_span = max(xv) - min(xv), max(yv) - min(yv)
+    x_pad = x_span * 0.12 if x_span > 1e-9 else max(abs(max(xv)) * 0.1, 0.5)
+    y_pad = y_span * 0.12 if y_span > 1e-9 else max(abs(max(yv)) * 0.1, 0.5)
     layout = base_layout(
         title,
         xaxis={"title": x_title, "range": [min(xv) - x_pad, max(xv) + x_pad]},
@@ -174,10 +176,12 @@ def leader_labels(pts, log_x=False, plot_w=880.0, plot_h=500.0,
     라벨 상자끼리 겹치면 다음 후보 오프셋을 시도하고, 자리가 없으면 그 라벨은
     생략한다 (겹쳐 쓰지 않음). 반환: layout annotations 리스트.
     """
+    if log_x:
+        # 로그축에서 0 이하 값은 좌표가 없음 — 화면 밖(-∞)에 걸지 않고 생략
+        pts = [p for p in pts if float(p["x"]) > 0]
     if not pts:
         return []
-    xs = [float(np.log10(max(p["x"], 1e-9))) if log_x else float(p["x"])
-          for p in pts]
+    xs = [float(np.log10(p["x"])) if log_x else float(p["x"]) for p in pts]
     ys = [float(p["y"]) for p in pts]
     x_lo, x_hi = min(xs), max(xs)
     y_lo, y_hi = min(ys), max(ys)
@@ -205,7 +209,7 @@ def leader_labels(pts, log_x=False, plot_w=880.0, plot_h=500.0,
         placed.append((nx, ny))
         anns.append({
             # 로그축 주석은 log10 데이터 좌표를 사용해야 함 (Plotly 규약)
-            "x": float(np.log10(max(p["x"], 1e-9))) if log_x else p["x"],
+            "x": float(np.log10(p["x"])) if log_x else p["x"],
             "y": p["y"], "xref": "x", "yref": "y",
             "showarrow": True, "arrowhead": 0, "arrowwidth": 0.8,
             "arrowcolor": p.get("line_color", "#9fb2c2"),

@@ -252,7 +252,9 @@ def _survival_section(df, settings):
             customdata=[{"drill": {"type": "applicant", "applicant": c}}
                         for c, _m, _nr, _n in plot_rows])
     n_events = int(sub["_event"].sum())
-    note = "권리 종료 시점 기준: %s." % lapse_basis
+    note = ("권리 종료 시점 기준: %s. 클릭 목록은 해당 분류의 전체 특허이며, "
+            "곡선 표본(n)은 그중 등록 후 유지 기간을 산정할 수 있는 건입니다."
+            % lapse_basis)
     if n_events == 0:
         note += (" 소멸(포기) 이벤트가 0건이라 곡선이 100%% 평행선으로 표시됩니다 — "
                  "포트폴리오가 아직 젊거나 소멸 정보가 데이터에 없는 경우입니다. "
@@ -523,8 +525,12 @@ def _expedited_section(df, settings):
                 "우선심사·조기공개로 본 사업화 긴급도 (크기=출원 수, 색=우선심사 비율)",
                 xaxis={"title": "출원연도", "dtick": 1, "tickformat": "d"},
                 yaxis={"title": "", "type": "category", "automargin": True,
-                       "range": [-0.9, len(top_techs) - 0.1]},
-                height=max(420, 120 + 34 * len(top_techs)))}
+                       # n<2 셀 생략으로 top_techs 일부가 미표시될 수 있음 —
+                       # 실제 그려진 카테고리 수 기준으로 range 를 잡아 빈 띠 방지
+                       "categoryarray": [t for t in reversed(top_techs)
+                                         if t in set(pts["y"])],
+                       "range": [-0.9, max(len(set(pts["y"])), 1) - 0.1]},
+                height=max(420, 120 + 34 * max(len(set(pts["y"])), 1)))}
     # 급등 랭킹: 최근 vs 이전 비율 차
     recent_n = int(get_threshold(settings, "recent_years"))
     max_year = int(sub["_y"].max())

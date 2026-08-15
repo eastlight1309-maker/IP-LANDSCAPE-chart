@@ -247,16 +247,23 @@ def compute_portfolio_index(df, settings, companies=None):
     top_n = int(get_limit(settings, "top_n_default")) + 5
 
     has_family = "family_id" in scoped.columns and scoped["family_id"].notna().any()
+    all_years = work["_base_year"].dropna()
+    y_max_all = int(all_years.max()) if len(all_years) else None
     rows = []
     for company, grp in scoped.groupby("applicant_display"):
         n = len(grp)
         if n < min_n:
             continue
         pai = float(grp["_ci"].sum())
-        families = int(grp["family_id"].astype(str).nunique()) if has_family else n
+        # 패밀리 미상(NaN) 문헌을 'nan' 하나의 패밀리로 뭉치지 않고 각 1건으로 집계
+        fam = grp["family_id"] if has_family else None
+        families = (int(fam.dropna().astype(str).nunique() + fam.isna().sum())
+                    if fam is not None else n)
         all_grp = work[work["applicant_display"] == company]
         yrs = all_grp["_base_year"].dropna().astype(int)
-        growth, _ = (robust_growth(year_counts(yrs), recent_years=recent)
+        # '최근 N년' 창은 데이터셋 최신 연도에 고정 (출원 끊긴 기업 왜곡 방지)
+        growth, _ = (robust_growth(year_counts(yrs, year_max=y_max_all),
+                                   recent_years=recent)
                      if len(yrs) else (None, "n/a"))
         rows.append({"company": str(company), "n": n, "families": families,
                      "portfolio_index": round(pai, 2),

@@ -63,6 +63,7 @@ MODULE_ORDER = [
     "src/analyses/executive.py",
     "src/analyses/axis_cross.py",
     "src/analyses/ownership.py",
+    "src/quality_report.py",
     "src/api.py",
 ]
 
@@ -175,6 +176,11 @@ def check_name_collisions():
                 names = [node.name]
             elif isinstance(node, ast.Assign):
                 names = [t.id for t in node.targets if isinstance(t, ast.Name)]
+            elif isinstance(node, ast.ImportFrom) and \
+                    str(node.module or "").startswith("src"):
+                # `from src.X import a as b` 는 병합 시 전역 할당(b = a)이 됨 —
+                # 별칭도 이름 공간을 차지하므로 충돌 검사 대상에 포함
+                names = [a.asname for a in node.names if a.asname]
             for name in names:
                 if name in _COLLISION_ALLOWED:
                     continue
@@ -184,6 +190,30 @@ def check_name_collisions():
     if problems:
         raise SystemExit("병합 이름 충돌 — 한쪽 모듈에서 이름을 바꾸세요:\n  "
                          + "\n  ".join(sorted(set(problems))))
+
+
+def _build_info_stamp():
+    """검증 리포트용 빌드 정보 — 저장소에서 실측 집계한 값만 기록한다.
+
+    여기 적히는 수치는 전부 이 함수가 지금 세는 값이다 (임의 기입 금지):
+    테스트 함수 수는 tests/ 의 `def test_` 실제 개수, 모듈 수는 MODULE_ORDER.
+    """
+    import re as _re
+    import time as _time
+    tdir = os.path.join(ROOT, "tests")
+    n_fn, n_file = 0, 0
+    if os.path.isdir(tdir):
+        for fn in sorted(os.listdir(tdir)):
+            if fn.startswith("test") and fn.endswith(".py"):
+                n_file += 1
+                with io.open(os.path.join(tdir, fn), encoding="utf-8") as fh:
+                    n_fn += len(_re.findall(r"^\s*def test_", fh.read(), _re.M))
+    info = {"built_at": _time.strftime("%Y-%m-%d %H:%M"),
+            "modules": len(MODULE_ORDER),
+            "test_functions": n_fn, "test_files": n_file,
+            "source": "build"}
+    return ("\n\n# 검증 리포트용 빌드 정보 (tools/build_backend.py 가 실측 집계)\n"
+            "_QR_BUILD_INFO = %r\n" % (info,))
 
 
 def build():
@@ -197,6 +227,8 @@ def build():
         parts.append("\n\n# %s\n# %s\n# %s\n%s" % ("=" * 75, rel, "=" * 75, body))
         if rel == "src/storage.py":
             parts.append("\n" + STORAGE_SHIM)
+        if rel == "src/quality_report.py":
+            parts.append(_build_info_stamp())
     parts.append(FOOTER)
     out_path = os.path.join(ROOT, "webapp", "backend.py")
     os.makedirs(os.path.dirname(out_path), exist_ok=True)

@@ -106,7 +106,9 @@ def login(name, emp_no):
         raise ValueError("사원번호는 4자 이상이어야 합니다.")
     data = _users_store()
     items = data.get("items") or []
-    user = find_user(name)
+    # 같은 로드본(items) 안에서 사용자를 찾아야 last_login 갱신이 저장됨 —
+    # find_user() 는 별도 로드본을 반환해 갱신이 유실된다
+    user = next((u for u in items if u.get("name") == name), None)
     now = time.strftime("%Y-%m-%d %H:%M:%S")
     if user is None:
         if len(items) >= _MAX_USERS:

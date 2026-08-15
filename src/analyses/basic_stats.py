@@ -432,10 +432,13 @@ def compute_tech_tree(df, settings, company=None):
         values.append(int(node_vals[p]))
         colors.append(_lighten(l1_color.get(p[0], "#8aa0b2"),
                                (len(p) - 1) * 0.28))
+        # 트리맵 집계는 레벨별 첫(대표) 분류 기준 — drill 도 대표 분류 일치로
+        # 제한해 카드 건수와 클릭 목록이 정확히 같게 한다
         if single:
-            drill = {"type": "tech", "tech": p[0]}
+            drill = {"type": "tech", "tech": p[0], "tech_primary": True}
         else:
             drill = {drill_keys[level_cols[i]]: seg for i, seg in enumerate(p)}
+            drill["tech_levels_primary"] = True
         # leaf=하위 칸 없음 → 클릭 시 근거 특허 (하위가 있으면 클릭=확대만)
         customs.append({"drill": drill, "leaf": p not in parent_set,
                         "m": {"경로": " > ".join(p), "문헌 수": int(node_vals[p]),
@@ -525,8 +528,8 @@ def compute_company_focus(df, settings, company=None):
         return empty_result("기술분류 값이 없습니다.")
     market = pd.Series([t for lst in df["_tech_list"] for t in (lst or [])]) \
         .value_counts()
-    totals = sorted(st["total"] for st in stats.values())
-    median_total = float(totals[len(totals) // 2])
+    # 화면 규칙 문구('누적 건수는 회사 중앙값 이하')와 동일한 진짜 중앙값 사용
+    median_total = float(np.median([st["total"] for st in stats.values()]))
 
     rows = []
     for t, st in stats.items():
@@ -570,8 +573,7 @@ def compute_company_focus(df, settings, company=None):
     x_max = max(xs)
     # 로그축은 기본값으로 두면 보조 눈금(2,3,…,9)이 매 자리수마다 찍혀 축 아래가
     # 숫자로 지저분해짐 → 정수 건수 눈금만 명시 (1,2,3,5,10,20,…)
-    _tick_cands = [1, 2, 3, 5, 10, 20, 30, 50, 100, 200, 300, 500,
-                   1000, 2000, 3000, 5000, 10000]
+    _tick_cands = [b * 10 ** k for k in range(0, 7) for b in (1, 2, 3, 5)]
     x_ticks = [v for v in _tick_cands if v <= x_max * 1.3] or [1]
     fig = {"data": [{
         "type": "scatter", "mode": "markers", "cliponaxis": False,
@@ -591,12 +593,16 @@ def compute_company_focus(df, settings, company=None):
             yaxis={"title": "최근 %d년 출원 비중" % recent,
                    "range": [-0.08, 1.08], "tickformat": ".0%"},
             annotations=[
-                {"x": np.log10(max(1.5, median_total * 0.35)), "y": 1.04,
+                # 축 범위(log10(0.72)~log10(x_max*1.45)) 안으로 클램프 —
+                # 포트폴리오가 작아도 안내 주석이 화면 밖으로 사라지지 않게
+                {"x": float(np.log10(min(max(1.5, median_total * 0.35),
+                                         x_max * 1.15))), "y": 1.04,
                  "xref": "x", "yref": "y", "showarrow": False,
                  "text": "◀ 작지만 최근에 몰림 = 새 베팅", "xanchor": "left",
                  "font": {"size": 11, "color": "#c0392b"}},
-                {"x": np.log10(max(2.0, x_max)), "y": 1.04, "xref": "x",
-                 "yref": "y", "showarrow": False, "xanchor": "right",
+                {"x": float(np.log10(max(x_max * 1.3, 1.1))), "y": 1.04,
+                 "xref": "x", "yref": "y", "showarrow": False,
+                 "xanchor": "right",
                  "text": "주력 기술 ▶", "font": {"size": 11, "color": "#2e5f8a"}}],
             height=560)}
 
@@ -721,6 +727,11 @@ def compute_tech_year_bubble(df, settings, companies=None, level=None):
                 if path not in path_drills:
                     path_drills[path] = {lv_keys[lv_cols[i]]: seg
                                          for i, seg in enumerate(segs)}
+                    if len(segs) < len(lv_cols):
+                        # 경로가 중간에 끊긴 행: 다음 레벨이 빈 문헌만 매칭해야
+                        # 하위 경로 행과 겹치지 않음 (건수·목록 정확 일치)
+                        path_drills[path]["tech_path_next_empty"] = \
+                            lv_keys[lv_cols[len(segs)]]
             else:
                 paths.append([])
         df["_bubble_path_list"] = paths
@@ -765,6 +776,9 @@ def compute_tech_year_bubble(df, settings, companies=None, level=None):
     def _t_drill(t, y=None):
         if drill_key == "path":
             d = dict(path_drills.get(str(t), {}))
+            # 경로는 레벨별 첫(대표) 분류로 구성 — drill 도 대표 일치로 제한해야
+            # 버블 건수와 클릭 목록이 일치 (포함 매칭이면 상위집합이 열림)
+            d["tech_levels_primary"] = True
         elif drill_key == "tech":
             d = {"type": "tech", "tech": str(t)}
         else:
@@ -864,6 +878,11 @@ def compute_tech_year_bubble(df, settings, companies=None, level=None):
                              "표시됩니다 — 두 공동출원사를 함께 선택하면 같은 특허가 "
                              "양쪽 시리즈에 나타날 수 있습니다 (전체 보기에서는 특허 "
                              "1건이 1번만 집계됩니다)." % fmt_num(joint_in_scope))
+    elif not all_counts[0]:
+        # 기술분류 보유 문헌의 연도가 전부 미해석 → 셀이 없음 (조용한 crash 방지)
+        return empty_result("기술분류가 있는 문헌들의 출원연도를 해석할 수 없어 "
+                            "기술×연도 셀을 만들 수 없습니다 — 날짜 컬럼 매핑을 "
+                            "확인하세요.")
     else:
         counts = all_counts[0]
         (bt, by), bn = max(counts.items(), key=lambda kv: kv[1])

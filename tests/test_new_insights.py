@@ -1996,3 +1996,142 @@ def test_executive_maps_leader_labels(settings):
             assert eff["fig"]["data"][0]["mode"] == "markers"
             assert any(a.get("showarrow") and a.get("text")
                        for a in eff["fig"]["layout"]["annotations"])
+
+
+# ---------------------------------------------------------------------------
+# 2차 전수 감사 수정 회귀 테스트 (성장률 앵커·CR3·focal·드릴 정합·퇴화 축 등)
+# ---------------------------------------------------------------------------
+def _mini_prepared(rows):
+    df = pd.DataFrame(rows)
+    return make_prepared(df)
+
+
+def test_audit_growth_anchored_to_dataset_max_year(settings):
+    """출원이 끊긴 조합·기업이 '최근 N년 고성장'으로 표시되면 안 된다."""
+    from src.metrics import year_counts, robust_growth
+    from src.config import get_threshold
+    recent = int(get_threshold(settings, "recent_years"))
+    # 2013-2015 에만 출원, 데이터셋은 2024 까지 존재
+    dead_years = [2013, 2013, 2014, 2015, 2015, 2015]
+    g_anchored, _ = robust_growth(year_counts(dead_years, year_max=2024),
+                                  recent_years=recent)
+    g_stale, _ = robust_growth(year_counts(dead_years), recent_years=recent)
+    # 고정 앵커에서는 최근 창이 전부 0 → 성장으로 판정될 수 없음
+    assert not (g_anchored is not None and g_anchored > 0)
+    # (회귀 확인용) 앵커 없이 계산하면 죽은 조합이 +성장으로 나오던 상황
+    assert g_stale is None or g_stale >= g_anchored if g_anchored is not None \
+        else True
+
+
+def test_audit_whitespace_cr3_bounded(settings):
+    """CR3(상위 3사 점유율)는 어떤 집계 모드에서도 0~1 이어야 한다."""
+    from src.analyses.whitespace import compute_opportunity
+    df = make_prepared(generate_sample(n=400, seed=21))
+    for mode in ("duplicate", "fractional"):
+        s = dict(settings)
+        s["multiclass_mode"] = mode
+        r = compute_opportunity(df, s)
+        if r["status"] != "ok":
+            continue
+        for a in r["areas"]:
+            if a.get("cr3") is not None:
+                assert 0.0 <= a["cr3"] <= 1.0, (mode, a["tech"], a["cr3"])
+
+
+def test_audit_pick_focal_respects_coapplicant_only(settings):
+    """공동출원으로만 등장하는 회사를 선택해도 조용히 다른 회사로 바꾸지 않음."""
+    from src.analyses.executive import _pick_focal, compute_executive_summary
+    df = make_prepared(generate_sample(n=400, seed=21))
+    co_only = None
+    displays = set(df["applicant_display"].astype(str))
+    for lst in df["_co_applicants_display"]:
+        for name in (lst or []):
+            if name not in displays:
+                co_only = name
+                break
+        if co_only:
+            break
+    if not co_only:
+        pytest.skip("샘플에 공동출원 전용 출원인 없음")
+    focal, basis = _pick_focal(df, settings, company=co_only)
+    assert focal == co_only and "공동출원" in basis
+    r = compute_executive_summary(df, settings, company=co_only)
+    assert r["status"] == "ok"
+    assert r["kpi"]["focal"] == co_only
+    assert r["kpi"]["n_focal"] > 0          # membership 기준 집계
+    assert r["kpi"]["rank_all"] is None     # 대표 출원인 순위엔 없음 — 정직 표기
+
+
+def test_audit_tech_tree_drill_matches_counts(settings):
+    """트리맵 노드 건수 == 드릴 목록 건수 (대표 분류 기준 정합)."""
+    from src.analyses.basic_stats import compute_tech_tree
+    from src.analyses.common import select_patents
+    df = make_prepared(generate_sample(n=400, seed=21))
+    r = compute_tech_tree(df, settings)
+    if r["status"] != "ok":
+        pytest.skip("트리맵 표본 부족")
+    tr = r["figure"]["data"][0]
+    checked = 0
+    for cd, val in zip(tr["customdata"], tr["values"]):
+        picked = select_patents(df, cd["drill"])
+        assert len(picked) == val, (cd["drill"], len(picked), val)
+        checked += 1
+        if checked >= 12:
+            break
+    assert checked
+
+
+def test_audit_path_bubble_drill_matches_counts(settings):
+    """계층(대›중›소) 버블 셀 건수 == 드릴 목록 건수."""
+    from src.analyses.basic_stats import compute_tech_year_bubble
+    from src.analyses.common import select_patents
+    df = make_prepared(generate_sample(n=400, seed=21))
+    r = compute_tech_year_bubble(df, settings, level="path")
+    if r["status"] != "ok":
+        pytest.skip("계층 보기 불가 표본")
+    tr = r["figure"]["data"][0]
+    checked = 0
+    for cd in tr["customdata"]:
+        n = cd["m"]["건수"]
+        picked = select_patents(df, cd["drill"])
+        assert len(picked) == n, (cd["drill"], len(picked), n)
+        checked += 1
+        if checked >= 10:
+            break
+    assert checked
+
+
+def test_bubble_chart_degenerate_span_not_micro_axis():
+    """모든 점이 같은 좌표여도 축이 마이크로 단위로 붕괴하지 않는다."""
+    from src.viz_payload import bubble_chart
+    pts = [{"x": 0.5, "y": 0.5, "size": 3, "color": 1, "hover": ""}
+           for _ in range(4)]
+    fig = bubble_chart(pts, "X", "Y")
+    xr = fig["layout"]["xaxis"]["range"]
+    assert (xr[1] - xr[0]) >= 0.1  # 1e-6 폭 금지
+
+
+def test_leader_labels_drop_nonpositive_on_log():
+    from src.viz_payload import leader_labels
+    anns = leader_labels([{"x": 0.0, "y": 1.0, "text": "bad"},
+                          {"x": 10.0, "y": 1.0, "text": "good"}], log_x=True)
+    assert len(anns) == 1 and "good" in anns[0]["text"]
+
+
+def test_norm_key_float_app_numbers():
+    """엑셀 숫자 컬럼(float) 출원번호도 파일 키와 매칭되어야 한다."""
+    from src.embedding_files import _norm_key
+    assert _norm_key(1020190123456.0) == _norm_key("1020190123456")
+    assert _norm_key("1020190123456.0") == _norm_key("10-2019-0123456")
+    assert _norm_key(float("nan")) == ""
+    assert _norm_key(None) == ""
+
+
+def test_mapping_rename_guard_two_concepts_one_column(settings):
+    """같은 실제 컬럼이 두 개념에 매핑돼도 첫 개념이 유지된다 (조용한 소실 금지)."""
+    from src.preprocessing import build_standard_frame
+    raw = pd.DataFrame({"출원인": ["A", "B"], "번호": ["1", "2"]})
+    df = build_standard_frame(raw, {"applicant": "출원인",
+                                    "assignee": "출원인",
+                                    "app_number": "번호"})
+    assert "applicant" in df.columns

@@ -168,10 +168,12 @@ def compute_opportunity(df, settings, company=None):
     rows = []
     for tech, series in mat.iterrows():
         total = float(series.sum())
-        if total < min_n:
-            continue
         in_tech = df["_tech_list"].map(lambda lst: tech in (lst or []))
         sub = df[in_tech]
+        # 최소 표본은 실제 문헌 수 기준 — fractional 가중치 합으로 판정하면
+        # 다중분류 문헌이 많은 분류가 부당하게 탈락함
+        if len(sub) < min_n:
+            continue
         growth, g_method = robust_growth(series, recent_years=recent)
         recent_apps = set(sub.loc[sub["_base_year"] >= recent_from, "applicant_display"]
                           .replace("", np.nan).dropna())
@@ -190,7 +192,8 @@ def compute_opportunity(df, settings, company=None):
         active_granted = int((sub["_active_flag"].map(lambda v: v is True)
                               & sub["_is_granted_bool"].map(lambda v: v is True)).sum())
         counts = sub["applicant_display"].replace("", np.nan).dropna().value_counts()
-        cr3 = float(counts.head(3).sum()) / total if total else 0.0
+        # CR3 분모는 같은 기준의 문헌 수 — 가중 합(total)과 섞으면 100% 초과 왜곡
+        cr3 = float(counts.head(3).sum()) / float(len(sub)) if len(sub) else 0.0
         if "cites_forward" in sub.columns and sub["cites_forward"].notna().any():
             cites = sub["cites_forward"].fillna(0)
             top_cites = float(cites.nlargest(max(int(len(cites) * 0.1), 1)).sum())

@@ -567,3 +567,37 @@ def test_auth_login_and_ownership_scoping(client):
                     json={"name": "레거시", "delete": True})
     finally:
         _st.save_store("users", {"items": []})
+
+
+def test_export_chart_all_empty_sheets_clean_400(client):
+    """빈 시트만 있으면 400 + 한국어 메시지 (openpyxl 내부 오류 404 유출 금지)."""
+    r = _post(client, "/api/export-chart",
+              {"sheets": [{"name": "a", "columns": [], "rows": []},
+                          {"name": "b", "columns": ["c"], "rows": []}]})
+    assert r.status_code == 400
+    msg = r.get_json()["message"]
+    assert "내보낼 차트 데이터" in msg
+    assert "visible" not in msg          # 내부 라이브러리 메시지 유출 금지
+
+
+def test_column_mapping_rejects_many_to_one(client):
+    """한 실제 컬럼을 두 개념에 매핑하면 저장 시 명시적으로 거부."""
+    ds = DATASET
+    cols = client.get("/api/columns?dataset=%s" % ds).get_json()["columns"]
+    col = cols[0]
+    r = _post(client, "/api/column-mapping",
+              {"dataset": ds, "mapping": {"applicant": col, "assignee": col}})
+    assert r.status_code == 400
+    assert "중복 매핑" in r.get_json()["message"]
+
+
+def test_quality_report_endpoint(client):
+    """검증 리포트: 실측 빌드 정보 + 셀프 체크 + 레지스트리 payload."""
+    d = _post(client, "/api/quality-report", {"filters": {}}).get_json()
+    assert d["status"] == "ok"
+    assert d["checks"] and d["registry"] and d["principles"]
+    assert {c["status"] for c in d["checks"]} <= {"통과", "주의", "확인 불가"}
+    assert d["summary"]["pass"] + d["summary"]["warn"] + d["summary"]["na"] \
+        == len(d["checks"])
+    # 빌드 정보의 테스트 수는 실측 (개발 모드=저장소 집계)
+    assert d["build"]["test_functions"] > 100

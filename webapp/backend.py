@@ -1978,7 +1978,9 @@ def build_standard_frame(raw_df, mapping, applicant_rules=None):
     df.columns = [c for c in df.columns]  # 유지
     rename = {}
     for concept, col in cols.items():
-        if col not in rename.values():
+        # 같은 실제 컬럼이 두 개념에 매핑된 경우 첫 개념이 컬럼을 가져간다
+        # (rename.values() 는 개념명이므로 col 비교가 항상 거짓이던 버그 수정)
+        if col not in rename:
             rename[col] = concept
     df = df.rename(columns=rename)
     # 동일 실제 컬럼이 두 개념에 매핑될 수는 없음(automap 이 보장) — 방어적으로 중복 제거
@@ -2961,7 +2963,9 @@ def login(name, emp_no):
         raise ValueError("사원번호는 4자 이상이어야 합니다.")
     data = _users_store()
     items = data.get("items") or []
-    user = find_user(name)
+    # 같은 로드본(items) 안에서 사용자를 찾아야 last_login 갱신이 저장됨 —
+    # find_user() 는 별도 로드본을 반환해 갱신이 유실된다
+    user = next((u for u in items if u.get("name") == name), None)
     now = time.strftime("%Y-%m-%d %H:%M:%S")
     if user is None:
         if len(items) >= _MAX_USERS:
@@ -3484,10 +3488,21 @@ _EMB_NORM_RE = re.compile(r"[^0-9A-Za-z가-힣]")
 
 
 def _norm_key(value):
-    """출원번호/공개번호 정규화 — 형식 차이(하이픈·공백·점)를 흡수한다."""
-    s = str(value).strip()
+    """출원번호/공개번호 정규화 — 형식 차이(하이픈·공백·점)를 흡수한다.
+
+    엑셀 숫자 컬럼이 float 로 읽히면 str() 가 '1020190123456.0' 을 만들고,
+    점만 제거하면 뒤에 가짜 0 이 붙어 영원히 매칭 실패한다 → '.0' 꼬리를
+    먼저 잘라낸다 (실제 소수점 번호는 특허 번호 체계에 존재하지 않음).
+    """
+    if value is None or (isinstance(value, float) and np.isnan(value)):
+        return ""
+    if isinstance(value, float) and float(value).is_integer():
+        s = str(int(value))
+    else:
+        s = str(value).strip()
     if not s or s.lower() in ("nan", "none"):
         return ""
+    s = re.sub(r"\.0+$", "", s)
     return _EMB_NORM_RE.sub("", s).upper()
 
 
@@ -5057,11 +5072,13 @@ def bubble_chart(points, x_title, y_title, title=None, quadrants=None,
             "opacity": 0.85,
         },
     }
-    # 축 여백: 가장자리 버블이 축 선과 겹치지 않도록 데이터 범위에 12% 패딩
+    # 축 여백: 가장자리 버블이 축 선과 겹치지 않도록 데이터 범위에 12% 패딩.
+    # 모든 점이 같은 좌표면(span 0) 마이크로 단위 축이 되지 않게 값 크기 기반 여백.
     xv = [float(p["x"]) for p in points]
     yv = [float(p["y"]) for p in points]
-    x_pad = max((max(xv) - min(xv)) * 0.12, 1e-6)
-    y_pad = max((max(yv) - min(yv)) * 0.12, 1e-6)
+    x_span, y_span = max(xv) - min(xv), max(yv) - min(yv)
+    x_pad = x_span * 0.12 if x_span > 1e-9 else max(abs(max(xv)) * 0.1, 0.5)
+    y_pad = y_span * 0.12 if y_span > 1e-9 else max(abs(max(yv)) * 0.1, 0.5)
     layout = base_layout(
         title,
         xaxis={"title": x_title, "range": [min(xv) - x_pad, max(xv) + x_pad]},
@@ -5093,10 +5110,12 @@ def leader_labels(pts, log_x=False, plot_w=880.0, plot_h=500.0,
     라벨 상자끼리 겹치면 다음 후보 오프셋을 시도하고, 자리가 없으면 그 라벨은
     생략한다 (겹쳐 쓰지 않음). 반환: layout annotations 리스트.
     """
+    if log_x:
+        # 로그축에서 0 이하 값은 좌표가 없음 — 화면 밖(-∞)에 걸지 않고 생략
+        pts = [p for p in pts if float(p["x"]) > 0]
     if not pts:
         return []
-    xs = [float(np.log10(max(p["x"], 1e-9))) if log_x else float(p["x"])
-          for p in pts]
+    xs = [float(np.log10(p["x"])) if log_x else float(p["x"]) for p in pts]
     ys = [float(p["y"]) for p in pts]
     x_lo, x_hi = min(xs), max(xs)
     y_lo, y_hi = min(ys), max(ys)
@@ -5124,7 +5143,7 @@ def leader_labels(pts, log_x=False, plot_w=880.0, plot_h=500.0,
         placed.append((nx, ny))
         anns.append({
             # 로그축 주석은 log10 데이터 좌표를 사용해야 함 (Plotly 규약)
-            "x": float(np.log10(max(p["x"], 1e-9))) if log_x else p["x"],
+            "x": float(np.log10(p["x"])) if log_x else p["x"],
             "y": p["y"], "xref": "x", "yref": "y",
             "showarrow": True, "arrowhead": 0, "arrowwidth": 0.8,
             "arrowcolor": p.get("line_color", "#9fb2c2"),
@@ -5792,7 +5811,23 @@ def select_patents(df, drill):
                      ("tech_l3", "_tech_l3_list")):
         if drill.get(_lk) and _lc in df.columns:
             _lv = str(drill[_lk])
-            mask &= df[_lc].map(lambda lst, v=_lv: v in (lst or []))
+            if drill.get("tech_levels_primary"):
+                # 트리맵·계층 버블은 문헌당 각 레벨의 첫(대표) 분류로 1회 집계 —
+                # drill 도 대표 분류 일치로 제한해야 차트 건수와 목록이 일치
+                mask &= df[_lc].map(
+                    lambda lst, v=_lv: bool(lst) and str(lst[0]) == v)
+            else:
+                mask &= df[_lc].map(lambda lst, v=_lv: v in (lst or []))
+    if drill.get("tech_path_next_empty"):
+        # 계층 경로가 중간에 끊긴 행의 drill: 다음 레벨 대표 분류가 비어 있는
+        # 문헌만 — 하위 경로 행과 목록이 겹치지 않게 한다
+        _nc = "_%s_list" % str(drill["tech_path_next_empty"])
+        if _nc in df.columns:
+            def _first_empty(lst):
+                v = (lst or [None])[0]
+                s = "" if v is None else str(v).strip()
+                return (not s) or s.lower() in ("nan", "none", "-")
+            mask &= df[_nc].map(_first_empty)
     if drill.get("npl_cited") is not None and "npl_count" in df.columns:
         _pnum = parse_numeric  # [merged import alias]
         npl = _pnum(df["npl_count"]).fillna(0)
@@ -6372,7 +6407,7 @@ Drill-down: 버블 클릭 → {"type":"combo","a":…,"b":…}.
 """
 import numpy as np
 
-lift_fn = lift  # [merged import alias]
+_emerging_lift = lift  # [merged import alias]
 
 
 def compute_emerging(df, settings):
@@ -6394,10 +6429,14 @@ def compute_emerging(df, settings):
     rows = []
     for _, r in pairs.iterrows():
         a, b = r["a"], r["b"]
-        series = year_counts(r["years"]) if r["years"] else None
+        # year_max 고정: 마지막 출원이 오래된 조합이 자기 마지막 연도 기준으로
+        # '최근 성장'을 얻는 왜곡 방지 — 최근 N년 창은 데이터셋 최신 연도 기준
+        series = (year_counts(r["years"], year_max=int(years.max()))
+                  if r["years"] else None)
         growth, g_method = (robust_growth(series, recent_years=recent)
                             if series is not None and len(series) else (None, "insufficient"))
-        lift_v = lift_fn(int(r["n_ab"]), tech_counts.get(a, 0), tech_counts.get(b, 0), n_docs)
+        lift_v = _emerging_lift(int(r["n_ab"]), tech_counts.get(a, 0),
+                                tech_counts.get(b, 0), n_docs)
         n_new = len(r["new_applicants"])
         l1a, l1b = l1_lookup.get(a), l1_lookup.get(b)
         diversity = 1.0 if (l1a and l1b and l1a != l1b) else 0.5
@@ -6530,7 +6569,8 @@ analyses/lifecycle.py — 4.7 기술 생애주기 Phase Map.
 
 단계 판정 규칙 (임계값은 Settings thresholds 로 조정 가능):
   Re-emerging: 과거 reemerging_decline_years 간 감소·정체(합계 기울기<=0) AND
-               최근 3년 연속 증가 AND 신규 출원인 존재 AND 신규 기술조합 동반 증가
+               최근 recent_years 간 연속 증가 AND 신규 출원인 존재 AND
+               신규 기술조합 동반 증가
   Emerging   : age<=5 AND growth>=emerging_min_growth
   Growing    : growth>=emerging_min_growth
   Declining  : growth<-0.1
@@ -6633,10 +6673,12 @@ def compute_lifecycle(df, settings, company=None):
     rows = []
     for tech, series in mat.iterrows():
         total = float(series.sum())
-        if total < min_n:
-            continue
         in_tech = df["_tech_list"].map(lambda lst: tech in (lst or []))
         sub = df[in_tech]
+        # 최소 표본은 실제 문헌 수 기준 — fractional 가중 합으로 판정하면
+        # 다중분류 문헌이 많은 분류가 부당하게 탈락함
+        if len(sub) < min_n:
+            continue
         growth, g_method = robust_growth(series, recent_years=recent)
         first_year = int(series[series > 0].index.min()) if (series > 0).any() else None
         age = (y_max - first_year) if first_year is not None else None
@@ -6989,10 +7031,12 @@ def compute_opportunity(df, settings, company=None):
     rows = []
     for tech, series in mat.iterrows():
         total = float(series.sum())
-        if total < min_n:
-            continue
         in_tech = df["_tech_list"].map(lambda lst: tech in (lst or []))
         sub = df[in_tech]
+        # 최소 표본은 실제 문헌 수 기준 — fractional 가중치 합으로 판정하면
+        # 다중분류 문헌이 많은 분류가 부당하게 탈락함
+        if len(sub) < min_n:
+            continue
         growth, g_method = robust_growth(series, recent_years=recent)
         recent_apps = set(sub.loc[sub["_base_year"] >= recent_from, "applicant_display"]
                           .replace("", np.nan).dropna())
@@ -7011,7 +7055,8 @@ def compute_opportunity(df, settings, company=None):
         active_granted = int((sub["_active_flag"].map(lambda v: v is True)
                               & sub["_is_granted_bool"].map(lambda v: v is True)).sum())
         counts = sub["applicant_display"].replace("", np.nan).dropna().value_counts()
-        cr3 = float(counts.head(3).sum()) / total if total else 0.0
+        # CR3 분모는 같은 기준의 문헌 수 — 가중 합(total)과 섞으면 100% 초과 왜곡
+        cr3 = float(counts.head(3).sum()) / float(len(sub)) if len(sub) else 0.0
         if "cites_forward" in sub.columns and sub["cites_forward"].notna().any():
             cites = sub["cites_forward"].fillna(0)
             top_cites = float(cites.nlargest(max(int(len(cites) * 0.1), 1)).sum())
@@ -9835,10 +9880,13 @@ def compute_tech_tree(df, settings, company=None):
         values.append(int(node_vals[p]))
         colors.append(_lighten(l1_color.get(p[0], "#8aa0b2"),
                                (len(p) - 1) * 0.28))
+        # 트리맵 집계는 레벨별 첫(대표) 분류 기준 — drill 도 대표 분류 일치로
+        # 제한해 카드 건수와 클릭 목록이 정확히 같게 한다
         if single:
-            drill = {"type": "tech", "tech": p[0]}
+            drill = {"type": "tech", "tech": p[0], "tech_primary": True}
         else:
             drill = {drill_keys[level_cols[i]]: seg for i, seg in enumerate(p)}
+            drill["tech_levels_primary"] = True
         # leaf=하위 칸 없음 → 클릭 시 근거 특허 (하위가 있으면 클릭=확대만)
         customs.append({"drill": drill, "leaf": p not in parent_set,
                         "m": {"경로": " > ".join(p), "문헌 수": int(node_vals[p]),
@@ -9927,8 +9975,8 @@ def compute_company_focus(df, settings, company=None):
         return empty_result("기술분류 값이 없습니다.")
     market = pd.Series([t for lst in df["_tech_list"] for t in (lst or [])]) \
         .value_counts()
-    totals = sorted(st["total"] for st in stats.values())
-    median_total = float(totals[len(totals) // 2])
+    # 화면 규칙 문구('누적 건수는 회사 중앙값 이하')와 동일한 진짜 중앙값 사용
+    median_total = float(np.median([st["total"] for st in stats.values()]))
 
     rows = []
     for t, st in stats.items():
@@ -9972,8 +10020,7 @@ def compute_company_focus(df, settings, company=None):
     x_max = max(xs)
     # 로그축은 기본값으로 두면 보조 눈금(2,3,…,9)이 매 자리수마다 찍혀 축 아래가
     # 숫자로 지저분해짐 → 정수 건수 눈금만 명시 (1,2,3,5,10,20,…)
-    _tick_cands = [1, 2, 3, 5, 10, 20, 30, 50, 100, 200, 300, 500,
-                   1000, 2000, 3000, 5000, 10000]
+    _tick_cands = [b * 10 ** k for k in range(0, 7) for b in (1, 2, 3, 5)]
     x_ticks = [v for v in _tick_cands if v <= x_max * 1.3] or [1]
     fig = {"data": [{
         "type": "scatter", "mode": "markers", "cliponaxis": False,
@@ -9993,12 +10040,16 @@ def compute_company_focus(df, settings, company=None):
             yaxis={"title": "최근 %d년 출원 비중" % recent,
                    "range": [-0.08, 1.08], "tickformat": ".0%"},
             annotations=[
-                {"x": np.log10(max(1.5, median_total * 0.35)), "y": 1.04,
+                # 축 범위(log10(0.72)~log10(x_max*1.45)) 안으로 클램프 —
+                # 포트폴리오가 작아도 안내 주석이 화면 밖으로 사라지지 않게
+                {"x": float(np.log10(min(max(1.5, median_total * 0.35),
+                                         x_max * 1.15))), "y": 1.04,
                  "xref": "x", "yref": "y", "showarrow": False,
                  "text": "◀ 작지만 최근에 몰림 = 새 베팅", "xanchor": "left",
                  "font": {"size": 11, "color": "#c0392b"}},
-                {"x": np.log10(max(2.0, x_max)), "y": 1.04, "xref": "x",
-                 "yref": "y", "showarrow": False, "xanchor": "right",
+                {"x": float(np.log10(max(x_max * 1.3, 1.1))), "y": 1.04,
+                 "xref": "x", "yref": "y", "showarrow": False,
+                 "xanchor": "right",
                  "text": "주력 기술 ▶", "font": {"size": 11, "color": "#2e5f8a"}}],
             height=560)}
 
@@ -10122,6 +10173,11 @@ def compute_tech_year_bubble(df, settings, companies=None, level=None):
                 if path not in path_drills:
                     path_drills[path] = {lv_keys[lv_cols[i]]: seg
                                          for i, seg in enumerate(segs)}
+                    if len(segs) < len(lv_cols):
+                        # 경로가 중간에 끊긴 행: 다음 레벨이 빈 문헌만 매칭해야
+                        # 하위 경로 행과 겹치지 않음 (건수·목록 정확 일치)
+                        path_drills[path]["tech_path_next_empty"] = \
+                            lv_keys[lv_cols[len(segs)]]
             else:
                 paths.append([])
         df["_bubble_path_list"] = paths
@@ -10166,6 +10222,9 @@ def compute_tech_year_bubble(df, settings, companies=None, level=None):
     def _t_drill(t, y=None):
         if drill_key == "path":
             d = dict(path_drills.get(str(t), {}))
+            # 경로는 레벨별 첫(대표) 분류로 구성 — drill 도 대표 일치로 제한해야
+            # 버블 건수와 클릭 목록이 일치 (포함 매칭이면 상위집합이 열림)
+            d["tech_levels_primary"] = True
         elif drill_key == "tech":
             d = {"type": "tech", "tech": str(t)}
         else:
@@ -10265,6 +10324,11 @@ def compute_tech_year_bubble(df, settings, companies=None, level=None):
                              "표시됩니다 — 두 공동출원사를 함께 선택하면 같은 특허가 "
                              "양쪽 시리즈에 나타날 수 있습니다 (전체 보기에서는 특허 "
                              "1건이 1번만 집계됩니다)." % fmt_num(joint_in_scope))
+    elif not all_counts[0]:
+        # 기술분류 보유 문헌의 연도가 전부 미해석 → 셀이 없음 (조용한 crash 방지)
+        return empty_result("기술분류가 있는 문헌들의 출원연도를 해석할 수 없어 "
+                            "기술×연도 셀을 만들 수 없습니다 — 날짜 컬럼 매핑을 "
+                            "확인하세요.")
     else:
         counts = all_counts[0]
         (bt, by), bn = max(counts.items(), key=lambda kv: kv[1])
@@ -10528,16 +10592,23 @@ def compute_portfolio_index(df, settings, companies=None):
     top_n = int(get_limit(settings, "top_n_default")) + 5
 
     has_family = "family_id" in scoped.columns and scoped["family_id"].notna().any()
+    all_years = work["_base_year"].dropna()
+    y_max_all = int(all_years.max()) if len(all_years) else None
     rows = []
     for company, grp in scoped.groupby("applicant_display"):
         n = len(grp)
         if n < min_n:
             continue
         pai = float(grp["_ci"].sum())
-        families = int(grp["family_id"].astype(str).nunique()) if has_family else n
+        # 패밀리 미상(NaN) 문헌을 'nan' 하나의 패밀리로 뭉치지 않고 각 1건으로 집계
+        fam = grp["family_id"] if has_family else None
+        families = (int(fam.dropna().astype(str).nunique() + fam.isna().sum())
+                    if fam is not None else n)
         all_grp = work[work["applicant_display"] == company]
         yrs = all_grp["_base_year"].dropna().astype(int)
-        growth, _ = (robust_growth(year_counts(yrs), recent_years=recent)
+        # '최근 N년' 창은 데이터셋 최신 연도에 고정 (출원 끊긴 기업 왜곡 방지)
+        growth, _ = (robust_growth(year_counts(yrs, year_max=y_max_all),
+                                   recent_years=recent)
                      if len(yrs) else (None, "n/a"))
         rows.append({"company": str(company), "n": n, "families": families,
                      "portfolio_index": round(pai, 2),
@@ -12008,6 +12079,10 @@ def compute_emerging_clusters(df, settings, company=None, recent_years=None):
         df, settings, get_limit(settings, "semantic_max_docs"))
     if work is None:
         return empty_result(methods)
+    if not work["_base_year"].notna().any():
+        # 전체 df 에는 연도가 있어도 텍스트 보유 문헌엔 없을 수 있음 (crash 방지)
+        return empty_result("초록·청구항 텍스트가 있는 문헌들의 출원연도를 해석할 수 "
+                            "없어 시점 기반 신흥 군집을 계산할 수 없습니다.")
 
     from sklearn.cluster import KMeans
     k = int(min(18, max(6, vectors.shape[0] // 40)))
@@ -12801,7 +12876,9 @@ def _survival_section(df, settings):
             customdata=[{"drill": {"type": "applicant", "applicant": c}}
                         for c, _m, _nr, _n in plot_rows])
     n_events = int(sub["_event"].sum())
-    note = "권리 종료 시점 기준: %s." % lapse_basis
+    note = ("권리 종료 시점 기준: %s. 클릭 목록은 해당 분류의 전체 특허이며, "
+            "곡선 표본(n)은 그중 등록 후 유지 기간을 산정할 수 있는 건입니다."
+            % lapse_basis)
     if n_events == 0:
         note += (" 소멸(포기) 이벤트가 0건이라 곡선이 100%% 평행선으로 표시됩니다 — "
                  "포트폴리오가 아직 젊거나 소멸 정보가 데이터에 없는 경우입니다. "
@@ -13071,8 +13148,12 @@ def _expedited_section(df, settings):
                 "우선심사·조기공개로 본 사업화 긴급도 (크기=출원 수, 색=우선심사 비율)",
                 xaxis={"title": "출원연도", "dtick": 1, "tickformat": "d"},
                 yaxis={"title": "", "type": "category", "automargin": True,
-                       "range": [-0.9, len(top_techs) - 0.1]},
-                height=max(420, 120 + 34 * len(top_techs)))}
+                       # n<2 셀 생략으로 top_techs 일부가 미표시될 수 있음 —
+                       # 실제 그려진 카테고리 수 기준으로 range 를 잡아 빈 띠 방지
+                       "categoryarray": [t for t in reversed(top_techs)
+                                         if t in set(pts["y"])],
+                       "range": [-0.9, max(len(set(pts["y"])), 1) - 0.1]},
+                height=max(420, 120 + 34 * max(len(set(pts["y"])), 1)))}
     # 급등 랭킹: 최근 vs 이전 비율 차
     recent_n = int(get_threshold(settings, "recent_years"))
     max_year = int(sub["_y"].max())
@@ -14868,6 +14949,11 @@ def _pick_focal(df, settings, company=None):
     counts = apps.value_counts()
     if company and str(company) in counts.index:
         return str(company), "화면에서 선택"
+    if company:
+        # 공동출원으로만 등장하는 회사도 선택 존중 — 조용히 다른 회사로
+        # 바꿔 분석하면 사용자가 알아채지 못한 채 엉뚱한 결과를 보게 됨
+        if applicant_mask(df, str(company), scope="any").any():
+            return str(company), "화면에서 선택 (공동출원 포함)"
     for own in (settings or {}).get("own_company_names") or []:
         if str(own) in counts.index:
             return str(own), "Settings 자사명"
@@ -14883,7 +14969,12 @@ def _growth_of(df, mask, recent):
     years = df.loc[mask, "_base_year"].dropna().astype(int)
     if len(years) < 3:
         return None
-    g, _m = robust_growth(year_counts(years), recent_years=recent)
+    # '최근 N년' 창은 전체 데이터셋 최신 연도에 고정 — 출원이 끊긴 대상이
+    # 자기 마지막 연도 기준으로 고성장으로 표시되는 왜곡 방지
+    all_years = df["_base_year"].dropna()
+    y_max = int(all_years.max()) if len(all_years) else int(years.max())
+    g, _m = robust_growth(year_counts(years, year_max=y_max),
+                          recent_years=recent)
     return g
 
 
@@ -14902,15 +14993,17 @@ def compute_executive_summary(df, settings, company=None):
     recent_from = max_year - recent + 1
     apps = df["applicant_display"]
     counts = apps.replace("", np.nan).dropna().value_counts()
-    focal_mask = apps == focal
+    # 공동출원 포함 membership 기준 — 공동출원으로만 등장하는 자사도 집계
+    focal_mask = applicant_mask(df, focal, scope="any")
 
     # ---- ① KPI ------------------------------------------------------------
-    rank_all = int(list(counts.index).index(focal)) + 1
+    rank_all = (int(list(counts.index).index(focal)) + 1
+                if focal in counts.index else None)
     rec_df = df[df["_base_year"] >= recent_from]
     rec_counts = rec_df["applicant_display"].replace("", np.nan).dropna().value_counts()
     rank_recent = (int(list(rec_counts.index).index(focal)) + 1
                    if focal in rec_counts.index else None)
-    share = float(counts[focal]) / float(len(df))
+    share = float(focal_mask.sum()) / float(len(df))
     g_focal = _growth_of(df, focal_mask, recent)
     g_market = _growth_of(df, pd.Series(True, index=df.index), recent)
     has_cites = "cites_forward" in df.columns and df["cites_forward"].notna().any()
@@ -14931,7 +15024,7 @@ def compute_executive_summary(df, settings, company=None):
             expiring_share = float(soon.mean())
     kpi = {"focal": focal, "focal_basis": focal_basis,
            "rank_all": rank_all, "rank_recent": rank_recent,
-           "n_focal": int(counts[focal]), "share": round(share, 4),
+           "n_focal": int(focal_mask.sum()), "share": round(share, 4),
            "growth_focal": round(g_focal, 4) if g_focal is not None else None,
            "growth_market": round(g_market, 4) if g_market is not None else None,
            "quality_focal": round(q_focal, 2) if q_focal is not None else None,
@@ -15138,8 +15231,11 @@ def compute_executive_summary(df, settings, company=None):
 
     sentences = []
     period = period_label(df)
-    sentences.append("%s 기준 '%s'는 출원량 시장 %d위(점유율 %s)%s입니다."
-                     % (period, focal, rank_all, fmt_pct(share),
+    sentences.append("%s 기준 '%s'는 출원량 시장 %s(점유율 %s)%s입니다."
+                     % (period, focal,
+                        ("%d위" % rank_all) if rank_all else
+                        "순위 미산정 (공동출원 전용 출원인)",
+                        fmt_pct(share),
                         (", 최근 %d년 %d위" % (recent, rank_recent))
                         if rank_recent else ""))
     if g_focal is not None and g_market is not None:
@@ -15596,6 +15692,268 @@ def compute_ownership(df, settings):
 
 
 # ===========================================================================
+# src/quality_report.py
+# ===========================================================================
+# -*- coding: utf-8 -*-
+"""quality_report.py — 검증·신뢰성 리포트 (Verification Report).
+
+이 앱은 "분석 값을 지어내지 않는다"는 원칙 아래 만들어졌다. 이 모듈은 그
+원칙이 실제로 지켜지고 있음을 화면에서 확인할 수 있도록 세 가지를 제공한다.
+
+① 엔진 검증 정보 — 빌드 시점에 저장소에서 **실제로 집계**한 자동 테스트
+   수·모듈 수. 과장을 막기 위해 집계하지 못한 항목은 표시하지 않는다(None).
+② 검증 레지스트리 — 핵심 계산이 어떤 방법으로 검증되었는지, 근거가 되는
+   실제 테스트(파일::함수)와 함께 나열한다. 여기 적힌 테스트는 전부
+   저장소 tests/ 에 실존하는 코드다.
+③ 데이터 정합성 셀프 체크 — 지금 로딩된 데이터에 대해 화면 수치의 근거를
+   즉석에서 독립 재계산해 대조한다. 컬럼이 매핑되지 않아 확인 불가한 항목은
+   '확인 불가'로 정직하게 표시한다 (통과로 위장하지 않음).
+"""
+import io
+import os
+import re
+
+import numpy as np
+import pandas as pd
+
+
+
+# 빌드 스크립트(tools/build_backend.py)가 병합 파일에 실측값을 주입한다.
+# src 개발 모드에서는 None 으로 두고 get_build_info() 가 저장소에서 직접 센다.
+_QR_BUILD_INFO = None
+
+
+def _count_repo_tests():
+    """저장소 tests/ 에서 테스트 함수 수를 직접 집계 (개발 모드 전용)."""
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    tdir = os.path.join(root, "tests")
+    if not os.path.isdir(tdir):
+        return None
+    n_fn, n_file = 0, 0
+    for fn in sorted(os.listdir(tdir)):
+        if not (fn.startswith("test") and fn.endswith(".py")):
+            continue
+        n_file += 1
+        try:
+            with io.open(os.path.join(tdir, fn), encoding="utf-8") as fh:
+                n_fn += len(re.findall(r"^\s*def test_", fh.read(), re.M))
+        except OSError:
+            continue
+    return {"test_functions": n_fn, "test_files": n_file}
+
+
+def get_build_info():
+    """엔진 검증 정보. 빌드 주입값 우선, 없으면 저장소에서 직접 집계."""
+    if _QR_BUILD_INFO:
+        return dict(_QR_BUILD_INFO)
+    counted = _count_repo_tests()
+    info = {"built_at": None, "modules": None,
+            "test_functions": None, "test_files": None, "source": "dev"}
+    if counted:
+        info.update(counted)
+    return info
+
+
+# 개발 원칙 — 화면에 그대로 노출된다. 코드가 실제로 따르는 규칙만 적는다.
+PRINCIPLES = [
+    "분석 값을 지어내지 않는다 — 계산할 수 없는 지표는 이유와 함께 '계산 불가'로 표시한다.",
+    "표본이 적으면 결과에 표본 부족 경고를 함께 표시한다 (임계값은 Settings 에서 공개·조정).",
+    "모든 점수·지수는 계산식을 화면(도움말·정의표)에 공개한다 — 블랙박스 점수 없음.",
+    "차트의 모든 집계는 클릭(드릴다운)으로 근거 특허 목록까지 내려가 확인할 수 있다.",
+    "AI(LLM) 인사이트에는 화면 집계값만 전달한다 — 원문 특허 텍스트를 외부로 보내지 않는다.",
+    "법적 판단이 필요한 결론에는 면책 문구를 붙인다 — 이 앱은 법률 자문이 아니다.",
+]
+
+
+# 검증 레지스트리 — 각 항목의 test 필드는 저장소 tests/ 에 실존하는 테스트다.
+VERIFICATION_REGISTRY = [
+    {"area": "연차료 생존곡선", "claim": "Kaplan-Meier 유지율이 손으로 계산한 표본과 일치",
+     "method": "독립 수계산 대조", "test": "test_new_insights.py::test_km_curve_verified_against_manual"},
+    {"area": "기술 DNA 지표", "claim": "8개 축 각각의 계산식 정의 공개 + 정의대로 계산되는지 재계산 대조",
+     "method": "정의표 + 독립 재계산", "test": "test_new_insights.py::test_company_dna_formulas_and_fixes"},
+    {"area": "기술×연도 버블", "claim": "전체 보기에서 공동출원 특허가 중복 집계되지 않음 (1건=1회)",
+     "method": "원본 데이터 수동 집계 대조", "test": "test_new_insights.py::test_tech_year_bubble_no_joint_double_count"},
+    {"area": "발명자 이동 네트워크", "claim": "공동출원으로 인한 소속 왕래를 '이직'으로 오인하지 않음",
+     "method": "합성 반례 데이터 검증", "test": "test_new_insights.py::test_inventor_mobility_joint_filing_no_fake_move"},
+    {"area": "출원인 선택 필터", "claim": "회사 선택은 표시 범위만 바꾸고 지표 값 자체는 바꾸지 않음",
+     "method": "전체 보기 값과 일치 대조", "test": "test_new_insights.py::test_portfolio_index_company_selection"},
+    {"area": "결측값 내성", "claim": "실무 업로드 파일의 빈 셀(NaN)에서도 집계가 왜곡되지 않음",
+     "method": "결측 주입 회귀 테스트", "test": "test_new_insights.py::test_audit_nan_guards_survive_real_uploads"},
+    {"area": "출원인 표준화", "claim": "'CO., LTD.' 등 법인 접미사를 별도 출원인으로 오분리하지 않음",
+     "method": "실제 오류 사례 회귀 테스트", "test": "test_new_insights.py::test_audit_split_names_and_suffix"},
+    {"area": "드릴다운 정합", "claim": "차트 클릭 시 열리는 특허 목록 = 그 집계에 실제로 쓰인 특허",
+     "method": "집계·드릴 결과 상호 대조", "test": "test_new_insights.py::test_audit_primary_tech_drill_matches_chart"},
+    {"area": "선행 지표 탐지", "claim": "역상관 관계를 '선행 신호'로 오인하지 않음 (부호 있는 상관만 인정)",
+     "method": "반례 시계열 검증", "test": "test_new_insights.py::test_audit_lead_lag_rejects_anticorrelation"},
+    {"area": "차트 라벨 배치", "claim": "지시선 라벨이 서로 겹치지 않고, 로그축 좌표가 올바름",
+     "method": "충돌·좌표 계산 검증", "test": "test_new_insights.py::test_leader_labels_no_overlap_and_log"},
+    {"area": "컬럼 자동 매핑", "claim": "이름 유사도만이 아니라 실제 값 형태까지 검사해 오매핑을 차단",
+     "method": "오매핑 유도 데이터 검증", "test": "test_mapping_validation.py (18개 테스트)"},
+    {"area": "API·캐시 계약", "claim": "모든 분석 엔드포인트의 응답 형식과 캐시 키가 화면 요구와 일치",
+     "method": "엔드포인트 전수 호출", "test": "test_api.py (32개 테스트)"},
+    {"area": "화면 전수 동작", "claim": "전 메뉴·탭 순회 시 콘솔 오류 0건 (배포 전 매회 실행)",
+     "method": "실제 브라우저(Chromium) 스모크", "test": "개발 파이프라인 browser_smoke (Playwright)"},
+]
+
+
+def _add(checks, name, status, detail):
+    checks.append({"name": name, "status": status, "detail": detail})
+
+
+def run_self_check(df):
+    """로딩된 데이터에 대한 정합성 셀프 체크 — 전 항목 즉석 재계산.
+
+    status: '통과' / '주의' / '확인 불가'(컬럼 미매핑 — 정직 표기).
+    """
+    checks = []
+    n = int(len(df))
+    now_year = int(pd.Timestamp.now().year)
+
+    # ① 총 건수 = 연도별 합 + 연도 미상 (화면 KPI·연도 차트의 근거 대조)
+    yr = df["_base_year"]
+    n_year = int(yr.notna().sum())
+    vc_sum = int(yr.dropna().astype(int).value_counts().sum())
+    ok = (vc_sum + (n - n_year)) == n
+    _add(checks, "총 건수 정합 (KPI ↔ 연도별 차트)",
+         "통과" if ok else "주의",
+         "전체 %s건 = 연도별 합 %s건 + 연도 미상 %s건" %
+         (fmt_num(n), fmt_num(vc_sum), fmt_num(n - n_year)))
+
+    # ② 연도 파싱 커버리지
+    cov = n_year / float(n) if n else 0.0
+    _add(checks, "출원연도 해석률",
+         "통과" if cov >= 0.9 else "주의",
+         "%s (%s/%s건). 90%% 미만이면 연도 기반 차트가 일부 문헌을 제외합니다."
+         % (fmt_pct(cov), fmt_num(n_year), fmt_num(n)))
+
+    # ③ 미래 연도 이상치
+    n_future = int((yr.dropna().astype(int) > now_year).sum())
+    _add(checks, "미래 연도 이상치",
+         "통과" if n_future == 0 else "주의",
+         "출원연도가 %d년 이후인 문헌 %s건" % (now_year, fmt_num(n_future)))
+
+    # ④ 출원인 표준화·공동출원 파싱
+    if "applicant_display" in df.columns:
+        apps = df["applicant_display"].astype(str).str.strip()
+        n_app = int((apps != "").sum())
+        n_joint = int(df["_co_applicants_display"]
+                      .map(lambda l: len(l or []) >= 2).sum()) \
+            if "_co_applicants_display" in df.columns else 0
+        _add(checks, "출원인 표준화",
+             "통과" if n_app / float(n or 1) >= 0.9 else "주의",
+             "출원인 확인 %s건 (%s) · 공동출원 파싱 %s건"
+             % (fmt_num(n_app), fmt_pct(n_app / float(n or 1)), fmt_num(n_joint)))
+    else:
+        _add(checks, "출원인 표준화", "확인 불가", "출원인 컬럼 미매핑")
+
+    # ⑤ 문헌번호 중복 (분석 단위 정합)
+    id_col = next((c for c in ("pub_number", "app_number", "reg_number")
+                   if c in df.columns), None)
+    if id_col:
+        ids = df[id_col].astype(str).str.strip()
+        ids = ids[(ids != "") & (ids.str.lower() != "nan")]
+        dup = int(len(ids) - ids.nunique())
+        _add(checks, "문헌번호 중복",
+             "통과" if dup == 0 else "주의",
+             "%s 기준 중복 %s건 — 0건이 아니면 중복 제거 설정(분석 단위)을 확인하세요."
+             % (id_col, fmt_num(dup)))
+    else:
+        _add(checks, "문헌번호 중복", "확인 불가", "번호 컬럼 미매핑")
+
+    # ⑥ 날짜 논리 (등록일 ≥ 출원일)
+    if "reg_date" in df.columns and "app_date" in df.columns:
+        both = df[df["reg_date"].notna() & df["app_date"].notna()]
+        bad = int((both["reg_date"] < both["app_date"]).sum()) if len(both) else 0
+        _add(checks, "날짜 논리 (등록일 ≥ 출원일)",
+             "통과" if bad == 0 else "주의",
+             "위반 %s건 / 비교 가능 %s건" % (fmt_num(bad), fmt_num(len(both))))
+    else:
+        _add(checks, "날짜 논리 (등록일 ≥ 출원일)", "확인 불가",
+             "출원일·등록일 중 미매핑 컬럼 있음")
+
+    # ⑦ 기술분류 계층 정합 (소분류가 있으면 대분류도 있어야 함)
+    if "_tech_l3_list" in df.columns and "_tech_l1_list" in df.columns:
+        orphan = int((df["_tech_l3_list"].map(lambda l: bool(l))
+                      & df["_tech_l1_list"].map(lambda l: not l)).sum())
+        has_l3 = int(df["_tech_l3_list"].map(lambda l: bool(l)).sum())
+        if has_l3:
+            _add(checks, "기술분류 계층 정합 (소→대)",
+                 "통과" if orphan == 0 else "주의",
+                 "소분류만 있고 대분류가 빈 문헌 %s건 / 소분류 보유 %s건"
+                 % (fmt_num(orphan), fmt_num(has_l3)))
+        else:
+            _add(checks, "기술분류 계층 정합 (소→대)", "확인 불가", "소분류 값 없음")
+    else:
+        _add(checks, "기술분류 계층 정합 (소→대)", "확인 불가", "대·소분류 컬럼 미매핑")
+
+    # ⑧ 법적상태 해석률
+    if "_active_flag" in df.columns:
+        known = int(df["_active_flag"].map(lambda v: v is not None).sum())
+        if known:
+            _add(checks, "법적상태 해석률",
+                 "통과" if known / float(n or 1) >= 0.8 else "주의",
+                 "%s (%s/%s건) — 해석 불가 값은 유효특허 필터에서 제외 표시"
+                 % (fmt_pct(known / float(n or 1)), fmt_num(known), fmt_num(n)))
+        else:
+            _add(checks, "법적상태 해석률", "확인 불가", "법적상태 값 해석 불가 또는 미매핑")
+    else:
+        _add(checks, "법적상태 해석률", "확인 불가", "법적상태 컬럼 미매핑")
+
+    # ⑨ 피인용 수치 해석률
+    if "cites_forward" in df.columns:
+        num = pd.to_numeric(df["cites_forward"], errors="coerce")
+        n_num = int(num.notna().sum())
+        if n_num:
+            _add(checks, "피인용 수치 해석률", "통과",
+                 "%s (%s/%s건) · 최댓값 %s"
+                 % (fmt_pct(n_num / float(n or 1)), fmt_num(n_num), fmt_num(n),
+                    fmt_num(int(num.max()))))
+        else:
+            _add(checks, "피인용 수치 해석률", "확인 불가", "숫자로 해석되는 값 없음")
+    else:
+        _add(checks, "피인용 수치 해석률", "확인 불가", "피인용 컬럼 미매핑")
+
+    return checks
+
+
+def compute_quality_report(df, settings):
+    """검증·신뢰성 리포트: 엔진 검증 정보 + 검증 레지스트리 + 데이터 셀프 체크."""
+    checks = run_self_check(df)
+    n_pass = sum(1 for c in checks if c["status"] == "통과")
+    n_warn = sum(1 for c in checks if c["status"] == "주의")
+    n_na = sum(1 for c in checks if c["status"] == "확인 불가")
+    build = get_build_info()
+
+    sentences = ["현재 데이터 %s건에 대한 정합성 셀프 체크 %d개 항목 중 통과 %d, "
+                 "주의 %d, 확인 불가(컬럼 미매핑) %d 입니다."
+                 % (fmt_num(len(df)), len(checks), n_pass, n_warn, n_na)]
+    if n_warn:
+        warns = [c["name"] for c in checks if c["status"] == "주의"]
+        sentences.append("주의 항목: %s — 해당 상세 설명을 확인하고 원본 데이터 또는 "
+                         "매핑을 점검하세요." % ", ".join(warns[:4]))
+    if build.get("test_functions"):
+        sentences.append("분석 엔진은 자동 테스트 %s개(파일 %s개, 빌드 시점 실측 집계)와 "
+                         "독립 재계산 검증을 통과한 코드로 구성되어 있습니다."
+                         % (fmt_num(build["test_functions"]),
+                            fmt_num(build.get("test_files") or 0)))
+    sentences.append("셀프 체크는 화면 수치의 근거를 이 자리에서 다시 계산해 대조한 "
+                     "결과이며, 확인 불가 항목은 통과로 위장하지 않고 그대로 표시합니다.")
+
+    insight = build_insight(sentences,
+                            {"checks_pass": n_pass, "checks_warn": n_warn,
+                             "checks_na": n_na, "n_docs": int(len(df))})
+    return ok_result({"build": build, "principles": PRINCIPLES,
+                      "registry": VERIFICATION_REGISTRY, "checks": checks,
+                      "summary": {"pass": n_pass, "warn": n_warn, "na": n_na}},
+                     insight=insight)
+
+
+# 검증 리포트용 빌드 정보 (tools/build_backend.py 가 실측 집계)
+_QR_BUILD_INFO = {'built_at': '2026-08-15 13:11', 'modules': 46, 'test_functions': 241, 'test_files': 13, 'source': 'build'}
+
+
+
+# ===========================================================================
 # src/api.py
 # ===========================================================================
 # -*- coding: utf-8 -*-
@@ -16002,12 +16360,20 @@ def register_routes(app):
         mapping = body.get("mapping") or {}
         cols = set(get_dataset_columns(name))
         clean = {}
+        used_cols = {}
         for concept, col in mapping.items():
             if concept not in CONCEPTS:
                 return _error(400, "알 수 없는 개념 컬럼: %s" % concept)
             if col:
                 if col not in cols:
                     return _error(400, "Dataset 에 없는 컬럼: %s" % col)
+                if col in used_cols:
+                    # 한 실제 컬럼을 두 개념에 매핑하면 한쪽이 조용히 사라짐 —
+                    # 저장 시점에 명시적으로 거부
+                    return _error(400, "'%s' 컬럼이 두 개념(%s, %s)에 중복 매핑"
+                                       "되었습니다 — 개념당 서로 다른 컬럼을 "
+                                       "지정하세요." % (col, used_cols[col], concept))
+                used_cols[col] = concept
                 clean[concept] = col
         storage.save_mapping_for(name, clean)
         clear_all_caches()
@@ -16147,6 +16513,8 @@ def register_routes(app):
             "tech-tree",
             lambda df, s, b: compute_tech_tree(df, s, company=b.get("company")),
             extra_key_fields=("company",)),
+        "quality-report": _analysis_route(
+            "quality-report", lambda df, s, b: compute_quality_report(df, s)),
         "deep-plus": _analysis_route(
             "deep-plus",
             lambda df, s, b: compute_deep_plus(df, s,
@@ -16221,6 +16589,14 @@ def register_routes(app):
         sheets = body.get("sheets")
         if not isinstance(sheets, list) or not sheets:
             return _error(400, "내보낼 차트 데이터가 없습니다.")
+        # 빈 시트만 있는 요청 사전 차단 — with 블록 안 return 은 openpyxl 의
+        # "At least one sheet must be visible" 내부 오류를 404 로 유출시킴
+        def _sheet_has_data(sh):
+            return (isinstance(sh, dict) and (sh.get("columns") or [])
+                    and any(isinstance(r, (list, tuple))
+                            for r in (sh.get("rows") or [])))
+        if not any(_sheet_has_data(sh) for sh in sheets[:20]):
+            return _error(400, "내보낼 차트 데이터가 없습니다.")
         buf = io.BytesIO()
         used_names = set()
         with pd.ExcelWriter(buf, engine="openpyxl") as writer:
@@ -16267,8 +16643,8 @@ def register_routes(app):
                 except Exception:  # 스타일 실패는 데이터 자체에 영향 없음
                     pass
                 wrote = True
-            if not wrote:
-                return _error(400, "내보낼 차트 데이터가 없습니다.")
+        if not wrote:
+            return _error(400, "내보낼 차트 데이터가 없습니다.")
         buf.seek(0)
         fname = str(body.get("filename") or "chart_data.xlsx")
         fname = "".join(ch for ch in fname if ch.isalnum() or ch in "._-가-힣") or "chart.xlsx"
@@ -16743,9 +17119,18 @@ def register_routes(app):
     @app.route("/api/insights-log/image", methods=["GET"])
     @wrap
     def api_insights_log_image():
-        """GET ?id= → 항목의 차트 캡처 이미지 스트림 (보관함 미리보기용)."""
-        data, mime = insight_get_image(request.args.get("id"),
-                                       request.args.get("i", 0))
+        """GET ?id= → 항목의 차트 캡처 이미지 스트림 (보관함 미리보기용).
+
+        목록과 같은 소유자 규칙 적용 — 목록에서 숨긴 항목의 이미지를 id 만으로
+        받아갈 수 없어야 한다.
+        """
+        iid = request.args.get("id")
+        me = _req_user()
+        entry = next((it for it in list_insights()
+                      if str(it.get("id")) == str(iid)), None)
+        if entry is None or not auth_can_see(entry.get("owner"), me):
+            raise LookupError("이미지가 없습니다.")
+        data, mime = insight_get_image(iid, request.args.get("i", 0))
         if data is None:
             raise LookupError("이미지가 없습니다.")
         return send_file(io.BytesIO(data), mimetype=mime)

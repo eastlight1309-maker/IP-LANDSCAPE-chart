@@ -43,10 +43,21 @@ _EMB_NORM_RE = re.compile(r"[^0-9A-Za-z가-힣]")
 
 
 def _norm_key(value):
-    """출원번호/공개번호 정규화 — 형식 차이(하이픈·공백·점)를 흡수한다."""
-    s = str(value).strip()
+    """출원번호/공개번호 정규화 — 형식 차이(하이픈·공백·점)를 흡수한다.
+
+    엑셀 숫자 컬럼이 float 로 읽히면 str() 가 '1020190123456.0' 을 만들고,
+    점만 제거하면 뒤에 가짜 0 이 붙어 영원히 매칭 실패한다 → '.0' 꼬리를
+    먼저 잘라낸다 (실제 소수점 번호는 특허 번호 체계에 존재하지 않음).
+    """
+    if value is None or (isinstance(value, float) and np.isnan(value)):
+        return ""
+    if isinstance(value, float) and float(value).is_integer():
+        s = str(int(value))
+    else:
+        s = str(value).strip()
     if not s or s.lower() in ("nan", "none"):
         return ""
+    s = re.sub(r"\.0+$", "", s)
     return _EMB_NORM_RE.sub("", s).upper()
 
 

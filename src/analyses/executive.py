@@ -43,6 +43,12 @@ def _pick_focal(df, settings, company=None):
     counts = apps.value_counts()
     if company and str(company) in counts.index:
         return str(company), "화면에서 선택"
+    if company:
+        # 공동출원으로만 등장하는 회사도 선택 존중 — 조용히 다른 회사로
+        # 바꿔 분석하면 사용자가 알아채지 못한 채 엉뚱한 결과를 보게 됨
+        from src.analyses.common import applicant_mask
+        if applicant_mask(df, str(company), scope="any").any():
+            return str(company), "화면에서 선택 (공동출원 포함)"
     for own in (settings or {}).get("own_company_names") or []:
         if str(own) in counts.index:
             return str(own), "Settings 자사명"
@@ -58,7 +64,12 @@ def _growth_of(df, mask, recent):
     years = df.loc[mask, "_base_year"].dropna().astype(int)
     if len(years) < 3:
         return None
-    g, _m = robust_growth(year_counts(years), recent_years=recent)
+    # '최근 N년' 창은 전체 데이터셋 최신 연도에 고정 — 출원이 끊긴 대상이
+    # 자기 마지막 연도 기준으로 고성장으로 표시되는 왜곡 방지
+    all_years = df["_base_year"].dropna()
+    y_max = int(all_years.max()) if len(all_years) else int(years.max())
+    g, _m = robust_growth(year_counts(years, year_max=y_max),
+                          recent_years=recent)
     return g
 
 
@@ -77,15 +88,18 @@ def compute_executive_summary(df, settings, company=None):
     recent_from = max_year - recent + 1
     apps = df["applicant_display"]
     counts = apps.replace("", np.nan).dropna().value_counts()
-    focal_mask = apps == focal
+    # 공동출원 포함 membership 기준 — 공동출원으로만 등장하는 자사도 집계
+    from src.analyses.common import applicant_mask
+    focal_mask = applicant_mask(df, focal, scope="any")
 
     # ---- ① KPI ------------------------------------------------------------
-    rank_all = int(list(counts.index).index(focal)) + 1
+    rank_all = (int(list(counts.index).index(focal)) + 1
+                if focal in counts.index else None)
     rec_df = df[df["_base_year"] >= recent_from]
     rec_counts = rec_df["applicant_display"].replace("", np.nan).dropna().value_counts()
     rank_recent = (int(list(rec_counts.index).index(focal)) + 1
                    if focal in rec_counts.index else None)
-    share = float(counts[focal]) / float(len(df))
+    share = float(focal_mask.sum()) / float(len(df))
     g_focal = _growth_of(df, focal_mask, recent)
     g_market = _growth_of(df, pd.Series(True, index=df.index), recent)
     has_cites = "cites_forward" in df.columns and df["cites_forward"].notna().any()
@@ -106,7 +120,7 @@ def compute_executive_summary(df, settings, company=None):
             expiring_share = float(soon.mean())
     kpi = {"focal": focal, "focal_basis": focal_basis,
            "rank_all": rank_all, "rank_recent": rank_recent,
-           "n_focal": int(counts[focal]), "share": round(share, 4),
+           "n_focal": int(focal_mask.sum()), "share": round(share, 4),
            "growth_focal": round(g_focal, 4) if g_focal is not None else None,
            "growth_market": round(g_market, 4) if g_market is not None else None,
            "quality_focal": round(q_focal, 2) if q_focal is not None else None,
@@ -315,8 +329,11 @@ def compute_executive_summary(df, settings, company=None):
 
     sentences = []
     period = period_label(df)
-    sentences.append("%s 기준 '%s'는 출원량 시장 %d위(점유율 %s)%s입니다."
-                     % (period, focal, rank_all, fmt_pct(share),
+    sentences.append("%s 기준 '%s'는 출원량 시장 %s(점유율 %s)%s입니다."
+                     % (period, focal,
+                        ("%d위" % rank_all) if rank_all else
+                        "순위 미산정 (공동출원 전용 출원인)",
+                        fmt_pct(share),
                         (", 최근 %d년 %d위" % (recent, rank_recent))
                         if rank_recent else ""))
     if g_focal is not None and g_market is not None:

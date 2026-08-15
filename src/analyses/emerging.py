@@ -30,7 +30,7 @@ Drill-down: 버블 클릭 → {"type":"combo","a":…,"b":…}.
 import numpy as np
 
 from src.config import get_threshold, get_limit, get_weights
-from src.metrics import lift as lift_fn, robust_growth, year_counts, \
+from src.metrics import lift as _emerging_lift, robust_growth, year_counts, \
     normalize_series, weighted_geometric_mean
 from src.preprocessing import build_l1_lookup
 from src.analyses.common import combo_counts, diagnose_year_tech
@@ -57,10 +57,14 @@ def compute_emerging(df, settings):
     rows = []
     for _, r in pairs.iterrows():
         a, b = r["a"], r["b"]
-        series = year_counts(r["years"]) if r["years"] else None
+        # year_max 고정: 마지막 출원이 오래된 조합이 자기 마지막 연도 기준으로
+        # '최근 성장'을 얻는 왜곡 방지 — 최근 N년 창은 데이터셋 최신 연도 기준
+        series = (year_counts(r["years"], year_max=int(years.max()))
+                  if r["years"] else None)
         growth, g_method = (robust_growth(series, recent_years=recent)
                             if series is not None and len(series) else (None, "insufficient"))
-        lift_v = lift_fn(int(r["n_ab"]), tech_counts.get(a, 0), tech_counts.get(b, 0), n_docs)
+        lift_v = _emerging_lift(int(r["n_ab"]), tech_counts.get(a, 0),
+                                tech_counts.get(b, 0), n_docs)
         n_new = len(r["new_applicants"])
         l1a, l1b = l1_lookup.get(a), l1_lookup.get(b)
         diversity = 1.0 if (l1a and l1b and l1a != l1b) else 0.5
