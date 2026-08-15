@@ -218,7 +218,7 @@ GPU 환경(선택): RAPIDS `cuml`/`cupy` 가 설치되어 있으면 PCA/UMAP/HDB
 
 ```bash
 pip install pandas numpy scikit-learn scipy flask openpyxl pytest networkx
-python -m pytest tests/            # 77 tests
+python -m pytest tests/            # 전체 테스트 (빌드 시점 실측 집계는 앱의 검증 리포트에 표시)
 python generate_sample_data.py sample_patents.csv --rows 600
 IP_LANDSCAPE_DATA_DIR=. python webapp/backend.py --serve 5000   # CSV 폴백 모드
 ```
@@ -226,6 +226,20 @@ IP_LANDSCAPE_DATA_DIR=. python webapp/backend.py --serve 5000   # CSV 폴백 모
 테스트 커버리지(요구 케이스): ①필수 컬럼 완비 ②선택 컬럼 누락 ③다중분류
 쉼표/세미콜론/파이프/JSON ④1건뿐인 분류 ⑤최근 연도 0건 ⑥중복 패밀리 ⑦출원인명
 다형 ⑧법적상태 누락 ⑨인용 없음 ⑩임베딩 없음 ⑪50,000건 성능 ⑫한·영·일 혼재.
+
+### 검증 체계 (앱 화면에도 공개 — Data Quality → 검증 리포트)
+
+- **독립 재계산 검증**: 생존곡선(Kaplan-Meier)은 손계산 표본과 대조, 기술 DNA
+  각 축은 정의표대로 재계산해 대조, 차트 집계는 원본 데이터 수동 집계와 대조.
+- **반례(함정) 회귀 테스트**: 공동출원 중복 카운팅, 발명자 이동 오인, 법인
+  접미사 오분리, 역상관의 선행신호 오인, 실무 파일의 결측(NaN) 왜곡 등
+  실제로 발견해 수정한 버그마다 재발 방지 테스트를 남김.
+- **계약 테스트**: 전 API 엔드포인트 호출·캐시 키·오류 형식 검증 + 실제
+  브라우저(Chromium/Playwright) 전 메뉴 순회 스모크(콘솔 오류 0건 기준).
+- **정직성 규칙**: 계산 불가는 이유와 함께 '계산 불가'로, 표본 부족은 경고로
+  표시 — 검증 리포트의 셀프 체크도 확인 불가 항목을 통과로 위장하지 않음.
+- 빌드 스크립트(`tools/build_backend.py`)가 테스트 수를 **실측 집계**해 병합
+  파일에 기록하며, 앱은 그 값을 그대로 표시한다 (지어낸 수치 금지).
 
 ## 5. API 요약
 
@@ -236,6 +250,7 @@ IP_LANDSCAPE_DATA_DIR=. python webapp/backend.py --serve 5000   # CSV 폴백 모
 `/api/claim-density` `/api/citation-diffusion` `/api/inventor-mobility`
 `/api/classification-quality` `/api/problem-solution` `/api/patents`
 `/api/insight` `/api/export` `/api/project/save` `/api/project/load`
+`/api/quality-report`
 (+ `/api/settings` `/api/applicant-rules` `/api/filter-state`)
 
 - 오류 표준 형식: `{"status":"error","code":…,"message":…}`
