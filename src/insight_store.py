@@ -215,6 +215,28 @@ def _to_slides(items, report_title):
                                      (" · Q: %s" % it["question"])
                                      if it.get("question") else "")
         lines = [meta_line] + lines
+        # 차트 요지 추출: 차트 페이지 하단 캡션으로 이동하고 인사이트 페이지에선
+        # 제거 — "차트 페이지=차트+의미 한 줄, 나머지 전부 다음 페이지" 구성
+        caption = None
+        for j, s in enumerate(lines):
+            st = str(s)
+            if st.startswith("[차트 요지]") or st.startswith("[차트 개요]"):
+                cap = st.split("]", 1)[1].strip()
+                if not cap and j + 1 < len(lines) \
+                        and not str(lines[j + 1]).lstrip().startswith("["):
+                    cap = str(lines.pop(j + 1)).lstrip("-·• ").strip()
+                caption = cap or None
+                lines.pop(j)
+                break
+        if caption is None:
+            # 마커 없는 항목(규칙 기반 등): 첫 본문 문장을 요지로 사용
+            for j, s in enumerate(lines):
+                st = str(s)
+                if st.startswith("·") or st.startswith("["):
+                    continue
+                caption = st.lstrip("-·• ").strip()
+                lines.pop(j)
+                break
         images = []
         for path in _image_paths(it):
             try:
@@ -223,10 +245,16 @@ def _to_slides(items, report_title):
                                    "png" if path.endswith(".png") else "jpg"))
             except OSError:
                 continue
-        # ① 차트 페이지: 첫 차트를 한 페이지 가득 배치
+        if images is not None and not images and caption is not None:
+            # 차트 이미지가 없으면 요지를 인사이트 페이지 첫 줄로 되돌린다
+            lines.insert(1 if lines and str(lines[0]).startswith("·") else 0,
+                         caption)
+            caption = None
+        # ① 차트 페이지: 첫 차트를 한 페이지에 배치 + 바로 아래 요지 캡션
         if images:
             img0, ext0 = images[0]
-            slides.append({"title": title[:120], "lines": [],
+            slides.append({"title": title[:120],
+                           "lines": [caption] if caption else [],
                            "image": img0, "ext": ext0, "image_full": True,
                            "kind": "chart"})
         # ② 다음 페이지: 그 차트의 인사이트 텍스트 (길면 이어짐 분할)
@@ -266,6 +294,8 @@ def _pptx_via_library(slides):
     TEXT = RGBColor(0x33, 0x3F, 0x4E)     # 본문
     SOFT = RGBColor(0x8A, 0x99, 0xA8)     # 메타·푸터
     COVER_SUB = RGBColor(0xC9, 0xD7, 0xEA)
+    PANEL = RGBColor(0xF1, 0xF6, 0xFB)    # 캡션·핵심 메시지 패널 배경
+    WARN = RGBColor(0x9A, 0x6A, 0x1B)     # 유의사항
     PAGE_W, PAGE_H = Inches(13.333), Inches(7.5)
     KOR_FONT = "맑은 고딕"
 
@@ -374,9 +404,34 @@ def _pptx_via_library(slides):
         has_img = bool(sl.get("image"))
 
         if has_img and sl.get("image_full"):
-            # 차트 페이지: 비율 유지 최대 배치
-            _add_picture_fit(slide, sl["image"], Inches(0.7), Inches(1.4),
-                             Inches(11.93), Inches(5.55))
+            caption = str(sl["lines"][0]) if sl.get("lines") else ""
+            if caption:
+                # 차트 + 바로 아래 '이 차트의 의미' 캡션 패널
+                _add_picture_fit(slide, sl["image"], Inches(0.7), Inches(1.38),
+                                 Inches(11.93), Inches(4.78))
+                panel = slide.shapes.add_shape(
+                    MSO_SHAPE.ROUNDED_RECTANGLE, Inches(0.7), Inches(6.28),
+                    Inches(11.93), Inches(0.74))
+                panel.fill.solid()
+                panel.fill.fore_color.rgb = PANEL
+                panel.line.color.rgb = ACCENT
+                panel.line.width = Emu(9525)
+                panel.shadow.inherit = False
+                cb = slide.shapes.add_textbox(Inches(0.95), Inches(6.33),
+                                              Inches(11.45), Inches(0.66))
+                ctf = cb.text_frame
+                ctf.word_wrap = True
+                p0 = ctf.paragraphs[0]
+                r0 = p0.add_run()
+                r0.text = "이 차트의 의미  "
+                _font(r0, 10.5, bold=True, color=ACCENT)
+                r1 = p0.add_run()
+                r1.text = caption[:220]
+                _font(r1, 12.5, bold=True, color=NAVY)
+            else:
+                # 캡션이 없으면 기존처럼 이미지 최대 배치
+                _add_picture_fit(slide, sl["image"], Inches(0.7), Inches(1.4),
+                                 Inches(11.93), Inches(5.55))
             _footer(slide, report_title, idx + 1)
             continue
         if has_img:  # (구버전 좌图우문 레이아웃 항목 호환)
@@ -386,10 +441,21 @@ def _pptx_via_library(slides):
         else:
             body_x, body_w, fsize = Inches(0.85), Inches(11.9), 13
 
+        if kind == "insight" and not has_img:
+            # 임원 보고용: 본문 뒤 옅은 패널 — 텍스트 벽이 아닌 카드처럼 보이게
+            bg = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE,
+                                        Inches(0.55), Inches(1.36),
+                                        Inches(12.23), Inches(5.62))
+            bg.fill.solid()
+            bg.fill.fore_color.rgb = PANEL
+            bg.line.fill.background()
+            bg.shadow.inherit = False
+
         body = slide.shapes.add_textbox(body_x, Inches(1.5), body_w, Inches(5.45))
         tf = body.text_frame
         tf.word_wrap = True
         used = [False]
+        section = ""  # 현재 [섹션] — 섹션별 본문 스타일 차등
         for i, line in enumerate(sl["lines"]):
             s = str(line)
             p = _para(tf, used)
@@ -413,18 +479,46 @@ def _pptx_via_library(slides):
                 _font(r, 9, color=SOFT)
                 p.space_after = Pt(6)
             elif s.startswith("["):
-                r.text = s.strip("[]").strip() if s.endswith("]") else s
-                _font(r, fsize + 2, bold=True, color=ACCENT)
-                p.space_before = Pt(12)
-                p.space_after = Pt(3)
-            elif s.startswith(("-", "·", "•")):
-                r.text = "•  " + s.lstrip("-·• ").strip()
-                _font(r, fsize, color=TEXT)
-                p.level = 1
+                head = s.strip("[]").strip() if s.endswith("]") else s
+                section = head
+                inline = ""
+                if "]" in s and not s.endswith("]"):
+                    head, inline = s.split("]", 1)[0].strip("[ "), \
+                        s.split("]", 1)[1].strip()
+                    section = head
+                r.text = "▎" + head
+                _font(r, fsize + 2.5, bold=True,
+                      color=NAVY if "핵심" in head else ACCENT)
+                p.space_before = Pt(13)
                 p.space_after = Pt(4)
+                if inline:  # '[유의사항] 내용' 처럼 한 줄 섹션
+                    r2 = p.add_run()
+                    r2.text = "  " + inline
+                    _font(r2, fsize - 1 if "유의" in head else fsize,
+                          color=WARN if "유의" in head else TEXT)
+            elif s.startswith(("-", "·", "•")):
+                body_txt = s.lstrip("-·• ").strip()
+                if "핵심" in section:
+                    r.text = "■  " + body_txt   # 핵심 메시지: 강조 불릿
+                    _font(r, fsize + 1, bold=True, color=NAVY)
+                    p.space_after = Pt(6)
+                elif "시사점" in section or "제언" in section:
+                    r.text = "➤  " + body_txt   # 액션: 화살 불릿
+                    _font(r, fsize, color=TEXT)
+                    p.space_after = Pt(5)
+                elif "유의" in section:
+                    r.text = "•  " + body_txt
+                    _font(r, fsize - 1.5, color=WARN)
+                    p.space_after = Pt(3)
+                else:
+                    r.text = "•  " + body_txt
+                    _font(r, fsize, color=TEXT)
+                    p.space_after = Pt(4)
+                p.level = 1
             else:
                 r.text = s
-                _font(r, fsize, color=TEXT)
+                _font(r, fsize - 1.5 if "유의" in section else fsize,
+                      color=WARN if "유의" in section else TEXT)
                 p.space_after = Pt(4)
         _footer(slide, report_title, idx + 1)
 

@@ -1878,11 +1878,15 @@ def test_llm_augment_structured_and_rich(monkeypatch):
     assert len(out["sentences"]) == 12          # 기존 5문장 상한 제거
     p = captured["prompt"]
     assert "차트 의미·해석 가이드" in p and "연도별 출원 동향" in p
-    # PPT 슬라이드 형식 요청 (제목/핵심 메시지/근거/제언/유의)
-    for marker in ("[슬라이드 제목]", "[핵심 메시지]", "[근거 데이터]",
-                   "[시사점·제언]", "[유의사항]"):
+    # PPT 슬라이드 형식 요청 (제목/요지/핵심 메시지/근거/전문가 해석/제언/유의)
+    for marker in ("[슬라이드 제목]", "[차트 요지]", "[핵심 메시지]",
+                   "[근거 데이터]", "[전문가 해석]", "[시사점·제언]",
+                   "[유의사항]"):
         assert marker in p
-    assert captured["max_tokens"] >= 1400
+    # 전문가 관점 요구: 뻔한 차트 묘사 지양 + 전략 해석 관점 명시
+    assert "So What" in p and "경쟁 구도" in p and "수명주기" in p
+    assert "(단기)" in p and "억지 해석 금지" in p
+    assert captured["max_tokens"] >= 2000
 
 
 def test_format_web_context_sanitizes():

@@ -218,14 +218,19 @@ def test_chart_page_then_insight_page(tmp_path, monkeypatch):
     monkeypatch.setenv("IP_LANDSCAPE_UPLOAD_DIR", str(tmp_path))
     add_insight("basic-stats", "연도별 출원 동향", _SENTS, chart_image=_DATA_URL)
     slides = _to_slides(list_insights(), "보고서")
-    # 표지·목차 다음: 차트 전체 페이지 → 인사이트 텍스트 페이지
+    # 표지·목차 다음: 차트+요지 캡션 페이지 → 인사이트 텍스트 페이지
     chart_idx = next(i for i, s in enumerate(slides) if s.get("image"))
     chart = slides[chart_idx]
-    assert chart.get("image_full") and not chart["lines"]  # 차트만 한 페이지
+    assert chart.get("image_full")
+    # 차트 바로 아래 '차트 요지' 캡션 한 줄 ([차트 개요/요지] 마커에서 추출)
+    assert chart["lines"] == ["연도별 출원 동향"]
     nxt = slides[chart_idx + 1]
     assert nxt["image"] is None and "인사이트" in nxt["title"]
     assert "패키징" in nxt["title"]  # [슬라이드 제목] 헤드라인 승격 유지
     assert any("핵심 메시지" in str(l) for l in nxt["lines"])  # 본문이 다음 페이지에
+    # 요지 줄은 다음 페이지에서 중복되지 않음 — 나머지 정보만 다음 페이지
+    assert not any("[차트 개요]" in str(l) or "[차트 요지]" in str(l)
+                   for l in nxt["lines"])
 
 
 def test_pptx_executive_styling(tmp_path, monkeypatch):
@@ -247,17 +252,26 @@ def test_pptx_executive_styling(tmp_path, monkeypatch):
                   if "IP 보고서" in r.text]
     assert title_runs and title_runs[0].font.color.rgb == RGBColor(0xFF, 0xFF, 0xFF)
     assert title_runs[0].font.name == "맑은 고딕"
-    # 인사이트 페이지: [섹션] 머리글이 악센트 컬러 볼드, 불릿 변환
+    # 차트 페이지: 차트 바로 아래 '이 차트의 의미' 캡션 패널
+    chart_slide = prs.slides[2]
+    cap_runs = [r.text for sh in chart_slide.shapes if sh.has_text_frame
+                for p in sh.text_frame.paragraphs for r in p.runs]
+    assert any("이 차트의 의미" in t for t in cap_runs)
+    assert any("연도별 출원 동향" in t for t in cap_runs)
+    # 인사이트 페이지: [섹션] 머리글 ▎접두 볼드 (핵심 메시지=네이비 강조)
     ins = prs.slides[3]
     heads = [r for sh in ins.shapes if sh.has_text_frame
              for p in sh.text_frame.paragraphs for r in p.runs
-             if r.text == "핵심 메시지"]
+             if r.text == "▎핵심 메시지"]
     assert heads and heads[0].font.bold \
-        and heads[0].font.color.rgb == RGBColor(0x2E, 0x74, 0xB5)
-    bullets = [r.text for sh in ins.shapes if sh.has_text_frame
-               for p in sh.text_frame.paragraphs for r in p.runs
-               if r.text.startswith("•")]
-    assert bullets
+        and heads[0].font.color.rgb == RGBColor(0x1F, 0x38, 0x64)
+    # 핵심 메시지 불릿은 ■ 강조, 시사점 불릿은 ➤ 화살
+    all_runs = [r.text for sh in ins.shapes if sh.has_text_frame
+                for p in sh.text_frame.paragraphs for r in p.runs]
+    assert any(t.startswith("■") for t in all_runs)
+    assert any(t.startswith("➤") for t in all_runs)
+    # 요지 캡션 줄은 인사이트 페이지에서 중복되지 않음
+    assert not any("이 차트의 의미" in t for t in all_runs)
     # 푸터: 페이지 번호 텍스트 존재 (표지 제외)
     nums = [r.text for sh in prs.slides[2].shapes if sh.has_text_frame
             for p in sh.text_frame.paragraphs for r in p.runs]
@@ -307,3 +321,26 @@ def test_insights_log_job_grouping(client):
     assert labels["현재 작업 인사이트"] == "2026 배터리 조사 (김특허)"
     assert labels["이전 작업 인사이트"] == "old_ds"
     assert labels["작업 미지정 인사이트"] == "작업 미지정"
+
+
+def test_chart_caption_fallback_rule_based(tmp_path, monkeypatch):
+    """마커 없는 규칙 기반 인사이트: 첫 본문 문장이 차트 캡션으로 이동."""
+    monkeypatch.setenv("IP_LANDSCAPE_UPLOAD_DIR", str(tmp_path))
+    add_insight("basic-stats", "규칙 요약", ["2015–2024년 총 1,200건입니다.",
+                                          "상위 3사가 42%를 차지합니다."],
+                chart_image=_DATA_URL)
+    slides = _to_slides(list_insights(), "보고서")
+    chart = next(s for s in slides if s.get("image"))
+    assert chart["lines"] == ["2015–2024년 총 1,200건입니다."]
+    nxt = slides[slides.index(chart) + 1]
+    assert "상위 3사가 42%를 차지합니다." in nxt["lines"]
+    assert "2015–2024년 총 1,200건입니다." not in nxt["lines"]
+
+
+def test_no_image_keeps_caption_in_body(tmp_path, monkeypatch):
+    """차트 이미지가 없는 항목: 요지가 사라지지 않고 본문 첫 줄에 유지."""
+    monkeypatch.setenv("IP_LANDSCAPE_UPLOAD_DIR", str(tmp_path))
+    add_insight("basic-stats", "텍스트만", _SENTS)
+    slides = _to_slides(list_insights(), "보고서")
+    body = next(s for s in slides if s.get("kind") == "insight")
+    assert any("연도별 출원 동향" in str(l) for l in body["lines"])
