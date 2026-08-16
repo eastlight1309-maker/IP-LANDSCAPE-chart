@@ -1315,8 +1315,25 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
     return Api.post('/api/settings', { analysis_purpose: key || null })
       .then(function (resp) {
         State.config.settings = resp.settings;
+        renderPurposeChip();
         if (thenView !== false) Views.render('purpose');
       }).catch(errToast);
+  }
+
+  // 상단바 목적 칩: 현재 분석 목적 상시 표시, 클릭 시 목적 맞춤 화면으로
+  function renderPurposeChip() {
+    var bar = document.getElementById('ipls-topbar');
+    if (!bar) return;
+    var old = document.getElementById('ipls-purpose-chip');
+    if (old) old.remove();
+    var cur = currentPurpose();
+    var chip = Ui.el('<span id="ipls-purpose-chip" title="분석 목적 — 클릭하면 목적 맞춤 ' +
+      '추천 화면으로 이동">' + (cur ? cur.icon + ' ' + Ui.esc(cur.label)
+                               : '🎯 목적 선택') + '</span>');
+    chip.addEventListener('click', function () { Views.render('purpose'); });
+    var user = document.getElementById('ipls-userchip');
+    if (user) bar.insertBefore(chip, user);
+    else bar.appendChild(chip);
   }
 
   // 딥링크: 해당 메뉴로 이동 후 탭 라벨이 일치하는 탭을 클릭
@@ -1897,6 +1914,7 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
         }
         c.body.appendChild(Insight.box(r, opts.analysis));
         c.body.appendChild(Insight.aiPanel(opts.analysis, r, opts.title + ' — ' + (c.desc || '')));
+        paginateCharts(c.body);  // 카드에 차트가 여러 개면 한 화면 한 차트 페이저
       }).catch(function (e) {
         c.body.innerHTML = Render.statusBlock({ status: 'error', message: e.message });
       });
@@ -1907,6 +1925,114 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
   }
 
   function plotlyDrill(drill) { Drill.open(drill, '근거 특허'); }
+
+  /* ---------- 차트 페이저: 카드에 차트가 여러 개면 한 화면에 한 개씩 ----------
+     카드 본문의 최상위 자식들을 "차트를 포함한 요소 = 새 페이지 시작, 그 뒤의
+     표·설명은 같은 페이지" 규칙으로 묶는다. 차트 앞의 요소(컨트롤 등)와 차트
+     해석·인사이트(마지막 그룹의 chart-guide/insight 이후)는 항상 표시한다.
+     '전체 보기' 토글로 기존 세로 나열도 선택 가능 (선호는 브라우저에 기억). */
+  var PAGER_PREF_KEY = 'ipls-chart-pager-off';
+
+  function paginateCharts(body) {
+    if (body.querySelectorAll('.chart-holder').length < 2) return;
+    var kids = Array.prototype.slice.call(body.children);
+    // 꼬리(상시 표시): 첫 insight-box/ai-panel 부터 끝까지 + 그 직전의
+    // 카드 공통 chart-guide. 차트 사이의 개별 chart-guide 는 그 차트 페이지에 속함.
+    var tailStart = kids.length;
+    for (var ti = 0; ti < kids.length; ti++) {
+      if (kids[ti].classList.contains('insight-box') ||
+          kids[ti].classList.contains('ai-panel')) { tailStart = ti; break; }
+    }
+    if (tailStart > 0 && kids[tailStart - 1].classList &&
+        kids[tailStart - 1].classList.contains('chart-guide')) {
+      tailStart--;
+    }
+    var pages = [], current = null, pending = [];
+    kids.slice(0, tailStart).forEach(function (el) {
+      var hasChart = el.classList.contains('chart-holder') ||
+        (el.querySelector && el.querySelector('.chart-holder'));
+      if (el.classList.contains('sec-head')) {
+        // 섹션 제목은 다음 차트 페이지의 머리로 붙인다
+        pending.push(el); current = null; return;
+      }
+      if (hasChart) {
+        current = { els: pending.concat([el]) };
+        pending = [];
+        pages.push(current);
+      } else if (current) { current.els.push(el); }
+      else if (pages.length) { pending.push(el); }
+      // 첫 차트 앞(pages 비어 있음) 요소는 그대로 상시 표시
+    });
+    if (pending.length && pages.length) {
+      // 마지막 섹션 제목 뒤에 차트가 없던 경우: 마지막 페이지에 붙여 표시
+      pages[pages.length - 1].els = pages[pages.length - 1].els.concat(pending);
+    }
+    if (pages.length < 2) return;
+
+    function pageTitle(pg, i) {
+      if (pg.els[0].classList.contains('sec-head')) {
+        var ht = pg.els[0].textContent.trim();
+        if (ht) return ht.slice(0, 42);
+      }
+      var gd = null;
+      for (var j = 0; j < pg.els.length && !gd; j++) {
+        gd = pg.els[j].classList.contains('ipls-chart') ? pg.els[j]
+          : (pg.els[j].querySelector && pg.els[j].querySelector('.ipls-chart'));
+      }
+      var t = gd && gd.layout && gd.layout.title &&
+        (gd.layout.title.text || gd.layout.title);
+      if (typeof t === 'string' && t.trim()) {
+        return String(t).replace(/<[^>]*>/g, '').slice(0, 42);
+      }
+      return '차트 ' + (i + 1);
+    }
+
+    var nav = Ui.el('<div class="chart-pager"></div>');
+    var prev = Ui.el('<button class="btn small">◀ 이전</button>');
+    var sel = Ui.el('<select style="max-width:340px"></select>');
+    var next = Ui.el('<button class="btn small">다음 ▶</button>');
+    var count = Ui.el('<span class="pager-count"></span>');
+    var all = Ui.el('<label class="pager-all"><input type="checkbox">전체 보기 (세로 나열)</label>');
+    pages.forEach(function (pg, i) {
+      var o = document.createElement('option');
+      o.value = i;
+      o.textContent = (i + 1) + '. ' + pageTitle(pg, i);
+      sel.appendChild(o);
+    });
+    nav.appendChild(prev); nav.appendChild(sel); nav.appendChild(next);
+    nav.appendChild(count); nav.appendChild(all);
+    body.insertBefore(nav, pages[0].els[0]);
+
+    var idx = 0;
+    var showAll = localStorage.getItem(PAGER_PREF_KEY) === '1';
+    all.querySelector('input').checked = showAll;
+    function apply() {
+      pages.forEach(function (pg, i) {
+        pg.els.forEach(function (el) {
+          el.style.display = (showAll || i === idx) ? '' : 'none';
+        });
+      });
+      sel.value = String(idx);
+      count.textContent = showAll ? '전체 ' + pages.length + '개'
+        : (idx + 1) + ' / ' + pages.length;
+      prev.disabled = showAll || idx === 0;
+      next.disabled = showAll || idx === pages.length - 1;
+      sel.disabled = showAll;
+      // 숨김 상태에서 창 크기가 바뀐 Plotly 차트 재배치
+      window.dispatchEvent(new Event('resize'));
+    }
+    prev.addEventListener('click', function () { if (idx > 0) { idx--; apply(); } });
+    next.addEventListener('click', function () {
+      if (idx < pages.length - 1) { idx++; apply(); }
+    });
+    sel.addEventListener('change', function () { idx = +sel.value || 0; apply(); });
+    all.querySelector('input').addEventListener('change', function (ev) {
+      showAll = ev.target.checked;
+      localStorage.setItem(PAGER_PREF_KEY, showAll ? '1' : '0');
+      apply();
+    });
+    apply();
+  }
 
   /* 출원인 선택 컨트롤 (공용) — analysisCard 의 controls 로 사용.
      선택 시 body 에 company 를 실어 재계산하며, 공동출원 건도 포함 매칭된다. */
@@ -2036,9 +2162,9 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
       var s = r.sections || {};
       var first = true;
       function head(txt) {
-        c.body.appendChild(Ui.el('<div style="font-weight:700;font-size:13px;' +
-          'margin:14px 0 4px;border-top:1px solid #e8eff5;padding-top:10px">' +
-          Ui.esc(txt) + '</div>'));
+        c.body.appendChild(Ui.el('<div class="sec-head" style="font-weight:700;' +
+          'font-size:13px;margin:14px 0 4px;border-top:1px solid #e8eff5;' +
+          'padding-top:10px">' + Ui.esc(txt) + '</div>'));
       }
       function addFig(fig, capText) {
         if (!fig) return null;
@@ -2191,9 +2317,9 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
             var s = r.sections || {};
             var first = true;
             function head(txt) {
-              c.body.appendChild(Ui.el('<div style="font-weight:700;font-size:13px;' +
-                'margin:14px 0 4px;border-top:1px solid #e8eff5;padding-top:10px">' +
-                Ui.esc(txt) + '</div>'));
+              c.body.appendChild(Ui.el('<div class="sec-head" style="font-weight:700;' +
+                'font-size:13px;margin:14px 0 4px;border-top:1px solid #e8eff5;' +
+                'padding-top:10px">' + Ui.esc(txt) + '</div>'));
             }
             function addFig(fig, capText, tall) {
               if (!fig) return;
@@ -4320,6 +4446,7 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
       '<li><b>💾 분석 스냅샷</b>: Settings 의 "분석 스냅샷" 카드(또는 상단 헤더 저장 버튼)로 현재 분석 상태(Dataset·필터·분석 단위·보던 화면)를 이름 붙여 저장하고, 목록이나 헤더 드롭다운에서 선택해 그대로 복원할 수 있습니다. 데이터가 그대로면 결과는 서버 캐시에서 즉시 열립니다.</li>' +
       '<li><b>👤 내 작업만 보기</b>: 업로드 작업·분석 스냅샷 목록에서 작업자 드롭다운으로 고르거나 이름/팀명을 직접 입력하면 내 작업만 날짜별로 표시됩니다. 이름은 브라우저에 기억되어 다음 방문 때 자동 적용되고, "전체 보기"로 다른 사람 작업도 볼 수 있습니다 (편의 필터 — 접근 차단은 Dataiku 권한으로 관리).</li>' +
       '<li><b>비차단 로딩</b>: 계산이 오래 걸리는 분석은 우하단 배지로 진행 상태만 표시됩니다 — 기다리는 동안 다른 탭을 자유롭게 볼 수 있고, 돌아오면 캐시에서 바로 열립니다.</li>' +
+      '<li><b>📑 한 화면 한 차트 (차트 페이저)</b>: 카드에 차트가 여러 개면 상단 페이저(◀ 이전 / 목록 선택 / 다음 ▶)로 <b>한 번에 한 차트씩</b> 크게 봅니다. 스크롤로 길게 나열되지 않아 각 차트에 집중할 수 있고, 예전처럼 세로로 모두 펼치려면 "전체 보기"를 켜세요 (선택은 브라우저에 기억됩니다). 차트 해석·인사이트·AI 패널은 페이지와 무관하게 항상 하단에 표시됩니다.</li>' +
       '<li><b>📖 차트 해석</b>: 각 차트 아래 회색 박스에 축 의미와 읽는 법이 항상 표시됩니다.</li>' +
       '<li><b>🖱️ 휠 스크롤 보호</b>: 차트 영역은 흐린 테두리로 구분되어 있고, 차트 위에서 마우스 휠을 굴려도 차트가 확대/축소되지 않습니다 (페이지 스크롤만 동작). 확대가 필요하면 차트 우상단 도구 모음의 줌 버튼을 사용하세요.</li>' +
       '<li><b>🤝 공동출원 처리</b>: 출원인별 차트(순위·매트릭스·버블)는 Settings → 분석 설정의 "공동출원 집계"를 따릅니다 — 기본 "각각 집계"는 공동출원 1건을 각 공동출원인에게 1건씩 세고(합계가 전체 건수를 넘을 수 있음, 차트 아래에 안내 표시), "대표 출원인만"은 첫 출원인에게만 셉니다. 출원 동향·기술분류 동향·신흥 기술 탐지의 <b>출원인 선택</b>과 기업 필터는 어느 모드에서든 공동출원 건을 포함해 그 회사 문헌을 찾습니다. 협력 네트워크·공동출원 비율 등 공동출원 자체 분석은 이 설정과 무관합니다.</li></ul>');
@@ -4828,6 +4955,7 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
       return Api.post('/api/settings', patch).then(function (resp) {
         State.config.settings = resp.settings;
         Ui.toast('설정이 저장되었습니다.');
+        renderPurposeChip();
         if (reloadAll) boot(true);
       }).catch(errToast);
     }
@@ -5238,6 +5366,7 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
         refreshProjects();
         return;
       }
+      renderPurposeChip();
       Filters.load().then(function () {
         // 목적이 설정되어 있으면 목적 맞춤 화면을 첫 화면으로 (추천 차트 우선)
         var landing = cfg.settings.analysis_purpose ? 'purpose' : 'overview';
