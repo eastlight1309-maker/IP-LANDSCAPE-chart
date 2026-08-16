@@ -229,12 +229,13 @@ def _to_slides(items, report_title):
                 lines.pop(j)
                 break
         if caption is None:
-            # 마커 없는 항목(규칙 기반 등): 첫 본문 문장을 요지로 사용
+            # 마커 없는 항목(규칙 기반 등): 첫 '일반 문장'을 요지로 사용.
+            # 섹션 아래 불릿(-·•)은 본문 소속이므로 훔치지 않는다.
             for j, s in enumerate(lines):
                 st = str(s)
-                if st.startswith("·") or st.startswith("["):
+                if st.startswith(("·", "[", "-", "•")):
                     continue
-                caption = st.lstrip("-·• ").strip()
+                caption = st.strip()
                 lines.pop(j)
                 break
         images = []
@@ -658,13 +659,21 @@ def _slide_xml(title, lines, has_image=False, image_full=False):
     title_box = _textbox(2, "title", 457200, 274320, 11277600, 1005840,
                          [(title, _title_size(title), True)])
     if has_image and image_full:
-        # 추가 차트 슬라이드: 그림을 크게 중앙 배치 (12:7 비율 유지)
-        pic = _picture_xml(4, 1667510, 1417320, 8856980, 5166240)
+        # 차트 슬라이드: 그림 크게 중앙 배치. 요지 캡션(lines[0])이 있으면
+        # 그림을 살짝 줄이고 바로 아래에 표시 — 폴백 경로에서도 캡션 유실 금지
+        caption = str(lines[0]) if lines else ""
+        if caption:
+            pic = _picture_xml(4, 1667510, 1417320, 8856980, 4572000)
+            cap_box = _textbox(3, "caption", 640080, 6126480, 11094720, 731520,
+                               [("이 차트의 의미: " + caption[:220], 12, True)])
+        else:
+            pic = _picture_xml(4, 1667510, 1417320, 8856980, 5166240)
+            cap_box = ""
         return ("""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <p:sld %s><p:cSld><p:spTree>
 <p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr>
-<p:grpSpPr/>%s%s</p:spTree></p:cSld><p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:sld>"""
-                % (_NS, title_box, pic))
+<p:grpSpPr/>%s%s%s</p:spTree></p:cSld><p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:sld>"""
+                % (_NS, title_box, pic, cap_box))
     body_paras = []
     base_size = 12 if has_image else 13
     for i, line in enumerate(lines):

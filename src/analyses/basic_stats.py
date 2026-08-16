@@ -519,13 +519,17 @@ def compute_company_focus(df, settings, company=None):
         yv = None if (y is None or (isinstance(y, float) and np.isnan(y))) else int(y)
         for t in set(lst or []):
             st = stats.setdefault(t, {"total": 0, "recent": 0, "prev": 0,
-                                      "first": None})
+                                      "first": None, "unknown": 0})
             st["total"] += 1
-            if yv is not None and (st["first"] is None or yv < st["first"]):
+            if yv is None:
+                # 연도 미상 문헌: '그 전엔 0건' 단정을 막는 카운트
+                st["unknown"] += 1
+                continue
+            if st["first"] is None or yv < st["first"]:
                 st["first"] = yv
-            if yv is not None and yv >= recent_from:
+            if yv >= recent_from:
                 st["recent"] += 1
-            elif yv is not None and prev_from <= yv < recent_from:
+            elif prev_from <= yv < recent_from:
                 st["prev"] += 1
     if not stats:
         return empty_result("기술분류 값이 없습니다.")
@@ -539,8 +543,11 @@ def compute_company_focus(df, settings, company=None):
         share_recent = st["recent"] / float(st["total"])
         rising = (st["recent"] >= 2 and share_recent >= 0.5
                   and st["recent"] > st["prev"] and st["total"] <= median_total)
-        # 신규 진입: 이 회사의 그 기술 최초 출원이 최근 N년 안 (그 전엔 0건)
-        new_entry = bool(st["first"] is not None and st["first"] >= recent_from)
+        # 신규 진입: 이 회사의 그 기술 최초 출원이 최근 N년 안 (그 전엔 0건).
+        # 연도 미상 문헌이 하나라도 있으면 '그 전엔 0건'을 보장할 수 없으므로
+        # 판정하지 않는다 (값을 지어내지 않는 원칙)
+        new_entry = bool(st["first"] is not None and st["first"] >= recent_from
+                         and st["unknown"] == 0)
         rows.append({
             "tech": str(t), "total": int(st["total"]),
             "recent": int(st["recent"]), "prev": int(st["prev"]),

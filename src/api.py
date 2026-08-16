@@ -862,9 +862,11 @@ def register_routes(app):
                 return _error(400, "잘못된 다중분류 처리방식: %s" % v)
             if k == "coapplicant_mode" and v not in COAPPLICANT_MODES:
                 return _error(400, "잘못된 공동출원 집계방식: %s" % v)
-            if k == "analysis_purpose" and v not in (None, "") \
-                    and v not in ANALYSIS_PURPOSES:
-                return _error(400, "잘못된 분석 목적: %s" % v)
+            if k == "analysis_purpose":
+                if v in (None, ""):
+                    v = None  # 해제는 항상 None 으로 정규화
+                elif v not in ANALYSIS_PURPOSES:
+                    return _error(400, "잘못된 분석 목적: %s" % v)
             if k == "dataset" and v and validate_dataset_name(v) is None:
                 uploads_ensure_loaded(v)  # 업로드 dataset 자동 재적재 시도
                 if validate_dataset_name(v) is None:

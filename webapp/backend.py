@@ -3965,12 +3965,13 @@ def _to_slides(items, report_title):
                 lines.pop(j)
                 break
         if caption is None:
-            # 마커 없는 항목(규칙 기반 등): 첫 본문 문장을 요지로 사용
+            # 마커 없는 항목(규칙 기반 등): 첫 '일반 문장'을 요지로 사용.
+            # 섹션 아래 불릿(-·•)은 본문 소속이므로 훔치지 않는다.
             for j, s in enumerate(lines):
                 st = str(s)
-                if st.startswith("·") or st.startswith("["):
+                if st.startswith(("·", "[", "-", "•")):
                     continue
-                caption = st.lstrip("-·• ").strip()
+                caption = st.strip()
                 lines.pop(j)
                 break
         images = []
@@ -4394,13 +4395,21 @@ def _slide_xml(title, lines, has_image=False, image_full=False):
     title_box = _textbox(2, "title", 457200, 274320, 11277600, 1005840,
                          [(title, _title_size(title), True)])
     if has_image and image_full:
-        # 추가 차트 슬라이드: 그림을 크게 중앙 배치 (12:7 비율 유지)
-        pic = _picture_xml(4, 1667510, 1417320, 8856980, 5166240)
+        # 차트 슬라이드: 그림 크게 중앙 배치. 요지 캡션(lines[0])이 있으면
+        # 그림을 살짝 줄이고 바로 아래에 표시 — 폴백 경로에서도 캡션 유실 금지
+        caption = str(lines[0]) if lines else ""
+        if caption:
+            pic = _picture_xml(4, 1667510, 1417320, 8856980, 4572000)
+            cap_box = _textbox(3, "caption", 640080, 6126480, 11094720, 731520,
+                               [("이 차트의 의미: " + caption[:220], 12, True)])
+        else:
+            pic = _picture_xml(4, 1667510, 1417320, 8856980, 5166240)
+            cap_box = ""
         return ("""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <p:sld %s><p:cSld><p:spTree>
 <p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr>
-<p:grpSpPr/>%s%s</p:spTree></p:cSld><p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:sld>"""
-                % (_NS, title_box, pic))
+<p:grpSpPr/>%s%s%s</p:spTree></p:cSld><p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:sld>"""
+                % (_NS, title_box, pic, cap_box))
     body_paras = []
     base_size = 12 if has_image else 13
     for i, line in enumerate(lines):
@@ -10089,13 +10098,17 @@ def compute_company_focus(df, settings, company=None):
         yv = None if (y is None or (isinstance(y, float) and np.isnan(y))) else int(y)
         for t in set(lst or []):
             st = stats.setdefault(t, {"total": 0, "recent": 0, "prev": 0,
-                                      "first": None})
+                                      "first": None, "unknown": 0})
             st["total"] += 1
-            if yv is not None and (st["first"] is None or yv < st["first"]):
+            if yv is None:
+                # 연도 미상 문헌: '그 전엔 0건' 단정을 막는 카운트
+                st["unknown"] += 1
+                continue
+            if st["first"] is None or yv < st["first"]:
                 st["first"] = yv
-            if yv is not None and yv >= recent_from:
+            if yv >= recent_from:
                 st["recent"] += 1
-            elif yv is not None and prev_from <= yv < recent_from:
+            elif prev_from <= yv < recent_from:
                 st["prev"] += 1
     if not stats:
         return empty_result("기술분류 값이 없습니다.")
@@ -10109,8 +10122,11 @@ def compute_company_focus(df, settings, company=None):
         share_recent = st["recent"] / float(st["total"])
         rising = (st["recent"] >= 2 and share_recent >= 0.5
                   and st["recent"] > st["prev"] and st["total"] <= median_total)
-        # 신규 진입: 이 회사의 그 기술 최초 출원이 최근 N년 안 (그 전엔 0건)
-        new_entry = bool(st["first"] is not None and st["first"] >= recent_from)
+        # 신규 진입: 이 회사의 그 기술 최초 출원이 최근 N년 안 (그 전엔 0건).
+        # 연도 미상 문헌이 하나라도 있으면 '그 전엔 0건'을 보장할 수 없으므로
+        # 판정하지 않는다 (값을 지어내지 않는 원칙)
+        new_entry = bool(st["first"] is not None and st["first"] >= recent_from
+                         and st["unknown"] == 0)
         rows.append({
             "tech": str(t), "total": int(st["total"]),
             "recent": int(st["recent"]), "prev": int(st["prev"]),
@@ -16109,7 +16125,7 @@ def compute_quality_report(df, settings):
 
 
 # 검증 리포트용 빌드 정보 (tools/build_backend.py 가 실측 집계)
-_QR_BUILD_INFO = {'built_at': '2026-08-16 00:21', 'modules': 46, 'test_functions': 249, 'test_files': 14, 'source': 'build'}
+_QR_BUILD_INFO = {'built_at': '2026-08-16 00:27', 'modules': 46, 'test_functions': 252, 'test_files': 14, 'source': 'build'}
 
 
 
@@ -16934,9 +16950,11 @@ def register_routes(app):
                 return _error(400, "잘못된 다중분류 처리방식: %s" % v)
             if k == "coapplicant_mode" and v not in COAPPLICANT_MODES:
                 return _error(400, "잘못된 공동출원 집계방식: %s" % v)
-            if k == "analysis_purpose" and v not in (None, "") \
-                    and v not in ANALYSIS_PURPOSES:
-                return _error(400, "잘못된 분석 목적: %s" % v)
+            if k == "analysis_purpose":
+                if v in (None, ""):
+                    v = None  # 해제는 항상 None 으로 정규화
+                elif v not in ANALYSIS_PURPOSES:
+                    return _error(400, "잘못된 분석 목적: %s" % v)
             if k == "dataset" and v and validate_dataset_name(v) is None:
                 uploads_ensure_loaded(v)  # 업로드 dataset 자동 재적재 시도
                 if validate_dataset_name(v) is None:

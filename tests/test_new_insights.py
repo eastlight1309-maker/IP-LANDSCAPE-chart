@@ -2176,3 +2176,25 @@ def test_company_focus_new_entry_detection(settings):
     assert isinstance(mk["color"], list)
     if expect_new:
         assert "#2E9E5B" in mk["color"]
+
+
+def test_company_focus_new_entry_honest_with_unknown_years(settings):
+    """연도 미상 문헌이 있는 분류는 신규 진입으로 단정하지 않는다."""
+    from src.analyses.basic_stats import compute_company_focus
+    df = make_prepared(generate_sample(n=300, seed=7)).copy()
+    comp = df["applicant_display"].value_counts().index[0]
+    from src.analyses.common import applicant_mask
+    idx = df.index[applicant_mask(df, comp, scope="any")]
+    # 그 회사 문헌 2건에 가짜 기술 'HIDDEN_OLD' 부여: 1건은 최근 연도, 1건은 연도 미상
+    y_max = int(df["_base_year"].dropna().max())
+    i1, i2 = idx[0], idx[1]
+    df.at[i1, "_tech_list"] = list(df.at[i1, "_tech_list"] or []) + ["HIDDEN_OLD"]
+    df.at[i1, "_base_year"] = float(y_max)
+    df.at[i2, "_tech_list"] = list(df.at[i2, "_tech_list"] or []) + ["HIDDEN_OLD"]
+    df.at[i2, "_base_year"] = float("nan")
+    r = compute_company_focus(df, settings, company=comp)
+    assert r["status"] == "ok"
+    assert "HIDDEN_OLD" not in {e["tech"] for e in r["new_entries"]}
+    # 판정 제외일 뿐 집계 자체는 유지 — 해당 분류가 rows 에서 사라지지 않음
+    all_techs = {c["m"]["기술분류"] for c in r["figure"]["data"][0]["customdata"]}
+    assert "HIDDEN_OLD" in all_techs

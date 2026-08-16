@@ -344,3 +344,31 @@ def test_no_image_keeps_caption_in_body(tmp_path, monkeypatch):
     slides = _to_slides(list_insights(), "보고서")
     body = next(s for s in slides if s.get("kind") == "insight")
     assert any("연도별 출원 동향" in str(l) for l in body["lines"])
+
+
+def test_minimal_pptx_keeps_chart_caption(tmp_path, monkeypatch):
+    """내장(폴백) PPTX 생성기에서도 차트 요지 캡션이 유실되지 않는다."""
+    monkeypatch.setenv("IP_LANDSCAPE_UPLOAD_DIR", str(tmp_path))
+    sents = ["[슬라이드 제목] 헤드라인",
+             "[차트 요지] 캡션문장UNIQUEMARK",
+             "[핵심 메시지]", "- 불릿"]
+    add_insight("basic-stats", "캡션 테스트", sents, chart_image=_DATA_URL)
+    data = _minimal_pptx(_to_slides(list_insights(), "보고서"))
+    with zipfile.ZipFile(io.BytesIO(data)) as z:
+        joined = b"".join(z.read(n) for n in z.namelist()
+                          if n.startswith("ppt/slides/slide"))
+    assert "캡션문장UNIQUEMARK".encode() in joined
+    assert "이 차트의 의미".encode() in joined
+
+
+def test_caption_fallback_never_steals_bullets(tmp_path, monkeypatch):
+    """마커 없는 항목: 섹션 불릿은 캡션으로 훔치지 않는다."""
+    monkeypatch.setenv("IP_LANDSCAPE_UPLOAD_DIR", str(tmp_path))
+    add_insight("basic-stats", "불릿만", ["[핵심 메시지]", "- 첫 불릿", "- 둘째 불릿"],
+                chart_image=_DATA_URL)
+    slides = _to_slides(list_insights(), "보고서")
+    chart = next(s for s in slides if s.get("image"))
+    assert chart["lines"] == []  # 일반 문장이 없으면 캡션 생략 (불릿 보존)
+    body = slides[slides.index(chart) + 1]
+    assert any("첫 불릿" in str(l) for l in body["lines"])
+    assert any("둘째 불릿" in str(l) for l in body["lines"])
