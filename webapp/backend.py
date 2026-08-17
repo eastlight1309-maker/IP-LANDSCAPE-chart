@@ -3863,6 +3863,9 @@ def add_insight(analysis, title, sentences, dataset=None, kind="report",
 
 def list_insights():
     items = list(storage.load_store("insights").get("items") or [])
+    # 저장은 최신이 앞(상한 초과 시 오래된 것부터 정리)이지만, 보관함·PPT 는
+    # 분석 흐름 그대로 — 최초 분석이 맨 위(시간순)로 보이는 것이 보고서에 적합
+    items.reverse()
     for it in items:
         paths = _image_paths(it)
         it["has_image"] = bool(paths)
@@ -4143,28 +4146,28 @@ def _pptx_via_library(slides):
         if has_img and sl.get("image_full"):
             caption = str(sl["lines"][0]) if sl.get("lines") else ""
             if caption:
-                # 차트 + 바로 아래 '이 차트의 의미' 캡션 패널
+                # 차트 + 바로 아래 '이 차트의 의미' 캡션 패널 (작고 간결하게)
                 _add_picture_fit(slide, sl["image"], Inches(0.7), Inches(1.38),
-                                 Inches(11.93), Inches(4.78))
+                                 Inches(11.93), Inches(4.94))
                 panel = slide.shapes.add_shape(
-                    MSO_SHAPE.ROUNDED_RECTANGLE, Inches(0.7), Inches(6.28),
-                    Inches(11.93), Inches(0.74))
+                    MSO_SHAPE.ROUNDED_RECTANGLE, Inches(0.7), Inches(6.42),
+                    Inches(11.93), Inches(0.58))
                 panel.fill.solid()
                 panel.fill.fore_color.rgb = PANEL
                 panel.line.color.rgb = ACCENT
                 panel.line.width = Emu(9525)
                 panel.shadow.inherit = False
-                cb = slide.shapes.add_textbox(Inches(0.95), Inches(6.33),
-                                              Inches(11.45), Inches(0.66))
+                cb = slide.shapes.add_textbox(Inches(0.95), Inches(6.47),
+                                              Inches(11.45), Inches(0.5))
                 ctf = cb.text_frame
                 ctf.word_wrap = True
                 p0 = ctf.paragraphs[0]
                 r0 = p0.add_run()
                 r0.text = "이 차트의 의미  "
-                _font(r0, 10.5, bold=True, color=ACCENT)
+                _font(r0, 9.5, bold=True, color=ACCENT)
                 r1 = p0.add_run()
-                r1.text = caption[:220]
-                _font(r1, 12.5, bold=True, color=NAVY)
+                r1.text = caption[:120]
+                _font(r1, 11.5, bold=True, color=NAVY)
             else:
                 # 캡션이 없으면 기존처럼 이미지 최대 배치
                 _add_picture_fit(slide, sl["image"], Inches(0.7), Inches(1.4),
@@ -4177,6 +4180,25 @@ def _pptx_via_library(slides):
             body_x, body_w, fsize = Inches(7.7), Inches(5.1), 12
         else:
             body_x, body_w, fsize = Inches(0.85), Inches(11.9), 13
+
+        if kind == "insight":
+            # 본문이 상자(5.45in ≈ 392pt)를 넘치면 글자를 1pt 씩 줄여 맞춤 —
+            # 한글 폭(≈글자크기) 기준 줄바꿈 수를 추정해 가장 큰 맞는 크기 선택
+            box_pt = 392.0
+            width_pt = 11.9 * 72 if not has_img else 5.1 * 72
+            for cand in (fsize, fsize - 1, fsize - 2, fsize - 3):
+                est = 0.0
+                cpl = max(int(width_pt / (cand * 0.92)), 20)  # 줄당 글자 수 추정
+                for line in sl["lines"]:
+                    s = str(line)
+                    wraps = max(1, (len(s) + cpl - 1) // cpl)
+                    if s.startswith("["):
+                        est += wraps * (cand + 2.5) * 1.45 + 17  # 머리글+위 여백
+                    else:
+                        est += wraps * cand * 1.45 + 5
+                if est <= box_pt or cand == fsize - 3:
+                    fsize = cand
+                    break
 
         if kind == "insight" and not has_img:
             # 임원 보고용: 본문 뒤 옅은 패널 — 텍스트 벽이 아닌 카드처럼 보이게
@@ -4401,7 +4423,7 @@ def _slide_xml(title, lines, has_image=False, image_full=False):
         if caption:
             pic = _picture_xml(4, 1667510, 1417320, 8856980, 4572000)
             cap_box = _textbox(3, "caption", 640080, 6126480, 11094720, 731520,
-                               [("이 차트의 의미: " + caption[:220], 12, True)])
+                               [("이 차트의 의미: " + caption[:120], 11, True)])
         else:
             pic = _picture_xml(4, 1667510, 1417320, 8856980, 5166240)
             cap_box = ""
@@ -5657,17 +5679,19 @@ def llm_augment_insight(analysis_name, rule_insight, summary_stats, settings,
         "아래 형식을 정확히 따르세요 (섹션 머리글 포함, 각 불릿은 '- ' 시작):\n"
         "[슬라이드 제목] 핵심 결론을 담은 한 줄 헤드라인 — 수치 포함 "
         "(예: '○○ 분야, 최근 3년 연 12% 성장 — A사 집중도 심화')\n"
-        "[차트 요지] 이 차트가 보여주는 것과 가장 중요한 발견 한 줄 — 차트 바로 "
-        "아래 캡션으로 쓰이므로 반드시 한 줄로, 수치 포함\n"
+        "[차트 요지] 이 차트가 '어떤 목적으로 무엇을 보여주는 차트인지' 한 줄 설명 "
+        "— 데이터 해석·결론이 아니라 차트 자체의 의미 (예: '기술분류별 우선심사 "
+        "비율로 출원인이 스스로 드러낸 사업화 긴급도를 표시'). 차트 바로 아래 "
+        "캡션으로 쓰이므로 반드시 한 줄, 80자 이내\n"
         "[핵심 메시지] 경영진 보고용 핵심 요점 3개 불릿 — 각각 한 문장, 수치 포함\n"
-        "[근거 데이터] 차트에서 읽히는 구체적 사실 4~6개 불릿 — 반드시 실제 "
-        "수치·이름 인용 (예: '- A사 2023년 34건으로 1위, 2위 대비 1.8배')\n"
-        "[전문가 해석] IP Landscape 전문가 관점의 심층 해석 3~5개 불릿 — 다음 "
+        "[심층 해석] IP Landscape 전문가 관점의 심층 해석 3~5개 불릿 — 다음 "
         "관점 중 데이터가 뒷받침하는 것만 골라 구체적으로: 경쟁 구도(집중/분산, "
         "리더 교체, 신규 진입 위협), 기술 수명주기 상 위치(도입/성장/성숙/재부상)와 "
         "그 의미, 진입장벽·화이트스페이스 여부, 시계열 변곡점과 그 시점의 의미, "
         "출원 패턴이 시사하는 R&D·사업 전략(선점형/추격형/방어형), 포트폴리오 "
         "강약점. 각 불릿은 '관찰 수치 → 해석 → 함의' 구조로.\n"
+        "[근거 데이터] 차트에서 읽히는 구체적 사실 4~6개 불릿 — 반드시 실제 "
+        "수치·이름 인용 (예: '- A사 2023년 34건으로 1위, 2위 대비 1.8배')\n"
         "[시사점·제언] 실무 액션 3~4개 불릿 — 각각 (단기)/(중기) 우선순위 표기 + "
         "무엇을 왜 하는지 (예: '- (단기) A사 최근 2년 출원 정밀 검토 — 자사 주력 "
         "분류와 겹침 확대 중'). 마지막 불릿은 이 화면에서 더 파볼 후속 분석 제안\n"
@@ -13310,7 +13334,11 @@ def _expedited_section(df, settings):
         pts["hover"].append("%s %d년: 출원 %d건, 우선심사 %s"
                             % (tech, y, n, fmt_pct(ratio)))
         pts["custom"].append({"drill": {"type": "tech", "tech": str(tech), "tech_primary": True,
-                                        "year": int(y)}})
+                                        "year": int(y)},
+                              # 화면 수치를 LLM 인사이트·Excel 로 전달 (실측값)
+                              "m": {"기술분류": str(tech), "연도": int(y),
+                                    "출원 수": int(n),
+                                    "우선심사 비율": round(ratio, 3)}})
     fig = {"data": [{"type": "scatter", "mode": "markers", "cliponaxis": False,
                      "x": pts["x"], "y": pts["y"],
                      "hovertext": pts["hover"], "hoverinfo": "text",
@@ -16125,7 +16153,7 @@ def compute_quality_report(df, settings):
 
 
 # 검증 리포트용 빌드 정보 (tools/build_backend.py 가 실측 집계)
-_QR_BUILD_INFO = {'built_at': '2026-08-16 00:27', 'modules': 46, 'test_functions': 252, 'test_files': 14, 'source': 'build'}
+_QR_BUILD_INFO = {'built_at': '2026-08-17 04:32', 'modules': 46, 'test_functions': 254, 'test_files': 14, 'source': 'build'}
 
 
 

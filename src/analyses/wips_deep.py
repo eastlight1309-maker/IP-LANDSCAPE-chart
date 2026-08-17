@@ -511,7 +511,11 @@ def _expedited_section(df, settings):
         pts["hover"].append("%s %d년: 출원 %d건, 우선심사 %s"
                             % (tech, y, n, fmt_pct(ratio)))
         pts["custom"].append({"drill": {"type": "tech", "tech": str(tech), "tech_primary": True,
-                                        "year": int(y)}})
+                                        "year": int(y)},
+                              # 화면 수치를 LLM 인사이트·Excel 로 전달 (실측값)
+                              "m": {"기술분류": str(tech), "연도": int(y),
+                                    "출원 수": int(n),
+                                    "우선심사 비율": round(ratio, 3)}})
     fig = {"data": [{"type": "scatter", "mode": "markers", "cliponaxis": False,
                      "x": pts["x"], "y": pts["y"],
                      "hovertext": pts["hover"], "hoverinfo": "text",

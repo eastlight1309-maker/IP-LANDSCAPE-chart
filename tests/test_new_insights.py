@@ -1878,11 +1878,15 @@ def test_llm_augment_structured_and_rich(monkeypatch):
     assert len(out["sentences"]) == 12          # 기존 5문장 상한 제거
     p = captured["prompt"]
     assert "차트 의미·해석 가이드" in p and "연도별 출원 동향" in p
-    # PPT 슬라이드 형식 요청 (제목/요지/핵심 메시지/근거/전문가 해석/제언/유의)
+    # PPT 슬라이드 형식 요청 (제목/요지/핵심 메시지/심층 해석/근거/제언/유의)
     for marker in ("[슬라이드 제목]", "[차트 요지]", "[핵심 메시지]",
-                   "[근거 데이터]", "[전문가 해석]", "[시사점·제언]",
+                   "[심층 해석]", "[근거 데이터]", "[시사점·제언]",
                    "[유의사항]"):
         assert marker in p
+    # 순서: 핵심 메시지 → 심층 해석 → 근거 데이터
+    assert p.index("[핵심 메시지]") < p.index("[심층 해석]") < p.index("[근거 데이터]")
+    # 차트 요지는 해석이 아니라 차트의 목적·의미 설명을 요구
+    assert "어떤 목적으로" in p and "차트 자체의 의미" in p
     # 전문가 관점 요구: 뻔한 차트 묘사 지양 + 전략 해석 관점 명시
     assert "So What" in p and "경쟁 구도" in p and "수명주기" in p
     assert "(단기)" in p and "억지 해석 금지" in p

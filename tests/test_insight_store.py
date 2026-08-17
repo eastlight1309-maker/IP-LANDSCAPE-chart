@@ -112,11 +112,11 @@ def test_chart_image_saved_and_embedded(tmp_path, monkeypatch):
         slide_xml = b"".join(z.read(n) for n in names
                              if n.startswith("ppt/slides/slide"))
         assert b"<p:pic>" in slide_xml
-    # 잘못된 data URL 은 무시 (텍스트만 저장)
+    # 잘못된 data URL 은 무시 (텍스트만 저장) — 시간순 목록의 마지막 항목
     iid2 = add_insight("x", "이미지 없는 항목", _SENTS,
                        chart_image="data:text/html;base64,PGI+")
-    assert list_insights()[0]["id"] == iid2
-    assert list_insights()[0]["has_image"] is False
+    assert list_insights()[-1]["id"] == iid2
+    assert list_insights()[-1]["has_image"] is False
     # 삭제 시 이미지 파일도 제거
     delete_insight(iid)
     from src.insight_store import get_image as gi
@@ -372,3 +372,48 @@ def test_caption_fallback_never_steals_bullets(tmp_path, monkeypatch):
     body = slides[slides.index(chart) + 1]
     assert any("첫 불릿" in str(l) for l in body["lines"])
     assert any("둘째 불릿" in str(l) for l in body["lines"])
+
+
+def test_insights_listed_oldest_first(tmp_path, monkeypatch):
+    """보관함·PPT 순서: 최초 분석이 맨 위(시간순) — 분석 흐름 그대로."""
+    monkeypatch.setenv("IP_LANDSCAPE_UPLOAD_DIR", str(tmp_path))
+    add_insight("basic-stats", "첫 번째 분석", _SENTS)
+    add_insight("lifecycle", "두 번째 분석", _SENTS)
+    add_insight("opportunity", "세 번째 분석", _SENTS)
+    titles = [it["title"] for it in list_insights()]
+    assert titles == ["첫 번째 분석", "두 번째 분석", "세 번째 분석"]
+    slides = _to_slides(list_insights(), "보고서")
+    toc = next(s for s in slides if s["title"] == "목차")
+    assert toc["lines"][0].startswith("1. 첫 번째 분석")
+    assert toc["lines"][2].startswith("3. 세 번째 분석")
+
+
+def test_insight_page_font_autoshrink(tmp_path, monkeypatch):
+    """긴 인사이트: 글자를 1pt 씩 줄여 본문 상자 안에 맞춘다 (넘침 방지)."""
+    pptx = pytest.importorskip("pptx")
+    monkeypatch.setenv("IP_LANDSCAPE_UPLOAD_DIR", str(tmp_path))
+    long_sents = (["[핵심 메시지]"] +
+                  ["- 매우 " + "긴 문장입니다 " * 14 + ("%d" % i) for i in range(5)] +
+                  ["[심층 해석]"] +
+                  ["- 해석 " + "상세 내용 " * 16 + ("%d" % i) for i in range(5)])
+    add_insight("basic-stats", "긴 인사이트", long_sents)
+    from src.insight_store import build_pptx
+    data = build_pptx(list_insights(), "보고서")
+    prs = pptx.Presentation(io.BytesIO(data))
+    # 인사이트 본문 페이지의 불릿 폰트가 기본(13pt)보다 축소되었는지
+    from pptx.util import Pt
+    sizes = [r.font.size for sl in prs.slides for sh in sl.shapes
+             if sh.has_text_frame for pa in sh.text_frame.paragraphs
+             for r in pa.runs
+             if r.text.startswith(("■", "•")) and r.font.size]
+    assert sizes and min(sizes) < Pt(13)
+    # 짧은 인사이트는 축소 없음 (13pt 유지)
+    storage.save_store("insights", {"items": []})
+    add_insight("basic-stats", "짧은 인사이트", ["[핵심 메시지]", "- 한 줄"])
+    data2 = build_pptx(list_insights(), "보고서")
+    prs2 = pptx.Presentation(io.BytesIO(data2))
+    sizes2 = [r.font.size for sl in prs2.slides for sh in sl.shapes
+              if sh.has_text_frame for pa in sh.text_frame.paragraphs
+              for r in pa.runs if r.text.startswith(("■", "•")) and r.font.size]
+    # 핵심 메시지 불릿은 기본 13pt + 강조 1pt = 14pt 그대로 (축소 없음)
+    assert sizes2 and min(sizes2) == Pt(14)
