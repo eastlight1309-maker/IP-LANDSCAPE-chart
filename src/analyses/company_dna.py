@@ -214,15 +214,22 @@ def compute_company_dna(df, settings, companies=None):
     max_cmp = get_limit(settings, "max_companies_compare")
 
     totals = df["applicant_display"].replace("", np.nan).dropna().value_counts()
+    pool_all = [c for c in totals.index if totals[c] >= min_n]
     if companies:
         wanted = [c for c in map(str, companies) if totals.get(c, 0) >= min_n][:30]
     else:
-        wanted = [c for c in totals.index if totals[c] >= min_n][:30]
+        wanted = pool_all[:30]
     if not wanted:
         return empty_result("최소 표본(%d건) 이상의 기업이 없습니다." % int(min_n))
 
+    # 표준화 모집단: 선택 기업이 아니라 데이터셋 상위 기업군(최대 30) ∪ 선택
+    # 기업으로 고정 — 2개사만 골라도 min-max 가 두 회사를 1/0 극값으로 강제하지
+    # 않으며(예: 패밀리 6.4 vs 4.0), 회사 선택이 표준화 값·유형 판정을 바꾸지
+    # 않는다 (전체 보기와 동일한 값).
+    pool = list(dict.fromkeys(pool_all[:30] + wanted))
+
     raw_by_company = {}
-    for c in wanted:
+    for c in pool:
         sub = df[df["applicant_display"].astype(str) == c]
         raw_by_company[c] = _company_metrics(sub, recent_from, recent)
 
@@ -230,9 +237,10 @@ def compute_company_dna(df, settings, companies=None):
     std_by_metric = {}
     for k in keys:
         vals = [raw_by_company[c][k] if raw_by_company[c][k] is not None else 0.0
-                for c in wanted]
+                for c in pool]
         std_by_metric[k] = normalize_series(vals, log=(k in ("family_size", "avg_citations", "intl_scope")))
-    n_ranks = normalize_series([raw_by_company[c]["n"] for c in wanted], log=True)
+    n_ranks = normalize_series([raw_by_company[c]["n"] for c in pool], log=True)
+    pool_idx = {c: i for i, c in enumerate(pool)}
     from src.config import WEIGHTS
     try:
         cutoff = float((settings or {}).get("dna_type_cutoffs", {}).get("default")
@@ -241,7 +249,8 @@ def compute_company_dna(df, settings, companies=None):
         cutoff = WEIGHTS["dna_type_cutoff"]
 
     companies_payload = []
-    for i, c in enumerate(wanted):
+    for c in wanted:
+        i = pool_idx[c]
         raw = raw_by_company[c]
         std = {k: round(float(std_by_metric[k][i]), 4) for k in keys}
         ctype = _classify(std, float(n_ranks[i]), cutoff)
@@ -327,6 +336,9 @@ def compute_company_dna(df, settings, companies=None):
                           "레이더/히트맵/평행좌표의 축 값은 기업 간 비교를 위한 "
                           "0~1 표준화 점수(log1p 일부 → 윈저라이즈 2% → IQR robust "
                           "정규화)이며, 원값은 hover 와 기업 표에 함께 표시됩니다. "
+                          "표준화 모집단은 회사 선택과 무관하게 데이터셋 상위 "
+                          "기업군(최대 30개사)으로 고정 — 소수 기업만 선택해도 "
+                          "값이 0/1 극값으로 강제되지 않고 전체 보기와 동일합니다. "
                           "유형 분류는 표준화 점수 ≥ cutoff(Settings 조정 가능) 규칙의 "
                           "첫 매칭입니다.",
                       "similarity": sim_matrix, "overlap": overlap_matrix},

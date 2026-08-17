@@ -2202,3 +2202,28 @@ def test_company_focus_new_entry_honest_with_unknown_years(settings):
     # 판정 제외일 뿐 집계 자체는 유지 — 해당 분류가 rows 에서 사라지지 않음
     all_techs = {c["m"]["기술분류"] for c in r["figure"]["data"][0]["customdata"]}
     assert "HIDDEN_OLD" in all_techs
+
+
+def test_company_dna_std_selection_invariant(settings):
+    """DNA Fingerprint: 회사 선택이 표준화 값·유형 판정을 바꾸지 않는다.
+
+    2개사만 선택했을 때 min-max 가 두 회사를 1/0 극값으로 강제하던 문제의
+    회귀 테스트 — 표준화 모집단은 데이터셋 상위 기업군으로 고정된다.
+    """
+    from src.analyses.company_dna import compute_company_dna
+    df = make_prepared(generate_sample(n=500, seed=42))
+    full = compute_company_dna(df, settings)
+    by_fam = sorted(full["companies"],
+                    key=lambda p: -(p["raw"]["family_size"] or 0))
+    a, b = by_fam[0], by_fam[len(by_fam) // 2]
+    sel = compute_company_dna(df, settings,
+                              companies=[a["company"], b["company"]])
+    sp = {p["company"]: p for p in sel["companies"]}
+    assert sp[a["company"]]["std"] == a["std"]
+    assert sp[b["company"]]["std"] == b["std"]
+    assert sp[a["company"]]["type"] == a["type"]
+    assert sp[b["company"]]["type"] == b["type"]
+    # 중간 순위 회사가 0.0 으로 강제되지 않음 (모집단 기준 위치 유지)
+    assert sp[b["company"]]["std"]["family_size"] > 0.0
+    # 표준화 기준이 화면 안내문에 명시됨
+    assert "모집단" in sel["normalization_note"]
