@@ -417,3 +417,32 @@ def test_insight_page_font_autoshrink(tmp_path, monkeypatch):
               for r in pa.runs if r.text.startswith(("■", "•")) and r.font.size]
     # 핵심 메시지 불릿은 기본 13pt + 강조 1pt = 14pt 그대로 (축소 없음)
     assert sizes2 and min(sizes2) == Pt(14)
+
+
+def test_continuation_slides_keep_section_style(tmp_path, monkeypatch):
+    """분할된 이어짐 슬라이드: 섹션 (계속) 머리글 + 통일된 글자 크기."""
+    pptx = pytest.importorskip("pptx")
+    monkeypatch.setenv("IP_LANDSCAPE_UPLOAD_DIR", str(tmp_path))
+    sents = ["[핵심 메시지]"] + ["- 핵심 요점 %d" % i for i in range(14)] + \
+            ["[시사점·제언]", "- 액션 1"]
+    add_insight("basic-stats", "긴 핵심 메시지", sents)
+    slides = _to_slides(list_insights(), "보고서")
+    conts = [s for s in slides if "(계속)" in s["title"] and s["kind"] == "insight"]
+    assert conts
+    # 섹션 중간에서 잘리면 '[핵심 메시지 (계속)]' 머리글이 붙는다
+    assert str(conts[0]["lines"][0]).startswith("[핵심 메시지 (계속)")
+    # 같은 인사이트의 분할 슬라이드는 같은 group → 같은 글자 크기
+    groups = {s.get("group") for s in slides if s["kind"] == "insight"}
+    assert len(groups) == 1
+    from src.insight_store import build_pptx
+    prs = pptx.Presentation(io.BytesIO(build_pptx(list_insights(), "보고서")))
+    core_sizes = set()
+    for sl in prs.slides:
+        for sh in sl.shapes:
+            if not sh.has_text_frame:
+                continue
+            for pa in sh.text_frame.paragraphs:
+                for r in pa.runs:
+                    if r.text.startswith("■") and r.font.size:
+                        core_sizes.add(r.font.size)
+    assert len(core_sizes) == 1  # 이어짐 슬라이드에서도 ■ 스타일·크기 유지

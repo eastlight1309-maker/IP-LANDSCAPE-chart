@@ -3942,6 +3942,7 @@ def _to_slides(items, report_title):
         slides.append({"title": "목차" if start == 0 else "목차 (계속)",
                        "lines": toc_lines[start:start + _LINES_PER_SLIDE],
                        "image": None, "ext": None, "kind": "toc"})
+    slides_group_ids = []  # 항목별 group id — 같은 인사이트의 분할 슬라이드 묶음
     for it in items:
         title = str(it.get("title") or it.get("analysis") or "인사이트")
         # 첫 줄이 [슬라이드 제목] 헤드라인이면 그 내용을 슬라이드 제목으로 사용
@@ -3997,15 +3998,27 @@ def _to_slides(items, report_title):
                            "lines": [caption] if caption else [],
                            "image": img0, "ext": ext0, "image_full": True,
                            "kind": "chart"})
-        # ② 다음 페이지: 그 차트의 인사이트 텍스트 (길면 이어짐 분할)
+        # ② 다음 페이지: 그 차트의 인사이트 텍스트 (길면 이어짐 분할).
+        # 각 줄이 속한 [섹션] 을 미리 계산해, 섹션 중간에서 잘린 이어짐
+        # 슬라이드에는 '[섹션 (계속)]' 머리글을 붙여 불릿 스타일을 유지한다.
+        sec_at, _cur_sec = [], ""
+        for s in lines:
+            st = str(s)
+            if st.startswith("[") and "]" in st:
+                _cur_sec = st.split("]", 1)[0].strip("[ ")
+            sec_at.append(_cur_sec)
         for start in range(0, len(lines), _LINES_PER_SLIDE):
             chunk = lines[start:start + _LINES_PER_SLIDE]
             if start == 0:
                 t = (title + " — 인사이트") if images else title
             else:
                 t = title[:60] + (" — 인사이트 (계속)" if images else " (계속)")
+                if chunk and not str(chunk[0]).startswith("[") and sec_at[start]:
+                    chunk = ["[%s (계속)]" % sec_at[start]] + chunk
             slides.append({"title": t[:120], "lines": chunk,
-                           "image": None, "ext": None, "kind": "insight"})
+                           "image": None, "ext": None, "kind": "insight",
+                           "group": len(slides_group_ids)})
+        slides_group_ids.append(True)
         # ③ 카드에 차트가 여러 개인 항목: 나머지 차트도 전체 페이지로 포함
         for k, (img, ext) in enumerate(images[1:], start=2):
             slides.append({"title": ("%s — 차트 %d/%d" % (title[:100], k,
@@ -4108,6 +4121,34 @@ def _pptx_via_library(slides):
     blank = prs.slide_layouts[6]
     report_title = slides[0]["title"] if slides else "IP Landscape 보고서"
 
+    def _fit_font(lines, base, with_img):
+        """본문이 상자(5.45in ≈ 392pt)를 넘치면 1pt 씩(최대 3pt) 줄여 맞춤 —
+        한글 폭(≈글자크기) 기준 줄바꿈 수를 추정해 가장 큰 맞는 크기 선택."""
+        box_pt = 392.0
+        width_pt = 5.1 * 72 if with_img else 11.9 * 72
+        for cand in (base, base - 1, base - 2, base - 3):
+            est = 0.0
+            cpl = max(int(width_pt / (cand * 0.92)), 20)  # 줄당 글자 수 추정
+            for line in lines:
+                s = str(line)
+                wraps = max(1, (len(s) + cpl - 1) // cpl)
+                if s.startswith("["):
+                    est += wraps * (cand + 2.5) * 1.45 + 17  # 머리글+위 여백
+                else:
+                    est += wraps * cand * 1.45 + 5
+            if est <= box_pt or cand == base - 3:
+                return cand
+        return base - 3
+
+    # 인사이트(group)별 글자 크기: 가장 긴 분할 슬라이드 기준으로 통일
+    _group_fsize = {}
+    for _sl in slides:
+        if _sl.get("kind") == "insight":
+            _b = 12 if _sl.get("image") else 13
+            _f = _fit_font(_sl.get("lines") or [], _b, bool(_sl.get("image")))
+            _k = _sl.get("group") if _sl.get("group") is not None else id(_sl)
+            _group_fsize[_k] = min(_group_fsize.get(_k, 99), _f)
+
     for idx, sl in enumerate(slides):
         slide = prs.slides.add_slide(blank)
         kind = sl.get("kind") or ("cover" if idx == 0 else "insight")
@@ -4182,23 +4223,9 @@ def _pptx_via_library(slides):
             body_x, body_w, fsize = Inches(0.85), Inches(11.9), 13
 
         if kind == "insight":
-            # 본문이 상자(5.45in ≈ 392pt)를 넘치면 글자를 1pt 씩 줄여 맞춤 —
-            # 한글 폭(≈글자크기) 기준 줄바꿈 수를 추정해 가장 큰 맞는 크기 선택
-            box_pt = 392.0
-            width_pt = 11.9 * 72 if not has_img else 5.1 * 72
-            for cand in (fsize, fsize - 1, fsize - 2, fsize - 3):
-                est = 0.0
-                cpl = max(int(width_pt / (cand * 0.92)), 20)  # 줄당 글자 수 추정
-                for line in sl["lines"]:
-                    s = str(line)
-                    wraps = max(1, (len(s) + cpl - 1) // cpl)
-                    if s.startswith("["):
-                        est += wraps * (cand + 2.5) * 1.45 + 17  # 머리글+위 여백
-                    else:
-                        est += wraps * cand * 1.45 + 5
-                if est <= box_pt or cand == fsize - 3:
-                    fsize = cand
-                    break
+            # 같은 인사이트의 분할 슬라이드는 동일 크기 사용 (페이지 간 크기 점프 방지)
+            _k = sl.get("group") if sl.get("group") is not None else id(sl)
+            fsize = _group_fsize.get(_k, fsize)
 
         if kind == "insight" and not has_img:
             # 임원 보고용: 본문 뒤 옅은 패널 — 텍스트 벽이 아닌 카드처럼 보이게
@@ -16153,7 +16180,7 @@ def compute_quality_report(df, settings):
 
 
 # 검증 리포트용 빌드 정보 (tools/build_backend.py 가 실측 집계)
-_QR_BUILD_INFO = {'built_at': '2026-08-17 04:32', 'modules': 46, 'test_functions': 254, 'test_files': 14, 'source': 'build'}
+_QR_BUILD_INFO = {'built_at': '2026-08-17 04:59', 'modules': 46, 'test_functions': 255, 'test_files': 14, 'source': 'build'}
 
 
 
@@ -17294,7 +17321,7 @@ def register_routes(app):
     @app.route("/api/insights-log", methods=["GET"])
     @wrap
     def api_insights_log():
-        """GET → 저장된 LLM 인사이트 목록 (최신순, 최대 300건).
+        """GET → 저장된 LLM 인사이트 목록 (시간순 — 최초 분석이 먼저, 최대 300건).
 
         각 항목에 dataset_label(업로드 작업이면 "작업명 (작업자)")을 붙이고,
         현재 분석 중인 dataset 을 함께 반환한다 — 보관함이 '현재 작업' 항목만

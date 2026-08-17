@@ -1182,7 +1182,7 @@ def register_routes(app):
     @app.route("/api/insights-log", methods=["GET"])
     @wrap
     def api_insights_log():
-        """GET → 저장된 LLM 인사이트 목록 (최신순, 최대 300건).
+        """GET → 저장된 LLM 인사이트 목록 (시간순 — 최초 분석이 먼저, 최대 300건).
 
         각 항목에 dataset_label(업로드 작업이면 "작업명 (작업자)")을 붙이고,
         현재 분석 중인 dataset 을 함께 반환한다 — 보관함이 '현재 작업' 항목만
