@@ -241,7 +241,21 @@ def _rnd_efficiency_section(df, settings, focal):
 def _keyman_section(df, settings, focal):
     if "_inventor_list" not in df.columns:
         return None, "발명자 컬럼 필요"
-    g = df[df["applicant_display"] == focal]
+    # 공동출원 처리: WIPS 데이터에는 발명자→출원인 매핑이 없어 공동출원
+    # 특허의 발명자가 어느 회사 소속인지 구분할 수 없다. 대표 출원인 일치로
+    # 집계하면 ① 자사 대표 공동출원의 상대 회사 발명자가 자사 키맨으로 섞이고
+    # ② 자사가 공동출원인인 특허는 통째로 빠진다 → 소속이 확실한 '단독 출원'
+    # 만으로 집계하고 제외한 공동출원 건수를 화면에 공개한다 (값 비조작 원칙).
+    from src.analyses.common import applicant_mask
+    all_focal = df[applicant_mask(df, focal, scope="any")]
+    if "_co_applicants_display" in all_focal.columns:
+        sole = all_focal["_co_applicants_display"].map(
+            lambda lst: len(lst or []) <= 1)
+        g = all_focal[sole]
+        n_joint = int(len(all_focal) - len(g))
+    else:
+        g = all_focal
+        n_joint = 0
     inv_counts = {}
     inv_last = {}
     inv_techs = {}
@@ -258,7 +272,10 @@ def _keyman_section(df, settings, focal):
                 inv_techs.setdefault(inv, {})
                 inv_techs[inv][t] = inv_techs[inv].get(t, 0) + 1
     if len(inv_counts) < 5:
-        return None, "'%s'의 발명자 표본 부족 (5명 미만)" % focal
+        return None, ("'%s'의 발명자 표본 부족 (5명 미만 — 단독 출원 %d건 기준%s)"
+                      % (focal, int(len(g)),
+                         (", 공동출원 %d건은 발명자 소속 구분 불가로 제외"
+                          % n_joint) if n_joint else ""))
     total = sum(inv_counts.values())
     s = pd.Series(inv_counts).sort_values(ascending=False)
     n_top10 = max(1, int(np.ceil(len(s) * 0.10)))
@@ -298,11 +315,16 @@ def _keyman_section(df, settings, focal):
                 for r in inv_rows][::-1],
         customdata=[{"drill": r["drill"]} for r in inv_rows][::-1])
     n_inactive = sum(1 for r in inv_rows if r["inactive"])
+    joint_note = (" 공동출원 %d건은 발명자의 소속 출원인을 데이터로 구분할 수 "
+                  "없어 집계에서 제외했습니다 (단독 출원 %d건 기준)."
+                  % (n_joint, int(len(g)))) if n_joint else ""
     return {"fig": fig, "rows": inv_rows, "focal": focal,
             "n_inventors": int(len(s)), "top10_share": round(top10_share, 3),
             "hhi": round(hhi, 4), "n_inactive_top": n_inactive,
+            "n_joint_excluded": n_joint, "n_sole": int(len(g)),
             "note": "'최근 2년 출원 없음'은 관찰 신호일 뿐 퇴사·이탈의 인과 판단이 "
-                    "아닙니다. 발명자 이동 분석(경쟁 인텔리전스)과 함께 확인하세요."}, None
+                    "아닙니다. 발명자 이동 분석(경쟁 인텔리전스)과 함께 확인하세요."
+                    + joint_note}, None
 
 
 # ---------------------------------------------------------------------------

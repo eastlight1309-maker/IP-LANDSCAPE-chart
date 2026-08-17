@@ -1091,13 +1091,19 @@ def test_audit_primary_tech_drill_matches_chart(settings):
 
 
 def test_audit_keyman_patent_share(settings):
-    """키맨 리스크: 상위 10% 발명자 '특허 점유율'이 특허 기준으로 계산된다."""
+    """키맨 리스크: 상위 10% 발명자 '특허 점유율'이 특허 기준으로 계산된다.
+
+    집계 범위 = 그 회사(공동출원 포함 membership) ∧ 단독 출원 — 공동출원
+    특허의 발명자는 소속 구분이 불가해 제외된다 (독립 재계산도 동일 기준).
+    """
     from src.analyses.exec_plus import _keyman_section
+    from src.analyses.common import applicant_mask
     df = make_prepared(generate_sample(n=600, seed=17))
     focal = df["applicant_display"].value_counts().index[0]
     sec, reason = _keyman_section(df, {}, focal)
     assert sec is not None, reason
-    g = df[df["applicant_display"] == focal]
+    allf = df[applicant_mask(df, focal, scope="any")]
+    g = allf[allf["_co_applicants_display"].map(lambda l: len(l or []) <= 1)]
     inv_counts = {}
     for lst in g["_inventor_list"]:
         for i in (lst or []):
@@ -2227,3 +2233,23 @@ def test_company_dna_std_selection_invariant(settings):
     assert sp[b["company"]]["std"]["family_size"] > 0.0
     # 표준화 기준이 화면 안내문에 명시됨
     assert "모집단" in sel["normalization_note"]
+
+
+def test_keyman_excludes_joint_filing_inventors(settings):
+    """키맨 리스크: 공동출원 특허의 발명자(소속 구분 불가)는 자사 키맨으로
+    집계하지 않고, 제외 건수를 화면에 공개한다."""
+    from src.analyses.exec_plus import _keyman_section
+    df = make_prepared(generate_sample(n=400, seed=21)).copy()
+    comp = df["applicant_display"].value_counts().index[0]
+    # 합성 공동출원 1건: 상대 회사 발명자만 올라간 특허를 comp 대표로 주입
+    idx = df.index[df["applicant_display"] == comp][0]
+    df.at[idx, "_co_applicants_display"] = [comp, "파트너사X"]
+    df.at[idx, "_inventor_list"] = ["파트너전용발명자"]
+    out, err = _keyman_section(df, settings, comp)
+    assert out is not None, err
+    # 공동출원 특허의 발명자는 키맨 목록·집계에서 제외
+    assert all(r["inventor"] != "파트너전용발명자" for r in out["rows"])
+    assert out["n_joint_excluded"] >= 1
+    assert "공동출원" in out["note"] and "제외" in out["note"]
+    # 단독 출원 기준 표본 수가 화면에 공개됨
+    assert out["n_sole"] >= 1
