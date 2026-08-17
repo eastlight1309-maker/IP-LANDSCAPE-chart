@@ -500,7 +500,10 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
               // 전달해야 LLM 이 '실제 수치가 없다'며 해석을 포기하지 않는다
               var mk = tr.marker || {};
               var hasSize = Array.isArray(mk.size);
-              var hasColor = Array.isArray(mk.color);
+              // 색상값은 수치 배열(컬러바)일 때만 — hex 코드(범주 색)는 LLM 에
+              // 해석 불가 노이즈이며 그 의미는 '설명(hover)' 열에 이미 있음
+              var hasColor = Array.isArray(mk.color) &&
+                typeof mk.color[0] === 'number';
               function hoverTxt(i) {
                 var h = tr.hovertext && tr.hovertext[i];
                 return h ? String(h).replace(/<br\s*\/?>/gi, '; ')
@@ -1952,7 +1955,7 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
   var PAGER_PREF_KEY = 'ipls-chart-pager-off';
 
   function paginateCharts(body) {
-    if (body.querySelectorAll('.chart-holder').length < 2) return;
+    if (body.querySelectorAll('.chart-holder, .cy-holder').length < 2) return;
     var kids = Array.prototype.slice.call(body.children);
     // 꼬리(상시 표시): 첫 insight-box/ai-panel 부터 끝까지 + 그 직전의
     // 카드 공통 chart-guide. 차트 사이의 개별 chart-guide 는 그 차트 페이지에 속함.
@@ -1968,7 +1971,8 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
     var pages = [], current = null, pending = [];
     kids.slice(0, tailStart).forEach(function (el) {
       var hasChart = el.classList.contains('chart-holder') ||
-        (el.querySelector && el.querySelector('.chart-holder'));
+        el.classList.contains('cy-holder') ||
+        (el.querySelector && el.querySelector('.chart-holder, .cy-holder'));
       if (el.classList.contains('sec-head')) {
         // 섹션 제목은 다음 차트 페이지의 머리로 붙인다
         pending.push(el); current = null; return;
@@ -1978,8 +1982,8 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
         pending = [];
         pages.push(current);
       } else if (current) { current.els.push(el); }
-      else if (pages.length) { pending.push(el); }
-      // 첫 차트 앞(pages 비어 있음) 요소는 그대로 상시 표시
+      else if (pages.length || pending.length) { pending.push(el); }
+      // 첫 섹션 제목·첫 차트 이전 요소는 그대로 상시 표시 (컨트롤 등)
     });
     if (pending.length && pages.length) {
       // 마지막 섹션 제목 뒤에 차트가 없던 경우: 마지막 페이지에 붙여 표시
@@ -2001,6 +2005,12 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
         (gd.layout.title.text || gd.layout.title);
       if (typeof t === 'string' && t.trim()) {
         return String(t).replace(/<[^>]*>/g, '').slice(0, 42);
+      }
+      for (var k = 0; k < pg.els.length; k++) {
+        if (pg.els[k].classList.contains('cy-holder') ||
+            (pg.els[k].querySelector && pg.els[k].querySelector('.cy-holder'))) {
+          return '네트워크 차트 ' + (i + 1);
+        }
       }
       return '차트 ' + (i + 1);
     }
@@ -2036,8 +2046,29 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
       prev.disabled = showAll || idx === 0;
       next.disabled = showAll || idx === pages.length - 1;
       sel.disabled = showAll;
-      // 숨김 상태에서 창 크기가 바뀐 Plotly 차트 재배치
-      window.dispatchEvent(new Event('resize'));
+      // 보이게 된 차트만 재배치 — 숨김 plot 에 resize 를 걸면 Plotly 가
+      // 거부(콘솔 오류)하므로 현재 페이지의 요소만 대상
+      pages.forEach(function (pg, i) {
+        if (!showAll && i !== idx) return;
+        pg.els.forEach(function (el) {
+          try {
+            var gds = el.classList.contains('ipls-chart') ? [el]
+              : Array.prototype.slice.call(
+                  el.querySelectorAll ? el.querySelectorAll('.ipls-chart') : []);
+            gds.forEach(function (gd) {
+              if (window.Plotly && Plotly.Plots && Plotly.Plots.resize) {
+                Plotly.Plots.resize(gd);
+              }
+            });
+            var cys = el.classList.contains('cy-holder') ? [el]
+              : Array.prototype.slice.call(
+                  el.querySelectorAll ? el.querySelectorAll('.cy-holder') : []);
+            cys.forEach(function (ch) {
+              if (ch.__iplsCy && ch.__iplsCy.resize) ch.__iplsCy.resize();
+            });
+          } catch (e) { /* 재배치 실패는 표시에 치명적이지 않음 */ }
+        });
+      });
     }
     prev.addEventListener('click', function () { if (idx > 0) { idx--; apply(); } });
     next.addEventListener('click', function () {
