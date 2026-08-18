@@ -8867,18 +8867,28 @@ def compute_claim_density(df, settings, tech=None):
         else pd.Series(0.0, index=work.index)
     cmax = float(cites.max()) or 1.0
 
+    has_co = "_co_applicants_display" in work.columns
     points_by_app = {}
     for i in range(len(work)):
         row = work.iloc[i]
         app = str(row.get("applicant_display") or "")
+        # 점 1개=특허 1건이므로 색·범례는 대표(첫) 출원인 기준 — 공동출원
+        # 여부와 상대 출원인은 hover 에 명시해 기준을 숨기지 않는다
         app_group = app if app in top_apps else "기타"
+        co_others = []
+        if has_co:
+            co_others = [str(a) for a in (row.get("_co_applicants_display") or [])
+                         if str(a).strip() and str(a) != app]
+        app_label = app_group + ((" (공동: %s)" % ", ".join(co_others[:2])
+                                  + (" 외" if len(co_others) > 2 else ""))
+                                 if co_others else "")
         active = row.get("_active_flag")
         granted = row.get("_is_granted_bool")
         rm = float(remain_years.iloc[i]) if remain_years is not None and \
             not np.isnan(remain_years.iloc[i]) else None
         hover = ("<b>%s</b><br>%s<br>%s / %s / 클러스터 %s<br>중첩밀도 %.2f%s"
                  % (str(ids[i])[:30],
-                    str(row.get("title", ""))[:60], app_group,
+                    str(row.get("title", ""))[:60], app_label,
                     row.get("legal_status_norm", "Unknown"), int(labels[i]),
                     float(overlap_density[i]),
                     (" / 잔존 %.1f년" % rm) if rm is not None else ""))
@@ -8918,7 +8928,17 @@ def compute_claim_density(df, settings, tech=None):
         flags = sub["_active_flag"]
         known = flags.map(lambda v: v is not None)
         active_ratio = float(flags[known].map(lambda v: v is True).mean()) if known.any() else None
-        apps = sub["applicant_display"].replace("", np.nan).dropna().value_counts()
+        # 주도 기업 집계는 공동출원 설정을 따른다 — 기본 '각각 집계'(WIPS 방식)
+        # 에서는 공동출원 1건이 각 공동출원인에게 1건씩 계산됨
+        mode = str((settings or {}).get("coapplicant_mode") or "all")
+        if mode == "all" and "_co_applicants_display" in sub.columns:
+            apps = pd.Series([str(a) for lst in sub["_co_applicants_display"]
+                              for a in (lst or []) if str(a).strip()]).value_counts()
+            if not len(apps):
+                apps = sub["applicant_display"].replace("", np.nan) \
+                    .dropna().value_counts()
+        else:
+            apps = sub["applicant_display"].replace("", np.nan).dropna().value_counts()
         clusters.append({
             "cluster": cl, "n": int(mask.sum()),
             "density": round(float(overlap_density[mask].mean()), 3),
@@ -16213,7 +16233,7 @@ def compute_quality_report(df, settings):
 
 
 # 검증 리포트용 빌드 정보 (tools/build_backend.py 가 실측 집계)
-_QR_BUILD_INFO = {'built_at': '2026-08-18 05:08', 'modules': 46, 'test_functions': 257, 'test_files': 14, 'source': 'build'}
+_QR_BUILD_INFO = {'built_at': '2026-08-18 05:39', 'modules': 46, 'test_functions': 258, 'test_files': 14, 'source': 'build'}
 
 
 

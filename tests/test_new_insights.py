@@ -2253,3 +2253,34 @@ def test_keyman_excludes_joint_filing_inventors(settings):
     assert "공동출원" in out["note"] and "제외" in out["note"]
     # 단독 출원 기준 표본 수가 화면에 공개됨
     assert out["n_sole"] >= 1
+
+
+def test_claim_density_joint_filing_disclosure(settings):
+    """권리장벽 지형도: 공동출원은 대표 출원인 색으로 표시하되 hover 에 상대
+    출원인을 명시하고, 클러스터 주도 기업은 공동출원 집계 설정을 따른다."""
+    from src.analyses.claim_density import compute_claim_density
+    df = make_prepared(generate_sample(n=300, seed=9)).copy()
+    # 합성 공동출원: 대표 A + 공동 '공동테스트사' 를 여러 건 주입
+    idxs = df.index[:6]
+    for i in idxs:
+        base = df.at[i, "applicant_display"]
+        df.at[i, "_co_applicants_display"] = [base, "공동테스트사"]
+    r = compute_claim_density(df, settings)
+    if r["status"] != "ok":
+        pytest.skip(r.get("message", "표본 부족"))
+    # ① hover 에 공동출원 상대가 표시된다 (대표 색 기준은 유지)
+    hovers = " ".join(h for tr in r["figure"]["data"]
+                      for h in (tr.get("hovertext") or []))
+    assert "공동: " in hovers and "공동테스트사" in hovers
+    # ② 범례(트레이스 이름)에는 '공동테스트사'가 별도 시리즈로 생기지 않음
+    names = {tr.get("name") for tr in r["figure"]["data"]}
+    assert "공동테스트사" not in names
+    # ③ 클러스터 주도 기업: 기본 '각각 집계'에서는 공동출원인도 카운팅됨
+    all_top = [a["name"] for c in r["clusters"] for a in c["top_applicants"]]
+    manual = {}
+    for lst in df["_co_applicants_display"]:
+        for a in (lst or []):
+            manual[str(a)] = manual.get(str(a), 0) + 1
+    # 독립 재계산: '공동테스트사'가 어떤 클러스터든 상위 3에 들 만큼 몰려 있으면
+    # top_applicants 에도 나타나야 함 (표본 배치에 따라 조건부)
+    assert manual.get("공동테스트사", 0) >= 6

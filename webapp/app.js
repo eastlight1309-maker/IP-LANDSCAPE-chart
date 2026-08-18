@@ -3879,7 +3879,7 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
       { label: '청구항 밀집도', render: function (h) {
         analysisCard({
           analysis: 'claim-density', holder: h, title: '권리장벽 지형도 (Claim Density Contour)',
-          help: '독립청구항 임베딩→UMAP/PCA 2D→HDBSCAN 클러스터→KDE 밀도. 임베딩 우선순위: ① 사전 계산 임베딩 컬럼 ② KR-SBERT 특허 특화 모델(snunlp, 기본) ③ TF-IDF 폴백 — 실제 사용된 방식은 차트 아래 "방법"에 표시됩니다. 점=문헌(크기=피인용, 투명도=권리 유효성, 테두리=등록). FTO 판단이 아닌 우선 검토 스크리닝 도구입니다.',
+          help: '독립청구항 임베딩→UMAP/PCA 2D→HDBSCAN 클러스터→KDE 밀도. 임베딩 우선순위: ① 사전 계산 임베딩 컬럼 ② KR-SBERT 특허 특화 모델(snunlp, 기본) ③ TF-IDF 폴백 — 실제 사용된 방식은 차트 아래 "방법"에 표시됩니다. 점=문헌(크기=피인용, 투명도=권리 유효성, 테두리=등록). 공동출원 특허는 점 1개=특허 1건이므로 색·범례는 대표(첫) 출원인 기준이며, 공동출원 여부와 상대 출원인은 hover 에 표시됩니다 (클러스터 주도 기업 집계는 Settings 의 공동출원 집계 방식을 따름). FTO 판단이 아닌 우선 검토 스크리닝 도구입니다.',
           controls: function (c, reload) {
             var t = Ui.el('<select><option value="">전체 분류</option></select>');
             ((State.filterOptions || {}).tech || []).slice(0, 300).forEach(function (x) {
