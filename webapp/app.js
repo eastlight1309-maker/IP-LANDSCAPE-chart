@@ -583,17 +583,29 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
           if (!t) return;
           try {
             if (t.kind === 'plotly') {
-              Plotly.downloadImage(t.el, { format: fmt, filename: baseName, width: 1200, height: 700 });
+              if (fmt === 'png') {
+                // 보고서용 가독성: PPT 캡처와 동일하게 글자 확대 + 2배 해상도
+                captureOneChart(t.el).then(function (url) {
+                  if (!url) { Ui.toast('캡처에 실패했습니다.', 'warn'); return; }
+                  var a0 = document.createElement('a');
+                  a0.href = url;
+                  a0.download = baseName + '.png';
+                  a0.click();
+                });
+              } else {
+                Plotly.downloadImage(t.el, { format: fmt, filename: baseName,
+                                             width: 1200, height: 700 });
+              }
             } else if (t.kind === 'cy') {
               if (fmt === 'svg') { Ui.toast('네트워크는 PNG 다운로드만 지원합니다.', 'warn'); return; }
               var a = document.createElement('a');
-              a.href = t.cy.png({ full: true, scale: 2, bg: '#ffffff' });
+              a.href = t.cy.png({ full: true, scale: 3, bg: '#ffffff' });
               a.download = baseName + '.png';
               a.click();
             } else if (t.kind === 'echarts') {
               if (fmt === 'svg') { Ui.toast('대형 히트맵은 PNG 다운로드만 지원합니다.', 'warn'); return; }
               var a2 = document.createElement('a');
-              a2.href = t.chart.getDataURL({ pixelRatio: 2, backgroundColor: '#fff' });
+              a2.href = t.chart.getDataURL({ pixelRatio: 3, backgroundColor: '#fff' });
               a2.download = baseName + '.png';
               a2.click();
             }
@@ -666,22 +678,72 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
              extractChartSheets: extractChartSheets };
   })();
 
-  /* PPT 저장용: 차트 1개 → PNG data URL 캡처 (Plotly/Cytoscape/ECharts) */
+  /* PPT 저장용: 차트 1개 → PNG data URL 캡처 (Plotly/Cytoscape/ECharts).
+     가독성 처리: 화면 차트는 그대로 두고 복제 figure 의 모든 글자를
+     1.45배(최소 13px)로 키운 뒤 2배 해상도로 렌더 — 슬라이드 전체 폭으로
+     확대해도 흐리지 않고 글자가 읽힌다. */
+  function _scaleFigFonts(obj, f, floor) {
+    if (!obj || typeof obj !== 'object') return;
+    Object.keys(obj).forEach(function (k) {
+      var v = obj[k];
+      if (v && typeof v === 'object') {
+        if (k.toLowerCase().indexOf('font') !== -1 &&
+            typeof v.size === 'number') {
+          v.size = Math.max(v.size * f, floor);
+        }
+        _scaleFigFonts(v, f, floor);
+      }
+    });
+  }
+
   function captureOneChart(el) {
     try {
       if (el.classList.contains('ipls-chart') && el.data &&
           window.Plotly && Plotly.toImage) {
-        return Plotly.toImage(el, { format: 'png', width: 1200, height: 700 })
-          .catch(function () { return null; });
+        var w = (el._fullLayout && el._fullLayout.width) || el.offsetWidth || 1200;
+        var h = (el._fullLayout && el._fullLayout.height) || el.offsetHeight || 700;
+        var fig = JSON.parse(JSON.stringify({ data: el.data,
+                                              layout: el.layout || {} }));
+        fig.layout.font = fig.layout.font || {};
+        if (typeof fig.layout.font.size !== 'number') fig.layout.font.size = 12;
+        _scaleFigFonts(fig, 1.45, 13);
+        // 보고서 삽입용: 투명 배경은 뷰어에 따라 검게 보일 수 있어 흰색 고정
+        fig.layout.paper_bgcolor = '#ffffff';
+        fig.layout.plot_bgcolor = '#ffffff';
+        // 커진 글자가 잘리거나 축 제목과 겹치지 않도록 여백도 같은 비율로 확대
+        var mg = fig.layout.margin;
+        if (mg) {
+          ['l', 'r', 't', 'b'].forEach(function (kk) {
+            if (typeof mg[kk] === 'number') mg[kk] = Math.round(mg[kk] * 1.45);
+          });
+        }
+        // 플롯 아래 각주 주석(범례 설명)은 커진 X축 제목과 겹치지 않게 더
+        // 아래로 내리고 하단 여백을 추가 확보
+        var hasFoot = false;
+        ((fig.layout.annotations) || []).forEach(function (an) {
+          if (an && an.yref === 'paper' && typeof an.y === 'number' &&
+              an.y <= -0.05 && !an.showarrow) {
+            an.y -= 0.12;
+            hasFoot = true;
+          }
+        });
+        if (hasFoot && mg) mg.b = Math.max(mg.b || 0, 135);
+        return Plotly.toImage(fig, { format: 'png', width: w, height: h,
+                                     scale: 2 })
+          .catch(function () {
+            // 복제 렌더 실패 시 기존 방식 폴백 (캡처 자체는 보존)
+            return Plotly.toImage(el, { format: 'png', width: 1200, height: 700 })
+              .catch(function () { return null; });
+          });
       }
       if (el.classList.contains('ipls-cy') && el.__iplsCy && el.__iplsCy.png) {
-        return Promise.resolve(el.__iplsCy.png({ full: true, scale: 2,
+        return Promise.resolve(el.__iplsCy.png({ full: true, scale: 3,
           output: 'base64uri', bg: '#ffffff' }));
       }
       if (el.classList.contains('ipls-echart') && el.__iplsChart &&
           el.__iplsChart.getDataURL) {
         return Promise.resolve(el.__iplsChart.getDataURL(
-          { type: 'png', pixelRatio: 2, backgroundColor: '#fff' }));
+          { type: 'png', pixelRatio: 3, backgroundColor: '#fff' }));
       }
     } catch (e) { /* 캡처 실패는 무시 — 텍스트만 저장 */ }
     return Promise.resolve(null);
@@ -4495,7 +4557,7 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
       '<li><b>드릴다운</b>: 차트의 점·막대·셀·노드를 클릭하면 근거 특허 목록이 열립니다. 표의 파란 텍스트도 클릭 가능합니다.</li>' +
       '<li><b>👥 출원인 선택</b>: 출원 동향 · 기술분류 동향 · 출원인 포커스 · 신흥 기술 탐지 · 기술×연도 버블 · 심층 시그널 4개 탭 · 특수 신호 2개 탭(심사관 인텔리전스 포함) · 핵심특허 영향력 카드 상단의 드롭다운으로 특정 출원인만 골라 볼 수 있습니다 (공동출원 건 포함 매칭). White Space Map 에서는 선택한 출원인이 <b>자사</b>가 되어 ◇(자사 역량 보유) 판정 기준이 됩니다. 출원인 포커스 탭은 선택한 회사의 집중 기술과 "작지만 최근 3년에 급부상한 아이템"을 찾아줍니다.</li>' +
       '<li><b>Excel</b>: 카드 우상단 Excel 버튼 — 화면 차트의 집계 데이터를 시트별로 다운로드합니다. 첫 시트 "설명"에 카드 설명·각 시트의 축/색 의미·차트 해석·인사이트가 함께 들어가 파일만 열어도 데이터 의미를 알 수 있습니다. 일부 차트는 화면보다 상세한 원천 데이터 시트가 추가로 붙습니다 (예: 기업별 과학 근접도 — 회사별 평균 NPL·표본 수·NPL 인용 특허 수).</li>' +
-      '<li><b>PNG/SVG</b>: 보고서용 이미지 저장.</li>' +
+      '<li><b>PNG/SVG</b>: 보고서용 이미지 저장. PNG 와 PPT 용 차트 캡처는 <b>글자를 1.45배(최소 13px)로 키우고 2배 해상도·흰 배경</b>으로 렌더되어, 슬라이드 전체 폭으로 확대해도 흐리지 않고 글자가 선명하게 읽힙니다 (화면 차트는 그대로 유지 — 내보내기 복제본에만 적용).</li>' +
       '<li><b>🤖 AI 인사이트 (차트별)</b>: "LLM 인사이트 생성 (차트별)" 버튼은 카드 안의 <b>각 차트마다 개별로</b> 그 차트의 수치·읽는 법을 근거로 <b>IP Landscape 전문 컨설턴트 수준의</b> 슬라이드 형식 인사이트를 만듭니다 — [슬라이드 제목]→[차트 요지](이 차트가 어떤 목적으로 무엇을 보여주는지 한 줄)→[핵심 메시지]→<b>[심층 해석]</b>(경쟁 구도·기술 수명주기 위치·진입장벽·변곡점·R&amp;D 전략 관점, "관찰 수치→해석→함의" 구조)→[근거 데이터]→[시사점·제언](단기/중기 우선순위 + 후속 분석 제안)→[유의사항]. 뻔한 차트 묘사가 아니라 "이 수치가 왜 중요한가"에 집중하며, 화면 데이터가 뒷받침하지 않는 해석은 쓰지 않도록 지시됩니다 (진행 표시 n/m). 각 차트 아래의 "💡 이 차트의 인사이트"는 LLM 없이 항상 표시되는 규칙 기반 요약입니다. AI 패널에서는 추가 질문(챗)이 가능하고 "웹 검색 포함"을 켜면 출처 링크와 함께 외부 검색을 참고합니다.</li>' +
       '<li><b>🗂️ 인사이트 보관함 → PPT</b>: 생성된 인사이트는 차트 이미지와 함께 작업별로 자동 저장됩니다 (기본은 현재 작업만 표시, 이전 작업은 버튼으로 선택). 항목을 골라 PPT 로 내려받으면 <b>1p 표지, 2p 목차, 이후 차트마다 [차트 페이지: 차트 + 바로 아래 "이 차트의 의미" 한 줄 캡션 → 다음 페이지: 나머지 인사이트 전체]</b> 순서로 들어가고, 카드에 차트가 여러 개면 전부 수록됩니다. 인사이트 페이지는 임원 보고용으로 디자인되어 있습니다 — 옅은 카드 패널 배경, ▎섹션 머리글, 핵심 메시지 ■ 네이비 강조 불릿, 시사점 ➤ 화살 불릿, 유의사항 별도 색상, 네이비 표지·페이지 번호 푸터·차트 비율 유지.</li>' +
       '<li><b>💾 분석 스냅샷</b>: Settings 의 "분석 스냅샷" 카드(또는 상단 헤더 저장 버튼)로 현재 분석 상태(Dataset·필터·분석 단위·보던 화면)를 이름 붙여 저장하고, 목록이나 헤더 드롭다운에서 선택해 그대로 복원할 수 있습니다. 데이터가 그대로면 결과는 서버 캐시에서 즉시 열립니다.</li>' +
