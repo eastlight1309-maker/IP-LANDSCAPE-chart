@@ -16379,7 +16379,7 @@ def compute_quality_report(df, settings):
 
 
 # 검증 리포트용 빌드 정보 (tools/build_backend.py 가 실측 집계)
-_QR_BUILD_INFO = {'built_at': '2026-08-18 06:17', 'modules': 46, 'test_functions': 266, 'test_files': 15, 'source': 'build'}
+_QR_BUILD_INFO = {'built_at': '2026-08-18 07:21', 'modules': 46, 'test_functions': 266, 'test_files': 15, 'source': 'build'}
 
 
 

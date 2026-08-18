@@ -818,6 +818,52 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
     } catch (e) { return null; }
   }
 
+  /* 차트 1개 단위 LLM 인사이트 요청 (공용) — 카드 하단 일괄 생성 버튼과
+     차트별 "이 차트 인사이트" 버튼이 같은 경로를 쓴다.
+     해당 차트의 이미지·집계 데이터만 전달해 개별 해석하고, 서버가 보관함에 저장. */
+  function chartInsightRequest(analysisName, cardBody, cardDesc, ins, ch, opts2) {
+    opts2 = opts2 || {};
+    var desc = ((cardDesc || '') +
+      (opts2.withTitle ? ' [대상 차트] ' + ch.title : '') +
+      (ch.caption ? ' [차트 읽는 법] ' + ch.caption : '') +
+      (opts2.company ? ' [이 차트 적용 출원인] ' + opts2.company : '')).trim();
+    return captureOneChart(ch.el).then(function (img) {
+      return Api.post('/api/insight', {
+        analysis: analysisName,
+        chart_title: opts2.withTitle ? ch.title : null,
+        metrics: (ins && ins.metrics) || {},
+        sentences: (ins && ins.sentences) || [],
+        description: desc.slice(0, 900),
+        chart_data: compactChartData(cardBody, ch.el),
+        chart_image: img,
+        chart_images: img ? [img] : []
+      }, opts2.progress || 'LLM 인사이트 생성 중…');
+    });
+  }
+
+  /* 결과 JSON 트리에서 Plotly figure({data:[],layout:{}}) 후보를 수집 —
+     차트별 출원인 재계산에서 "제목이 같은 차트"를 찾아 그 자리만 교체하는 데 쓴다. */
+  function collectFigures(obj) {
+    var figs = [];
+    (function walk(o, depth) {
+      if (!o || typeof o !== 'object' || depth > 8) return;
+      if (Array.isArray(o)) { o.forEach(function (x) { walk(x, depth + 1); }); return; }
+      if (Array.isArray(o.data) && o.layout && typeof o.layout === 'object') {
+        figs.push(o); return;
+      }
+      Object.keys(o).forEach(function (k) {
+        if (k === 'insight' || k === 'meta') return;  // 문장·메타에는 figure 없음
+        walk(o[k], depth + 1);
+      });
+    })(obj, 0);
+    return figs;
+  }
+  function figTitleText(fig) {
+    var t = fig && fig.layout && fig.layout.title;
+    t = (t && (t.text || (typeof t === 'string' ? t : ''))) || '';
+    return String(t).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+  }
+
   /* -------------------------------------------------------------- Insight */
   var Insight = (function () {
     function box(result, analysisName, description) {
@@ -857,7 +903,6 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
           }
           var cardBody = cardEl && cardEl.querySelector('.card-body');
           var charts = cardCharts(cardBody).slice(0, 6);
-          lb.disabled = true;
 
           function renderSection(title, data, single) {
             if (!single) {
@@ -874,27 +919,9 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
             if (data.llm_note) Ui.toast(data.llm_note, 'warn');
           }
 
-          function askOne(ch, idx, single) {
-            /* 차트 1개 단위: 해당 차트의 이미지·집계 데이터만 전달해 개별 해석 */
-            var desc = ((cardDesc || '') +
-              (single ? '' : ' [대상 차트] ' + ch.title) +
-              (ch.caption ? ' [차트 읽는 법] ' + ch.caption : '')).trim();
-            return captureOneChart(ch.el).then(function (img) {
-              return Api.post('/api/insight', {
-                analysis: analysisName,
-                chart_title: single ? null : ch.title,
-                metrics: ins.metrics || {},
-                sentences: ins.sentences || [],
-                description: desc.slice(0, 900),
-                chart_data: compactChartData(cardBody, ch.el),
-                chart_image: img,
-                chart_images: img ? [img] : []
-              }, 'LLM 인사이트 생성 중… (' + (idx + 1) + '/' + charts.length + ')');
-            });
-          }
-
           if (!charts.length) {
             // 차트 없는 카드(표 중심): 기존 방식 — 카드 전체 데이터로 1건 생성
+            lb.disabled = true;
             captureCardImages(cardBody).then(function (imgs) {
               return Api.post('/api/insight', {
                 analysis: analysisName, metrics: ins.metrics || {},
@@ -912,26 +939,74 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
             return;
           }
 
-          // 카드의 각 차트에 대해 순차적으로 개별 인사이트 생성·저장
-          var single = charts.length === 1;
-          ul.innerHTML = '';
-          var saved = 0;
-          var chain = Promise.resolve();
-          charts.forEach(function (ch, idx) {
-            chain = chain.then(function () {
-              return askOne(ch, idx, single).then(function (data) {
-                renderSection(ch.title, data, single);
-                if (data.saved_id) saved += 1;
+          function runCharts(picked) {
+            /* 선택한 차트들에 대해 순차적으로 개별 인사이트 생성·저장 */
+            var single = picked.length === 1;
+            lb.disabled = true;
+            ul.innerHTML = '';
+            var saved = 0;
+            var chain = Promise.resolve();
+            picked.forEach(function (ch, idx) {
+              chain = chain.then(function () {
+                return chartInsightRequest(analysisName, cardBody, cardDesc, ins, ch, {
+                  withTitle: !single,
+                  progress: 'LLM 인사이트 생성 중… (' + (idx + 1) + '/' + picked.length + ')'
+                }).then(function (data) {
+                  renderSection(ch.title, data, single);
+                  if (data.saved_id) saved += 1;
+                });
               });
             });
+            chain.then(function () {
+              src.textContent = '자동 인사이트 (LLM · 차트별 ' + picked.length + '건)';
+              if (saved) {
+                Ui.toast('🗂️ 차트별 인사이트 ' + saved + '건이 보관함에 저장되었습니다 ' +
+                  '(PPT 다운로드 시 각 차트+인사이트가 모두 포함).');
+              }
+            }).catch(errToast).finally(function () { lb.disabled = false; });
+          }
+
+          if (charts.length === 1) { runCharts(charts); return; }
+
+          // 차트가 여러 개면 필요한 차트만 골라 생성하는 체크리스트 표시 (토글)
+          if (div.__chartPick) {
+            div.__chartPick.remove(); div.__chartPick = null; return;
+          }
+          var pick = Ui.el('<div style="border:1px solid #d5e2ec;border-radius:8px;' +
+            'padding:8px 10px;margin:6px 0;background:#f7fafc;font-size:12px">' +
+            '<b>인사이트를 생성할 차트 선택</b> <span style="color:#647b8d">' +
+            '(필요한 차트만 골라 LLM 호출을 줄일 수 있습니다)</span></div>');
+          var listEl = Ui.el('<div style="display:flex;flex-direction:column;gap:3px;' +
+            'margin:6px 0;max-height:180px;overflow-y:auto"></div>');
+          var cbs = charts.map(function (ch) {
+            var lab = Ui.el('<label style="display:flex;gap:6px;align-items:flex-start;' +
+              'cursor:pointer"><input type="checkbox" checked></label>');
+            lab.appendChild(document.createTextNode(ch.title));
+            listEl.appendChild(lab);
+            return lab.querySelector('input');
           });
-          chain.then(function () {
-            src.textContent = '자동 인사이트 (LLM · 차트별 ' + charts.length + '건)';
-            if (saved) {
-              Ui.toast('🗂️ 차트별 인사이트 ' + saved + '건이 보관함에 저장되었습니다 ' +
-                '(PPT 다운로드 시 각 차트+인사이트가 모두 포함).');
-            }
-          }).catch(errToast).finally(function () { lb.disabled = false; });
+          pick.appendChild(listEl);
+          var actRow = Ui.el('<div style="display:flex;gap:6px;flex-wrap:wrap"></div>');
+          var goBtn = Ui.el('<button class="btn small primary">선택한 차트 인사이트 생성</button>');
+          var allBtn = Ui.el('<button class="btn small">전체 선택/해제</button>');
+          var cancelBtn = Ui.el('<button class="btn small">닫기</button>');
+          allBtn.addEventListener('click', function () {
+            var on = cbs.some(function (cb) { return !cb.checked; });
+            cbs.forEach(function (cb) { cb.checked = on; });
+          });
+          cancelBtn.addEventListener('click', function () {
+            pick.remove(); div.__chartPick = null;
+          });
+          goBtn.addEventListener('click', function () {
+            var picked = charts.filter(function (_ch, i) { return cbs[i].checked; });
+            if (!picked.length) { Ui.toast('차트를 1개 이상 선택하세요.', 'warn'); return; }
+            pick.remove(); div.__chartPick = null;
+            runCharts(picked);
+          });
+          actRow.appendChild(goBtn); actRow.appendChild(allBtn); actRow.appendChild(cancelBtn);
+          pick.appendChild(actRow);
+          div.__chartPick = pick;
+          drills.parentNode.insertBefore(pick, drills.nextSibling);
         });
         drills.appendChild(lb);
       }
@@ -1978,17 +2053,157 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
   };
 
   /* ---------- 헬퍼: 표준 분석 카드 ---------- */
+  /* 차트별 출원인 재계산을 지원하는 분석 (백엔드가 body.company 를 받는 엔드포인트).
+     복수 회사(companies) 방식·company 미지원 분석은 제외한다. */
+  var PER_CHART_COMPANY = {
+    'basic-stats': 1, 'lifecycle': 1, 'tech-tree': 1, 'company-focus': 1,
+    'citation-diffusion': 1, 'emerging-clusters': 1, 'wips-deep': 1,
+    'deep-plus': 1, 'exec-plus': 1, 'executive-summary': 1, 'opportunity': 1,
+    'technology-network': 1, 'emerging-combinations': 1, 'classification-quality': 1
+  };
+
+  /* 카드에 차트가 여러 개면 각 차트 아래에 "이 차트만" 도구 행을 붙인다:
+     ① 출원인 선택(지원 분석 한정) — 그 차트만 선택 출원인 기준으로 재계산·교체.
+        전체 분석을 company 로 재요청한 뒤 제목이 같은 figure 를 찾아 해당
+        차트 자리만 바꾼다 (표·요약 등 나머지 화면은 그대로 유지).
+     ② 이 차트 인사이트(LLM 설정 시) — 그 차트 하나만 LLM 인사이트 생성해
+        차트 바로 아래에 표시 (보관함에도 저장). */
+  function attachPerChartTools(c, opts, result, getBody) {
+    var charts = cardCharts(c.body);
+    if (charts.length < 2) return;   // 단일 차트 카드는 카드 상단 컨트롤로 충분
+    var companyOk = !!PER_CHART_COMPANY[opts.analysis];
+    var llmOk = !!(State.config && State.config.settings &&
+      State.config.settings.llm_insights_enabled);
+    if (!companyOk && !llmOk) return;
+    var applicants = ((State.filterOptions || {}).applicants || []).slice(0, 300);
+    var ins = result.insight || { sentences: [], metrics: {} };
+    var cardDesc = opts.title + ' — ' + (c.desc || '');
+    var oldFigs = collectFigures(result);   // 위치 기반 fallback 매칭용
+    function normTitle(t) {
+      // 'Top 10'→'Top 7', 연도 범위 등 숫자만 달라지는 제목을 같은 차트로 인식
+      return String(t || '').replace(/[0-9\s]+/g, '');
+    }
+    function matchFigure(figs, title) {
+      var exact = figs.filter(function (f) { return figTitleText(f) === title; });
+      if (exact.length) return exact[0];
+      var nt = normTitle(title);
+      if (nt) {
+        var loose = figs.filter(function (f) { return normTitle(figTitleText(f)) === nt; });
+        if (loose.length) return loose[0];
+      }
+      // 위치 fallback: 차트 구성이 그대로면 원 결과에서의 순번으로 매칭
+      if (figs.length === oldFigs.length) {
+        for (var k = 0; k < oldFigs.length; k++) {
+          if (figTitleText(oldFigs[k]) === title) return figs[k];
+        }
+      }
+      return null;
+    }
+
+    charts.forEach(function (ch) {
+      var holder = ch.el.closest('.chart-holder, .cy-holder, .echart-holder') || ch.el;
+      if (holder.parentNode !== c.body) return;  // 중첩 구조(내부 탭 등)는 건너뜀
+      var row = Ui.el('<div style="display:flex;gap:6px;align-items:center;' +
+        'flex-wrap:wrap;margin:2px 0 8px;font-size:11.5px;color:#647b8d"></div>');
+      var chCompany = null;
+
+      if (companyOk && ch.el.classList.contains('ipls-chart') && applicants.length) {
+        var sel = Ui.el('<select><option value="">이 차트만: 전체 출원인</option></select>');
+        applicants.forEach(function (a) {
+          var o = document.createElement('option'); o.value = a; o.textContent = a;
+          sel.appendChild(o);
+        });
+        var status = Ui.el('<span></span>');
+        sel.addEventListener('change', function () {
+          var body = Object.assign({}, getBody(), { company: sel.value || null });
+          status.textContent = '재계산 중…';
+          sel.disabled = true;
+          Api.post('/api/' + opts.analysis, body, '차트 재계산 중…').then(function (r2) {
+            if (r2.status !== 'ok') {
+              status.textContent = '계산 불가: ' + (r2.message || '표본 부족');
+              return;
+            }
+            var fig = matchFigure(collectFigures(r2), ch.title);
+            if (!fig) {
+              status.textContent = '이 출원인 기준으로는 이 차트가 계산되지 않습니다 ' +
+                '(표본 부족·해당 데이터 없음)';
+              return;
+            }
+            try { Plotly.purge(ch.el); } catch (e) { /* 무시 */ }
+            ch.el.innerHTML = '';
+            Render.plotly(ch.el, fig, plotlyDrill);
+            chCompany = sel.value || null;
+            status.textContent = chCompany
+              ? '적용: ' + chCompany + ' (이 차트에만 · 공동출원 포함)' : '전체 기준';
+          }).catch(function (e) {
+            status.textContent = '오류: ' + e.message;
+          }).finally(function () { sel.disabled = false; });
+        });
+        row.appendChild(Ui.el('<span>👥</span>'));
+        row.appendChild(sel);
+        row.appendChild(status);
+      }
+
+      if (llmOk) {
+        var ib = Ui.el('<button class="btn small">🤖 이 차트 인사이트</button>');
+        ib.addEventListener('click', function () {
+          ib.disabled = true;
+          chartInsightRequest(opts.analysis, c.body, cardDesc, ins, ch, {
+            withTitle: true, company: chCompany,
+            progress: 'LLM 인사이트 생성 중… (' + ch.title.slice(0, 24) + ')'
+          }).then(function (data) {
+            var old = row.__insEl;
+            if (old && old.parentNode) old.parentNode.removeChild(old);
+            var box2 = Ui.el('<div class="chart-guide" style="border-left:3px solid ' +
+              '#4E79A7"><b>🤖 이 차트의 AI 인사이트 (' +
+              (data.source === 'llm' ? 'LLM' : '규칙 기반 폴백') + ')</b></div>');
+            var ul2 = document.createElement('ul');
+            ul2.style.cssText = 'padding-left:16px;margin:4px 0 0;white-space:pre-wrap';
+            (data.sentences || []).forEach(function (s) {
+              var li = document.createElement('li');
+              li.textContent = s;
+              ul2.appendChild(li);
+            });
+            box2.appendChild(ul2);
+            if (data.llm_note) Ui.toast(data.llm_note, 'warn');
+            row.parentNode.insertBefore(box2, row.nextSibling);
+            row.__insEl = box2;
+            if (data.saved_id) {
+              Ui.toast('🗂️ 이 차트의 인사이트가 보관함에 저장되었습니다 ' +
+                '(PPT 다운로드 시 포함).');
+            }
+          }).catch(errToast).finally(function () { ib.disabled = false; });
+        });
+        row.appendChild(ib);
+      }
+
+      if (!row.children.length) return;
+      // 차트 바로 뒤 해석 캡션(chart-guide) 뒤에 붙여 캡션 인식·페이저 묶음 유지
+      var anchor = holder;
+      while (anchor.nextElementSibling && anchor.nextElementSibling.classList &&
+             anchor.nextElementSibling.classList.contains('chart-guide')) {
+        anchor = anchor.nextElementSibling;
+      }
+      anchor.parentNode.insertBefore(row, anchor.nextSibling);
+    });
+  }
+
   function analysisCard(opts) {
     // opts: {analysis, title, help, guide?, holder, body, renderOk(...), controls(...)}
     var c = card(opts.title, opts.help);
     opts.holder.appendChild(c.root);
     if (!availabilityGuard(opts.analysis, c.body)) return null;
     var chartTarget = null;
+    var lastExtra = {};
     c.controls.appendChild(Render.chartButtons(function () { return chartTarget; },
       opts.analysis.replace(/-/g, '_')));
     c.controls.appendChild(Render.excelButton(opts.analysis, function () { return c.body; }, opts.drill || null));
+    function currentBody() {
+      return Object.assign({ filters: State.filters }, opts.body || {}, lastExtra);
+    }
     function reload(extraBody) {
-      var body = Object.assign({ filters: State.filters }, opts.body || {}, extraBody || {});
+      if (extraBody) lastExtra = Object.assign({}, lastExtra, extraBody);
+      var body = currentBody();
       disposeCharts(c.body);
       c.body.innerHTML = '<div class="status-empty">불러오는 중…</div>';
       Api.post('/api/' + opts.analysis, body, opts.title + ' 계산 중…').then(function (r) {
@@ -2003,6 +2218,7 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
         }
         c.body.appendChild(Insight.box(r, opts.analysis));
         c.body.appendChild(Insight.aiPanel(opts.analysis, r, opts.title + ' — ' + (c.desc || '')));
+        attachPerChartTools(c, opts, r, currentBody);  // 차트별 출원인·인사이트 도구
         paginateCharts(c.body);  // 카드에 차트가 여러 개면 한 화면 한 차트 페이저
       }).catch(function (e) {
         c.body.innerHTML = Render.statusBlock({ status: 'error', message: e.message });
@@ -4555,10 +4771,10 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
     section('🖱️ 차트 공통 기능',
       '<ul style="padding-left:18px;line-height:1.9">' +
       '<li><b>드릴다운</b>: 차트의 점·막대·셀·노드를 클릭하면 근거 특허 목록이 열립니다. 표의 파란 텍스트도 클릭 가능합니다.</li>' +
-      '<li><b>👥 출원인 선택</b>: 출원 동향 · 기술분류 동향 · 출원인 포커스 · 신흥 기술 탐지 · 기술×연도 버블 · 심층 시그널 4개 탭 · 특수 신호 2개 탭(심사관 인텔리전스 포함) · 핵심특허 영향력 카드 상단의 드롭다운으로 특정 출원인만 골라 볼 수 있습니다 (공동출원 건 포함 매칭). White Space Map 에서는 선택한 출원인이 <b>자사</b>가 되어 ◇(자사 역량 보유) 판정 기준이 됩니다. 출원인 포커스 탭은 선택한 회사의 집중 기술과 "작지만 최근 3년에 급부상한 아이템"을 찾아줍니다.</li>' +
+      '<li><b>👥 출원인 선택</b>: 출원 동향 · 기술분류 동향 · 출원인 포커스 · 신흥 기술 탐지 · 기술×연도 버블 · 심층 시그널 4개 탭 · 특수 신호 2개 탭(심사관 인텔리전스 포함) · 핵심특허 영향력 카드 상단의 드롭다운으로 특정 출원인만 골라 볼 수 있습니다 (공동출원 건 포함 매칭). White Space Map 에서는 선택한 출원인이 <b>자사</b>가 되어 ◇(자사 역량 보유) 판정 기준이 됩니다. 출원인 포커스 탭은 선택한 회사의 집중 기술과 "작지만 최근 3년에 급부상한 아이템"을 찾아줍니다. <b>차트가 여러 개인 탭</b>에서는 각 차트 아래의 <b>"이 차트만: 출원인 선택"</b> 드롭다운으로 차트마다 서로 다른 출원인을 적용할 수 있습니다 — 선택한 차트만 그 출원인 기준으로 재계산되어 교체되고 나머지 차트·표는 그대로 유지됩니다 (카드 상단 드롭다운은 탭 전체에 적용). 선택 출원인 기준으로 계산할 수 없는 차트(표본 부족 등)는 사유가 표시되고 원래 차트가 유지됩니다.</li>' +
       '<li><b>Excel</b>: 카드 우상단 Excel 버튼 — 화면 차트의 집계 데이터를 시트별로 다운로드합니다. 첫 시트 "설명"에 카드 설명·각 시트의 축/색 의미·차트 해석·인사이트가 함께 들어가 파일만 열어도 데이터 의미를 알 수 있습니다. 일부 차트는 화면보다 상세한 원천 데이터 시트가 추가로 붙습니다 (예: 기업별 과학 근접도 — 회사별 평균 NPL·표본 수·NPL 인용 특허 수).</li>' +
       '<li><b>PNG/SVG</b>: 보고서용 이미지 저장. PNG 와 PPT 용 차트 캡처는 <b>글자를 1.45배(최소 13px)로 키우고 2배 해상도·흰 배경</b>으로 렌더되어, 슬라이드 전체 폭으로 확대해도 흐리지 않고 글자가 선명하게 읽힙니다 (화면 차트는 그대로 유지 — 내보내기 복제본에만 적용).</li>' +
-      '<li><b>🤖 AI 인사이트 (차트별)</b>: "LLM 인사이트 생성 (차트별)" 버튼은 카드 안의 <b>각 차트마다 개별로</b> 그 차트의 수치·읽는 법을 근거로 <b>IP Landscape 전문 컨설턴트 수준의</b> 슬라이드 형식 인사이트를 만듭니다 — [슬라이드 제목]→[차트 요지](이 차트가 어떤 목적으로 무엇을 보여주는지 한 줄)→[핵심 메시지]→<b>[심층 해석]</b>(경쟁 구도·기술 수명주기 위치·진입장벽·변곡점·R&amp;D 전략 관점, "관찰 수치→해석→함의" 구조)→[근거 데이터]→[시사점·제언](단기/중기 우선순위 + 후속 분석 제안)→[유의사항]. 뻔한 차트 묘사가 아니라 "이 수치가 왜 중요한가"에 집중하며, 화면 데이터가 뒷받침하지 않는 해석은 쓰지 않도록 지시됩니다 (진행 표시 n/m). 각 차트 아래의 "💡 이 차트의 인사이트"는 LLM 없이 항상 표시되는 규칙 기반 요약입니다. AI 패널에서는 추가 질문(챗)이 가능하고 "웹 검색 포함"을 켜면 출처 링크와 함께 외부 검색을 참고합니다.</li>' +
+      '<li><b>🤖 AI 인사이트 (차트별)</b>: 차트가 여러 개인 탭에서 "LLM 인사이트 생성 (차트별)" 버튼을 누르면 <b>차트 선택 체크리스트</b>가 열려 필요한 차트만 골라 생성할 수 있고(불필요한 LLM 호출 절약), 각 차트 아래의 <b>"🤖 이 차트 인사이트"</b> 버튼으로 그 차트 하나만 바로 생성할 수도 있습니다 — 결과는 해당 차트 바로 아래에 표시되고 보관함에 저장됩니다. 생성되는 인사이트는 그 차트의 수치·읽는 법을 근거로 <b>IP Landscape 전문 컨설턴트 수준의</b> 슬라이드 형식 인사이트를 만듭니다 — [슬라이드 제목]→[차트 요지](이 차트가 어떤 목적으로 무엇을 보여주는지 한 줄)→[핵심 메시지]→<b>[심층 해석]</b>(경쟁 구도·기술 수명주기 위치·진입장벽·변곡점·R&amp;D 전략 관점, "관찰 수치→해석→함의" 구조)→[근거 데이터]→[시사점·제언](단기/중기 우선순위 + 후속 분석 제안)→[유의사항]. 뻔한 차트 묘사가 아니라 "이 수치가 왜 중요한가"에 집중하며, 화면 데이터가 뒷받침하지 않는 해석은 쓰지 않도록 지시됩니다 (진행 표시 n/m). 각 차트 아래의 "💡 이 차트의 인사이트"는 LLM 없이 항상 표시되는 규칙 기반 요약입니다. AI 패널에서는 추가 질문(챗)이 가능하고 "웹 검색 포함"을 켜면 출처 링크와 함께 외부 검색을 참고합니다.</li>' +
       '<li><b>🗂️ 인사이트 보관함 → PPT</b>: 생성된 인사이트는 차트 이미지와 함께 작업별로 자동 저장됩니다 (기본은 현재 작업만 표시, 이전 작업은 버튼으로 선택). 항목을 골라 PPT 로 내려받으면 <b>1p 표지, 2p 목차, 이후 차트마다 [차트 페이지: 차트 + 바로 아래 "이 차트의 의미" 한 줄 캡션 → 다음 페이지: 나머지 인사이트 전체]</b> 순서로 들어가고, 카드에 차트가 여러 개면 전부 수록됩니다. 인사이트 페이지는 임원 보고용으로 디자인되어 있습니다 — 옅은 카드 패널 배경, ▎섹션 머리글, 핵심 메시지 ■ 네이비 강조 불릿, 시사점 ➤ 화살 불릿, 유의사항 별도 색상, 네이비 표지·페이지 번호 푸터·차트 비율 유지.</li>' +
       '<li><b>💾 분석 스냅샷</b>: Settings 의 "분석 스냅샷" 카드(또는 상단 헤더 저장 버튼)로 현재 분석 상태(Dataset·필터·분석 단위·보던 화면)를 이름 붙여 저장하고, 목록이나 헤더 드롭다운에서 선택해 그대로 복원할 수 있습니다. 데이터가 그대로면 결과는 서버 캐시에서 즉시 열립니다.</li>' +
       '<li><b>👤 내 작업만 보기</b>: 업로드 작업·분석 스냅샷 목록에서 작업자 드롭다운으로 고르거나 이름/팀명을 직접 입력하면 내 작업만 날짜별로 표시됩니다. 이름은 브라우저에 기억되어 다음 방문 때 자동 적용되고, "전체 보기"로 다른 사람 작업도 볼 수 있습니다 (편의 필터 — 접근 차단은 Dataiku 권한으로 관리).</li>' +
