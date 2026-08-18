@@ -87,16 +87,17 @@ def compute_executive_summary(df, settings, company=None):
     max_year = int(df["_base_year"].dropna().max())
     recent_from = max_year - recent + 1
     apps = df["applicant_display"]
-    counts = apps.replace("", np.nan).dropna().value_counts()
+    # 출원인 순위·점유율은 공동출원 설정을 따름 (기본 '각각 집계')
+    from src.analyses.common import applicant_mask, applicant_counts as _acounts
+    counts = _acounts(df, settings)
     # 공동출원 포함 membership 기준 — 공동출원으로만 등장하는 자사도 집계
-    from src.analyses.common import applicant_mask
     focal_mask = applicant_mask(df, focal, scope="any")
 
     # ---- ① KPI ------------------------------------------------------------
     rank_all = (int(list(counts.index).index(focal)) + 1
                 if focal in counts.index else None)
     rec_df = df[df["_base_year"] >= recent_from]
-    rec_counts = rec_df["applicant_display"].replace("", np.nan).dropna().value_counts()
+    rec_counts = _acounts(rec_df, settings)
     rank_recent = (int(list(rec_counts.index).index(focal)) + 1
                    if focal in rec_counts.index else None)
     share = float(focal_mask.sum()) / float(len(df))
@@ -131,11 +132,16 @@ def compute_executive_summary(df, settings, company=None):
 
     # ---- ② 성장-점유 매트릭스 (BCG 스타일) --------------------------------
     tech_flat = {}
-    for lst, app in zip(df["_tech_list"], apps):
+    _use_co = (str((settings or {}).get("coapplicant_mode") or "all") == "all"
+               and "_co_applicants_display" in df.columns)
+    _row_apps = (df["_co_applicants_display"] if _use_co
+                 else apps.map(lambda a: [a] if str(a).strip() else []))
+    for lst, row_apps in zip(df["_tech_list"], _row_apps):
+        row_apps = [str(a).strip() for a in (row_apps or []) if str(a).strip()]
         for t in set(lst or []):
             rec = tech_flat.setdefault(t, {"total": 0, "by_app": {}})
             rec["total"] += 1
-            if app:
+            for app in row_apps:
                 rec["by_app"][app] = rec["by_app"].get(app, 0) + 1
     top_techs = sorted(tech_flat, key=lambda t: -tech_flat[t]["total"])[:12]
     bcg_rows = []
@@ -231,7 +237,7 @@ def compute_executive_summary(df, settings, company=None):
         top_comps.append(focal)
     pos_rows = []
     for compny in top_comps:
-        m = apps == compny
+        m = applicant_mask(df, compny, scope="any")
         g = _growth_of(df, m, recent)
         if g is None:
             continue

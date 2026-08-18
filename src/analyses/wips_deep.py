@@ -48,6 +48,8 @@ from src.insights import build_insight, fmt_num, fmt_pct, period_label, \
     check_small_sample
 from src.viz_payload import YLORRD, RDYLGN, PURPLES, ORRD, ok_result, empty_result, bar_chart, base_layout, \
     heatmap, cytoscape_network, color_for, PALETTE
+from src.analyses.common import applicant_mask, applicant_counts, \
+    explode_applicants
 
 
 def _primary_tech(df):
@@ -223,10 +225,11 @@ def _survival_section(df, settings):
         yaxis={"title": "권리 유지 비율", "range": [0, 1.02], "tickformat": ".0%"})}
 
     by_comp = []
-    comp_counts = sub[sub["applicant_display"].astype(str) != ""] \
-        ["applicant_display"].value_counts()
+    # 공동출원은 설정(coapplicant_mode)에 따라 각 출원인에게 계상
+    sub_x = explode_applicants(sub, settings)
+    comp_counts = sub_x["applicant_display"].value_counts()
     for comp in [c for c in comp_counts.index if comp_counts[c] >= min_n][:10]:
-        g = sub[sub["applicant_display"] == comp]
+        g = sub_x[sub_x["applicant_display"] == comp]
         times, probs = _km_curve(g["_dur"], g["_event"])
         med = _km_median(times, probs)
         by_comp.append((str(comp), med, int(len(g))))
@@ -296,14 +299,15 @@ def _market_entry_section(df, settings):
                       "진입 문헌이 보입니다")
     sub["_ctry"] = sub["country"].astype(str).str.upper().str.strip().str[:2]
 
-    comp_counts = sub[sub["applicant_display"].astype(str) != ""] \
-        ["applicant_display"].value_counts()
+    # 공동출원은 설정(coapplicant_mode)에 따라 각 출원인에게 계상
+    sub_x = explode_applicants(sub, settings)
+    comp_counts = sub_x["applicant_display"].value_counts()
     top_comps = list(comp_counts.head(8).index)
     top_ctrys = list(sub["_ctry"].value_counts().head(8).index)
     z, hover = [], []
     for comp in top_comps:
         row_z, row_h = [], []
-        g = sub[sub["applicant_display"] == comp]
+        g = sub_x[sub_x["applicant_display"] == comp]
         for ct in top_ctrys:
             v = g[g["_ctry"] == ct]["_lag_m"]
             if len(v) >= 3:
@@ -325,7 +329,7 @@ def _market_entry_section(df, settings):
     recent_years = int(get_threshold(settings, "recent_years"))
     max_year = sub["_base_year"].dropna().max()
     for comp in top_comps:
-        g = fam_grp[fam_grp["applicant_display"] == comp]
+        g = fam_grp[applicant_mask(fam_grp, comp, scope="any")]
         if len(g) < 3:
             continue
         overall = g["_ctry"].value_counts()
@@ -358,6 +362,8 @@ def _agent_section(df, settings):
     sub["_agent"] = sub["agent"].astype(str).map(
         lambda v: parse_multiclass_cell(v)[0] if parse_multiclass_cell(v) else v.strip())
     sub["_y"] = sub["_base_year"].astype(int)
+    # 공동출원은 설정(coapplicant_mode)에 따라 각 출원인 행으로 전개해 집계
+    sub = explode_applicants(sub, settings)
     top_comps = list(sub["applicant_display"].value_counts().head(8).index)
     years = sorted(sub["_y"].unique())
     z, hover, signals = [], [], []
@@ -576,7 +582,9 @@ def _divisional_section(df, settings):
     if len(sub) < 5:
         return None, "분할·계속출원(원출원번호 보유) 문헌 부족 (5건 미만)"
     ids = _ids_of(sub)
-    comp_counts = sub["applicant_display"].value_counts()
+    # 공동출원 분할건은 각 출원인 레인에 모두 표시 (coapplicant_mode 따름)
+    sub_x = explode_applicants(sub, settings)
+    comp_counts = sub_x["applicant_display"].value_counts()
     top_comps = [c for c in comp_counts.index if comp_counts[c] >= 2][:8]
     if not top_comps:
         return None, "분할출원 2건 이상 기업 없음"
@@ -584,7 +592,7 @@ def _divisional_section(df, settings):
     traces = []
     bursts = []
     for lane, comp in enumerate(top_comps):
-        g = sub[sub["applicant_display"] == comp].sort_values("app_date")
+        g = sub_x[sub_x["applicant_display"] == comp].sort_values("app_date")
         xs = [d.strftime("%Y-%m-%d") for d in g["app_date"]]
         traces.append({
             "type": "scatter", "mode": "markers", "name": str(comp),
@@ -702,7 +710,10 @@ def _disclosure_section(df, settings):
               & (sub["applicant_display"].astype(str) != "")]
     if len(sub) < 15:
         return None, "도면 수·분류·출원인 표본 부족"
-    top_comps = list(sub["applicant_display"].value_counts().head(8).index)
+    # 공동출원은 설정(coapplicant_mode)에 따라 각 출원인에게 계상
+    # (분류 통계·산점도는 문헌 단위 sub, 기업별 집계는 전개된 sub_x 사용)
+    sub_x = explode_applicants(sub, settings)
+    top_comps = list(sub_x["applicant_display"].value_counts().head(8).index)
     top_techs = list(sub["_ptech"].value_counts().head(8).index)
     # 기술분류 내 z-score 로 정규화 → 분류 난이도·스타일 차이를 통제한 상대비교
     z_rows, hover = [], []
@@ -711,7 +722,7 @@ def _disclosure_section(df, settings):
                   for t in top_techs}
     for comp in top_comps:
         row_z, row_h = [], []
-        g = sub[sub["applicant_display"] == comp]
+        g = sub_x[sub_x["applicant_display"] == comp]
         for t in top_techs:
             v = g[g["_ptech"] == t]["_dr"]
             if len(v) >= 3:
@@ -744,7 +755,7 @@ def _disclosure_section(df, settings):
             "layout": base_layout(
                 "도면 수 vs 청구항 수 — 우하단(청구 많고 도면 적음)=서면 위주 출원 신호",
                 xaxis={"title": "청구항 수"}, yaxis={"title": "도면 수"})}
-    comp_avg = sub.groupby("applicant_display")["_dr"].agg(["mean", "size"])
+    comp_avg = sub_x.groupby("applicant_display")["_dr"].agg(["mean", "size"])
     comp_avg = comp_avg[comp_avg["size"] >= 5].sort_values("mean")
     lowest = str(comp_avg.index[0]) if len(comp_avg) else None
     highest = str(comp_avg.index[-1]) if len(comp_avg) else None
@@ -923,12 +934,11 @@ def _gov_program_section(df, settings):
     #  문제 방지)
     fig_comp = None
     comp_rows = []
-    apps = df["applicant_display"].replace("", np.nan).dropna()
-    if len(apps):
+    # 공동출원은 설정(coapplicant_mode)에 따라 각 출원인에게 계상
+    totals = applicant_counts(df, settings)
+    if len(totals):
         min_n = int(get_threshold(settings, "min_class_patents")) + 2
-        totals = apps.value_counts()
-        linked_by_comp = sub["applicant_display"].replace("", np.nan).dropna() \
-            .value_counts()
+        linked_by_comp = applicant_counts(sub, settings)
         comps = list(totals.head(12).index) + \
             [c for c in linked_by_comp.head(10).index
              if c not in totals.head(12).index]
@@ -1010,7 +1020,6 @@ def compute_wips_deep(df, settings, only_sections=None, company=None):
     company: 지정 시 해당 출원인 문헌(공동출원 포함)만으로 전 섹션을 계산한다.
     """
     if company:
-        from src.analyses.common import applicant_mask
         df = df[applicant_mask(df, company, scope="any")]
         if not len(df):
             return empty_result("출원인 '%s'의 문헌이 없습니다 (공동출원 포함 검색)."

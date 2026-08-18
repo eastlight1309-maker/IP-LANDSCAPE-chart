@@ -31,6 +31,8 @@ from src.insights import build_insight, fmt_num, fmt_pct, period_label, \
 from src.viz_payload import ok_result, empty_result, bar_chart, base_layout, \
     color_for, BLUES, leader_labels
 from src.analyses.executive import _pick_focal
+from src.analyses.common import applicant_mask, applicant_counts, \
+    explode_applicants
 
 
 def _xp_ids_of(sub, cap=200):
@@ -72,12 +74,12 @@ def _expiry_cliff_section(df, settings, focal):
     if len(sub) < 5:
         return None, "향후 10년 내 만료 예정 특허 부족 (5건 미만)"
     years = list(range(now_y, now_y + 11))
-    top_apps = list(sub["applicant_display"].replace("", np.nan).dropna()
-                    .value_counts().head(7).index)
+    sub_x = explode_applicants(sub, settings)  # 공동출원 각각 집계
+    top_apps = list(sub_x["applicant_display"].value_counts().head(7).index)
     color_reg = {}
     traces = []
     for comp in top_apps:
-        g = sub[sub["applicant_display"] == comp]
+        g = sub_x[sub_x["applicant_display"] == comp]
         cnt = g.groupby("_exp_y").size()
         traces.append({"type": "bar", "name": str(comp)[:20],
                        "x": years, "y": [int(cnt.get(y, 0)) for y in years],
@@ -86,7 +88,7 @@ def _expiry_cliff_section(df, settings, focal):
                        "customdata": [{"drill": {"applicant": str(comp)}}] * len(years),
                        "hovertext": ["%s — %d년 만료 %d건" % (comp, y, int(cnt.get(y, 0)))
                                      for y in years], "hoverinfo": "text"})
-    others = sub[~sub["applicant_display"].isin(top_apps)]
+    others = sub_x[~sub_x["applicant_display"].isin(top_apps)]
     if len(others):
         cnt = others.groupby("_exp_y").size()
         traces.append({"type": "bar", "name": "기타",
@@ -116,14 +118,16 @@ def _expiry_cliff_section(df, settings, focal):
             "exp_year": int(r["_exp_y"]),
             "cites": (int(r["cites_forward"]) if "cites_forward" in sub.columns
                       and pd.notna(r.get("cites_forward")) else None),
-            "is_focal": str(r.get("applicant_display", "")) == focal,
+            "is_focal": (str(r.get("applicant_display", "")) == focal
+                         or focal in [str(a) for a in
+                                      (r.get("_co_applicants_display") or [])]),
             "drill": {"type": "ids", "ids": ids}})
     by_year = sub.groupby("_exp_y").size()
     peak_y = int(by_year.idxmax())
-    n_focal = int((sub["applicant_display"] == focal).sum())
-    comp_exp = sub[sub["applicant_display"] != focal]
-    comp_top = comp_exp["applicant_display"].replace("", np.nan).dropna() \
-        .value_counts()
+    _focal_m = applicant_mask(sub, focal, scope="any")
+    n_focal = int(_focal_m.sum())
+    comp_top = sub_x.loc[sub_x["applicant_display"] != focal,
+                         "applicant_display"].value_counts()
     return {"fig": fig, "key_rows": key_rows, "basis": basis,
             "key_basis": key_basis,
             "peak_year": peak_y, "peak_n": int(by_year.max()),
@@ -138,8 +142,7 @@ def _expiry_cliff_section(df, settings, focal):
 # ② R&D 효율 사분면
 # ---------------------------------------------------------------------------
 def _rnd_efficiency_section(df, settings, focal):
-    apps = df["applicant_display"].replace("", np.nan).dropna()
-    counts = apps.value_counts()
+    counts = applicant_counts(df, settings)  # 공동출원 각각 집계
     min_n = max(5, int(get_threshold(settings, "min_class_patents")))
     comps = [c for c in counts.index if counts[c] >= min_n][:12]
     if len(comps) < 3:
@@ -154,7 +157,7 @@ def _rnd_efficiency_section(df, settings, focal):
     max_year = df["_base_year"].dropna().max()
     rows = []
     for comp in comps:
-        g = df[df["applicant_display"] == comp]
+        g = df[applicant_mask(df, comp, scope="any")]  # 공동출원 포함 문헌
         met = {}
         if has_cites:
             met["cites"] = float(g["cites_forward"].dropna().mean() or 0)
@@ -341,8 +344,8 @@ def _catchup_section(df, settings, focal):
     rows = []
     for tech in tech_flat.value_counts().head(10).index:
         in_tech = df[df["_tech_list"].map(lambda lst: tech in (lst or []))]
-        counts = in_tech["applicant_display"].replace("", np.nan).dropna() \
-            .value_counts()
+        in_tech_x = explode_applicants(in_tech, settings)  # 공동출원 각각 집계
+        counts = in_tech_x["applicant_display"].value_counts()
         if not len(counts) or counts.iloc[0] < 5:
             continue
         leader = str(counts.index[0])
@@ -359,7 +362,7 @@ def _catchup_section(df, settings, focal):
         gap = int(counts.iloc[0]) - n_focal
         # 최근 3년 연평균 출원 속도
         def _speed(comp):
-            yrs = in_tech[in_tech["applicant_display"] == comp]["_base_year"] \
+            yrs = in_tech_x[in_tech_x["applicant_display"] == comp]["_base_year"] \
                 .dropna().astype(int)
             return float((yrs >= max_year - 2).sum()) / 3.0
         v_focal, v_leader = _speed(focal), _speed(leader)
@@ -418,7 +421,8 @@ def _threat_section(df, settings, focal):
     entrants = []
     for tech in focal_techs.index:
         in_tech = df[df["_tech_list"].map(lambda lst: tech in (lst or []))]
-        for comp, grp in in_tech.groupby("applicant_display"):
+        in_tech_x = explode_applicants(in_tech, settings)  # 공동출원 각각 집계
+        for comp, grp in in_tech_x.groupby("applicant_display"):
             comp = str(comp).strip()
             if not comp or comp == focal:
                 continue
@@ -431,7 +435,7 @@ def _threat_section(df, settings, focal):
             n_tech = int(len(grp))
             if n_tech < 2:
                 continue
-            total_n = int((df["applicant_display"] == comp).sum())
+            total_n = int(applicant_mask(df, comp, scope="any").sum())
             avg_c = (float(grp["cites_forward"].dropna().mean())
                      if "cites_forward" in grp.columns
                      and grp["cites_forward"].notna().any() else None)
@@ -495,7 +499,7 @@ def _threat_section(df, settings, focal):
 def _pruning_section(df, settings, focal):
     if "reg_date" not in df.columns or not df["reg_date"].notna().any():
         return None, "등록일 컬럼 필요 (등록 후 경과 연차 계산)"
-    g = df[(df["applicant_display"] == focal) & df["reg_date"].notna()].copy()
+    g = df[applicant_mask(df, focal, scope="any") & df["reg_date"].notna()].copy()
     if "_active_flag" in g.columns and \
             g["_active_flag"].map(lambda v: v is not None).any():
         g = g[g["_active_flag"].map(lambda v: v is True)]

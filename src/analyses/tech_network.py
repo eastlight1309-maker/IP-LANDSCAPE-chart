@@ -78,7 +78,7 @@ def compute_tech_network(df, settings, scope="all", company=None, color_by="l1")
     recent = int(get_threshold(settings, "recent_years"))
     years = sub["_base_year"].dropna()
     recent_from = (int(years.max()) - recent + 1) if len(years) else None
-    pairs, tech_counts, n_docs = combo_counts(sub, recent_year_from=recent_from)
+    pairs, tech_counts, n_docs = combo_counts(sub, recent_year_from=recent_from, settings=settings)
     if not len(pairs) or n_docs == 0:
         return empty_result("동시분류(2개 이상 기술분류) 데이터가 없어 네트워크를 만들 수 없습니다.")
 

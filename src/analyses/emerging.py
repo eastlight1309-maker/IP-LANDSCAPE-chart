@@ -47,7 +47,7 @@ def compute_emerging(df, settings):
         return empty_result(diagnose_year_tech(df))
     recent = int(get_threshold(settings, "recent_years"))
     recent_from = int(years.max()) - recent + 1
-    pairs, tech_counts, n_docs = combo_counts(df, recent_year_from=recent_from)
+    pairs, tech_counts, n_docs = combo_counts(df, recent_year_from=recent_from, settings=settings)
     min_combo = get_threshold(settings, "min_combo_patents")
     pairs = pairs[pairs["n_ab"] >= min_combo] if len(pairs) else pairs
     if not len(pairs):

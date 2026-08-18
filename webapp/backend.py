@@ -5782,20 +5782,25 @@ def diagnose_year_tech(df):
             % (detail, n, n_year, n_tech))
 
 
-def combo_counts(df, recent_year_from=None):
+def combo_counts(df, recent_year_from=None, settings=None):
     """기술분류 pair 동시출현 집계.
 
     반환 DataFrame: [a, b, n_ab(전체), n_recent(최근), applicants(set), new_applicants(set),
                      years(list)] — new_applicants 는 최근 구간에 처음 등장한 출원인.
     개별 기술 건수는 dict 로 함께 반환: (pairs_df, tech_counts, n_docs)
+    출원인 집합은 coapplicant_mode 를 따른다 (기본 'all'=공동출원인 각각 포함).
     """
     rows = []
     tech_counts = {}
     first_year_by_pair_applicant = {}
     pair_rows = {}
     n_docs = 0
-    for techs, year, applicant in zip(df["_tech_list"], df["_base_year"],
-                                      df["applicant_display"]):
+    use_co = (_coapp_mode(settings) == "all"
+              and "_co_applicants_display" in df.columns)
+    app_lists = (df["_co_applicants_display"] if use_co
+                 else df["applicant_display"].map(lambda a: [a] if str(a).strip() else []))
+    for techs, year, row_apps in zip(df["_tech_list"], df["_base_year"], app_lists):
+        row_apps = [str(a).strip() for a in (row_apps or []) if str(a).strip()]
         techs = sorted(set(techs or []))
         if not techs:
             continue
@@ -5813,17 +5818,18 @@ def combo_counts(df, recent_year_from=None):
             rec["n_ab"] += 1
             if y is not None:
                 rec["years"].append(y)
-            if applicant:
+            for applicant in row_apps:
                 rec["applicants"].add(applicant)
             if recent_year_from is not None and y is not None and y >= recent_year_from:
                 rec["n_recent"] += 1
-                if applicant:
+                for applicant in row_apps:
                     rec["recent_applicants"].add(applicant)
-            if applicant and y is not None:
-                fk = (key, applicant)
-                prev = first_year_by_pair_applicant.get(fk)
-                if prev is None or y < prev:
-                    first_year_by_pair_applicant[fk] = y
+            if y is not None:
+                for applicant in row_apps:
+                    fk = (key, applicant)
+                    prev = first_year_by_pair_applicant.get(fk)
+                    if prev is None or y < prev:
+                        first_year_by_pair_applicant[fk] = y
         rows.append(techs)
     # 신규 출원인: 해당 조합에 최근 구간에 처음 등장
     for (key, applicant), first_y in first_year_by_pair_applicant.items():
@@ -6104,6 +6110,77 @@ def export_dataframe(df, extra_fields=None, max_rows=20000):
     return out
 
 
+# ---------------------------------------------------------------------------
+# 공동출원 집계 공용 헬퍼 — coapplicant_mode 설정을 모든 출원인 집계에 일관 적용
+# ---------------------------------------------------------------------------
+def _coapp_mode(settings):
+    return str((settings or {}).get("coapplicant_mode") or "all")
+
+
+def applicant_series(df, settings):
+    """coapplicant_mode 를 따르는 출원인 Series (index=문헌, 값=출원인명).
+
+    mode 'all'(기본, WIPS 방식): 공동출원 1건이 각 공동출원인 행으로 전개되어
+    출원인별 카운팅 시 각각 1건씩 계산된다 (합계가 문헌 수를 초과할 수 있음).
+    mode 'first': 대표(첫) 출원인만. 빈 이름은 제외.
+    """
+    import pandas as _pd
+    if _coapp_mode(settings) == "all" and "_co_applicants_display" in df.columns:
+        idx, vals = [], []
+        for i, lst in df["_co_applicants_display"].items():
+            for a in (lst or []):
+                s = str(a).strip()
+                if s:
+                    idx.append(i)
+                    vals.append(s)
+        if vals:
+            return _pd.Series(vals, index=idx)
+    s = df["applicant_display"].astype(str)
+    s = s[s.str.strip() != ""]
+    return s
+
+
+def applicant_counts(df, settings):
+    """coapplicant_mode 를 따르는 출원인별 문헌 수 value_counts."""
+    return applicant_series(df, settings).value_counts()
+
+
+def applicant_set(df, settings):
+    """coapplicant_mode 를 따르는 출원인 집합 (신규 진입 판정 등)."""
+    return set(applicant_series(df, settings))
+
+
+def company_groups(df, settings, min_n=0, head=None):
+    """(회사, 소속 문헌 subframe) 반복자 — 문헌 수 내림차순.
+
+    mode 'all': 회사별 subframe = 그 회사가 (공동)출원인으로 포함된 문헌 전체
+    (공동출원 1건이 양쪽 회사 subframe 에 모두 나타남 — 각각 집계).
+    mode 'first': 대표 출원인 일치 문헌만.
+    """
+    ser = applicant_series(df, settings)
+    counts = ser.value_counts()
+    if head:
+        counts = counts.head(int(head))
+    for comp, n in counts.items():
+        if n < min_n:
+            continue
+        yield str(comp), df.loc[ser.index[ser == comp]]
+
+
+def explode_applicants(df, settings):
+    """출원인별 groupby 용 전개 프레임 — applicant_display 를 coapplicant_mode
+    기준으로 치환한 복사본. mode 'all'이면 공동출원 1건이 공동출원인 수만큼
+    행으로 복제된다 (출원인별 집계 전용 — 문헌 단위 집계에 쓰면 중복됨).
+
+    입력 인덱스가 중복(예: 기술분류 전개 프레임)이어도 안전하도록 내부에서
+    위치 기반 인덱스로 재설정한 뒤 전개한다."""
+    work = df.reset_index(drop=True)
+    ser = applicant_series(work, settings)
+    out = work.loc[ser.index].copy()
+    out["applicant_display"] = ser.values
+    return out
+
+
 # ===========================================================================
 # src/analyses/overview.py
 # ===========================================================================
@@ -6136,6 +6213,7 @@ Drill-down: 각 리스트 항목에 drill 파라미터 포함.
 import numpy as np
 import pandas as pd
 
+coapp_counts = applicant_counts  # [merged import alias]
 
 
 def _tech_growth_lists(df, settings, top_n):
@@ -6167,7 +6245,7 @@ def _new_combos(df, settings, top_n):
     if not len(years):
         return []
     recent_from = int(years.max()) - recent + 1
-    pairs, _, _ = combo_counts(df, recent_year_from=recent_from)
+    pairs, _, _ = combo_counts(df, recent_year_from=recent_from, settings=settings)
     if not len(pairs):
         return []
     min_n = get_threshold(settings, "min_combo_patents")
@@ -6203,8 +6281,8 @@ def _strategy_changes(df, settings, top_n):
     if cur_sh.empty or prev_sh.empty:
         return []
     min_n = get_threshold(settings, "min_class_patents")
-    counts_cur = cur["applicant_display"].value_counts()
-    counts_prev = prev["applicant_display"].value_counts()
+    counts_cur = coapp_counts(cur, settings)
+    counts_prev = coapp_counts(prev, settings)
     all_techs = sorted(set(cur_sh.columns) | set(prev_sh.columns))
     out = []
     for company in set(cur_sh.index) & set(prev_sh.index):
@@ -6238,10 +6316,18 @@ def _barrier_and_whitespace(df, settings, top_n):
         if n_total < min_n:
             continue
         n_active_granted = int((in_tech & active_mask & granted_mask).sum())
-        applicant_counts = df.loc[in_tech, "applicant_display"] \
-            .replace("", np.nan).dropna().value_counts()
-        cr3 = float(applicant_counts.head(3).sum()) / n_total if n_total else 0.0
-        conc = hhi(applicant_counts.values) or 0.0
+        sub_t = df.loc[in_tech]
+        app_counts_t = coapp_counts(sub_t, settings)
+        top3 = set(map(str, app_counts_t.head(3).index))
+        if n_total and top3:
+            covered = sub_t["applicant_display"].astype(str).isin(top3)
+            if "_co_applicants_display" in sub_t.columns:
+                covered = covered | sub_t["_co_applicants_display"].map(
+                    lambda lst: bool(top3 & {str(a) for a in (lst or [])}))
+            cr3 = float(covered.mean())
+        else:
+            cr3 = 0.0
+        conc = hhi(app_counts_t.values) or 0.0
         growth, _ = robust_growth(mat.loc[tech], recent_years=recent)
         barrier_score = (n_active_granted / max(n_total, 1)) * cr3 * np.log1p(n_active_granted)
         barrier_rows.append({"tech": str(tech), "active_granted": n_active_granted,
@@ -6258,7 +6344,7 @@ def _barrier_and_whitespace(df, settings, top_n):
     return barrier_rows, white_rows
 
 
-def _alerts(df, top_n=5):
+def _alerts(df, settings, top_n=5):
     alerts = {"key_patents": [], "expiring": [], "key_companies": []}
     if "cites_forward" in df.columns and df["cites_forward"].notna().any():
         top_cited = df[df["cites_forward"].notna()].nlargest(top_n, "cites_forward")
@@ -6269,8 +6355,9 @@ def _alerts(df, top_n=5):
                 "applicant": str(r.get("applicant_display", "")),
                 "cites": int(r["cites_forward"]),
             })
-        counts = df["applicant_display"].replace("", np.nan).dropna().value_counts()
-        cited_by_company = df.groupby("applicant_display")["cites_forward"].sum() \
+        _exp = explode_applicants(df, settings)
+        counts = _exp["applicant_display"].value_counts()
+        cited_by_company = _exp.groupby("applicant_display")["cites_forward"].sum() \
             .sort_values(ascending=False).head(top_n)
         for comp, c in cited_by_company.items():
             if comp:
@@ -6306,7 +6393,7 @@ def compute_overview(df, settings):
     new_combos = new_combos_all[:top_n]
     strategy = _strategy_changes(df, settings, 5)
     barriers, whitespace = _barrier_and_whitespace(df, settings, 5)
-    alerts = _alerts(df)
+    alerts = _alerts(df, settings)
 
     years = df["_base_year"].dropna()
     active_flags = df["_active_flag"]
@@ -6315,7 +6402,7 @@ def compute_overview(df, settings):
     kpi = {
         "total": int(len(df)),
         "families": int(df["family_id"].nunique()) if "family_id" in df.columns else None,
-        "applicants": int(df["applicant_display"].replace("", np.nan).nunique()),
+        "applicants": int(coapp_counts(df, settings).index.nunique()),
         "countries": int(df["country"].astype(str).str.upper().nunique())
         if "country" in df.columns else None,
         "active_share": round(n_active / n_active_known, 3) if n_active_known else None,
@@ -6440,7 +6527,7 @@ def compute_tech_network(df, settings, scope="all", company=None, color_by="l1")
     recent = int(get_threshold(settings, "recent_years"))
     years = sub["_base_year"].dropna()
     recent_from = (int(years.max()) - recent + 1) if len(years) else None
-    pairs, tech_counts, n_docs = combo_counts(sub, recent_year_from=recent_from)
+    pairs, tech_counts, n_docs = combo_counts(sub, recent_year_from=recent_from, settings=settings)
     if not len(pairs) or n_docs == 0:
         return empty_result("동시분류(2개 이상 기술분류) 데이터가 없어 네트워크를 만들 수 없습니다.")
 
@@ -6602,7 +6689,7 @@ def compute_emerging(df, settings):
         return empty_result(diagnose_year_tech(df))
     recent = int(get_threshold(settings, "recent_years"))
     recent_from = int(years.max()) - recent + 1
-    pairs, tech_counts, n_docs = combo_counts(df, recent_year_from=recent_from)
+    pairs, tech_counts, n_docs = combo_counts(df, recent_year_from=recent_from, settings=settings)
     min_combo = get_threshold(settings, "min_combo_patents")
     pairs = pairs[pairs["n_ab"] >= min_combo] if len(pairs) else pairs
     if not len(pairs):
@@ -6844,7 +6931,7 @@ def compute_lifecycle(df, settings, company=None):
     recent_from = y_max - recent + 1
 
     # 조합 성장률 (기술별): 최근 구간 첫 출현 조합 수
-    pairs, _, _ = combo_counts(df, recent_year_from=recent_from)
+    pairs, _, _ = combo_counts(df, recent_year_from=recent_from, settings=settings)
     combo_new_by_tech, combo_old_by_tech = {}, {}
     for _, r in (pairs.iterrows() if len(pairs) else []):
         first = min(r["years"]) if r["years"] else None
@@ -6865,13 +6952,12 @@ def compute_lifecycle(df, settings, company=None):
         growth, g_method = robust_growth(series, recent_years=recent)
         first_year = int(series[series > 0].index.min()) if (series > 0).any() else None
         age = (y_max - first_year) if first_year is not None else None
-        applicants_all = sub["applicant_display"].replace("", np.nan).dropna()
-        counts = applicants_all.value_counts()
+        # 출원인 집계는 공동출원 설정을 따름 (기본 '각각 집계' — 공동출원
+        # 1건이 각 공동출원인에게 1건씩, 신규 진입 판정도 membership 기준)
+        counts = applicant_series(sub, settings).value_counts()
         conc = hhi(counts.values)
-        recent_apps = set(sub.loc[sub["_base_year"] >= recent_from, "applicant_display"]
-                          .replace("", np.nan).dropna())
-        old_apps = set(sub.loc[sub["_base_year"] < recent_from, "applicant_display"]
-                       .replace("", np.nan).dropna())
+        recent_apps = applicant_set(sub[sub["_base_year"] >= recent_from], settings)
+        old_apps = applicant_set(sub[sub["_base_year"] < recent_from], settings)
         new_entrants = len(recent_apps - old_apps)
         flags = sub["_active_flag"]
         known = flags.map(lambda v: v is not None)
@@ -7147,7 +7233,7 @@ def _own_capability(df, tech, settings, own_mask=None):
         if n_own > 0:
             return True, 1.0, "자사 특허 %d건 보유" % n_own
         own_techs = set(t for lst in df.loc[own_mask, "_tech_list"] for t in (lst or []))
-        neighbors, _, _ = combo_counts(df)
+        neighbors, _, _ = combo_counts(df, settings=settings)
         adj = set()
         for _, r in (neighbors.iterrows() if len(neighbors) else []):
             if r["a"] == tech:
@@ -7201,7 +7287,7 @@ def compute_opportunity(df, settings, company=None):
     recent_from = y_max - recent + 1
     now = pd.Timestamp.now()
 
-    pairs, _, _ = combo_counts(df, recent_year_from=recent_from)
+    pairs, _, _ = combo_counts(df, recent_year_from=recent_from, settings=settings)
     combo_new_by_tech, combo_old_by_tech, adjacency = {}, {}, {}
     for _, r in (pairs.iterrows() if len(pairs) else []):
         first = min(r["years"]) if r["years"] else None
@@ -7221,10 +7307,8 @@ def compute_opportunity(df, settings, company=None):
         if len(sub) < min_n:
             continue
         growth, g_method = robust_growth(series, recent_years=recent)
-        recent_apps = set(sub.loc[sub["_base_year"] >= recent_from, "applicant_display"]
-                          .replace("", np.nan).dropna())
-        old_apps = set(sub.loc[sub["_base_year"] < recent_from, "applicant_display"]
-                       .replace("", np.nan).dropna())
+        recent_apps = applicant_set(sub[sub["_base_year"] >= recent_from], settings)
+        old_apps = applicant_set(sub[sub["_base_year"] < recent_from], settings)
         new_entrants = len(recent_apps - old_apps)
         combo_new = combo_new_by_tech.get(tech, 0)
         combo_old = combo_old_by_tech.get(tech, 0)
@@ -7237,9 +7321,18 @@ def compute_opportunity(df, settings, company=None):
         # 권리장벽 성분
         active_granted = int((sub["_active_flag"].map(lambda v: v is True)
                               & sub["_is_granted_bool"].map(lambda v: v is True)).sum())
-        counts = sub["applicant_display"].replace("", np.nan).dropna().value_counts()
-        # CR3 분모는 같은 기준의 문헌 수 — 가중 합(total)과 섞으면 100% 초과 왜곡
-        cr3 = float(counts.head(3).sum()) / float(len(sub)) if len(sub) else 0.0
+        # CR3 = 상위 3사(공동출원 각각 집계 기준)가 (공동)출원인으로 포함된
+        # 문헌 비율 — 문헌 커버리지 정의라 어떤 모드에서도 0~1 이 보장됨
+        app_counts_t = applicant_counts(sub, settings)
+        top3 = set(map(str, app_counts_t.head(3).index))
+        if len(sub) and top3:
+            covered = sub["applicant_display"].astype(str).isin(top3)
+            if "_co_applicants_display" in sub.columns:
+                covered = covered | sub["_co_applicants_display"].map(
+                    lambda lst: bool(top3 & {str(a) for a in (lst or [])}))
+            cr3 = float(covered.mean())
+        else:
+            cr3 = 0.0
         if "cites_forward" in sub.columns and sub["cites_forward"].notna().any():
             cites = sub["cites_forward"].fillna(0)
             top_cites = float(cites.nlargest(max(int(len(cites) * 0.1), 1)).sum())
@@ -7688,7 +7781,7 @@ def cell_detail(df, settings, problem, solution):
     flags = cell["_active_flag"]
     known = flags.map(lambda v: v is not None)
     active_ratio = float(flags[known].map(lambda v: v is True).mean()) if known.any() else None
-    top_apps = cell["applicant_display"].replace("", np.nan).dropna().value_counts().head(5)
+    top_apps = applicant_series(cell, settings).value_counts().head(5)
     rep_claim = None
     if "indep_claim" in cell.columns:
         claims = cell["indep_claim"].dropna().astype(str)
@@ -8125,12 +8218,13 @@ def compute_trajectory(df, settings, companies=None, method="pca", weighting=Non
     max_companies = get_limit(settings, "trajectory_max_companies")
     tmp = df[df["_base_year"].notna()].copy()
     tmp["_year_int"] = tmp["_base_year"].astype(int)
+    tmp = explode_applicants(tmp, settings)  # 공동출원 각각 집계
     counts = tmp.groupby(["applicant_display", "_year_int"]).size()
 
     if companies:
         wanted = [str(c) for c in companies][:max_companies]
     else:
-        totals = df["applicant_display"].replace("", np.nan).dropna().value_counts()
+        totals = explode_applicants(df, settings)["applicant_display"].value_counts()
         wanted = totals.head(max_companies).index.tolist()
 
     rows = []
@@ -8262,7 +8356,9 @@ analyses/company_dna.py — 4.5 경쟁사 기술 DNA Fingerprint (+전략 유사
   11 inventor_concentration 발명자 집중도 (발명자 HHI)
   12 recent_growth       최근 3년 성장률 (robust_growth)
 
-지표별 원값(raw)과 표준화값(0~1, normalize_series)을 함께 제공 (Hover/토글).
+지표별 원값(raw)과 표준화값(0~1, 원값 ÷ 모집단 최대값 비율)을 함께 제공
+(Hover/토글). 예: 패밀리 6.4 vs 4.0 → 1.00 vs 0.63 — 상대적으로 낮다고
+0이 되지 않는다. 모집단은 데이터셋 상위 기업으로 고정(선택 무관).
 
 그래프: 기업 수 <= max_companies_compare → 레이더, 초과 → 히트맵.
         세부 비교용 평행좌표(parcoords) payload 도 항상 포함.
@@ -8350,6 +8446,17 @@ DNA_DEFINITIONS = [
      "basis": "출원일(없으면 우선일/공개일)",
      "reading": "양수=확대, 음수=축소 · 출원을 멈춘 기업은 0 채움으로 음수가 됨"},
 ]
+
+
+def _ratio_to_max(vals):
+    """값 ÷ 모집단 최대값 — 최소값이 0 으로 강제되지 않고 실제 비율 유지.
+    예: 패밀리 6.4 vs 4.0 → 1.00 vs 0.63. 음수(감소 성장률)는 0 으로
+    표시하고 원값은 hover 에 그대로 제공한다."""
+    a = np.asarray([0.0 if v is None or (isinstance(v, float) and np.isnan(v))
+                    else float(v) for v in vals])
+    a = np.clip(a, 0.0, None)
+    m = float(a.max())
+    return a / m if m > 0 else np.zeros_like(a)
 
 
 def _company_metrics(sub, recent_from, recent):
@@ -8445,7 +8552,7 @@ def compute_company_dna(df, settings, companies=None):
     min_n = get_threshold(settings, "min_class_patents")
     max_cmp = get_limit(settings, "max_companies_compare")
 
-    totals = df["applicant_display"].replace("", np.nan).dropna().value_counts()
+    totals = applicant_counts(df, settings)  # 공동출원 각각 집계 (설정 기준)
     pool_all = [c for c in totals.index if totals[c] >= min_n]
     if companies:
         wanted = [c for c in map(str, companies) if totals.get(c, 0) >= min_n][:30]
@@ -8460,18 +8567,22 @@ def compute_company_dna(df, settings, companies=None):
     # 않는다 (전체 보기와 동일한 값).
     pool = list(dict.fromkeys(pool_all[:30] + wanted))
 
+    # 회사별 문헌 = 공동출원 포함 membership (공동출원 1건이 양쪽 회사 지표에
+    # 모두 반영 — '각각 집계' 원칙과 일치)
+    _app_ser = applicant_series(df, settings)
     raw_by_company = {}
     for c in pool:
-        sub = df[df["applicant_display"].astype(str) == c]
+        sub = df.loc[_app_ser.index[_app_ser == c]]
         raw_by_company[c] = _company_metrics(sub, recent_from, recent)
 
     keys = [k for k, _ in DNA_METRICS]
+
     std_by_metric = {}
     for k in keys:
         vals = [raw_by_company[c][k] if raw_by_company[c][k] is not None else 0.0
                 for c in pool]
-        std_by_metric[k] = normalize_series(vals, log=(k in ("family_size", "avg_citations", "intl_scope")))
-    n_ranks = normalize_series([raw_by_company[c]["n"] for c in pool], log=True)
+        std_by_metric[k] = _ratio_to_max(vals)
+    n_ranks = _ratio_to_max([raw_by_company[c]["n"] for c in pool])
     pool_idx = {c: i for i, c in enumerate(pool)}
     try:
         cutoff = float((settings or {}).get("dna_type_cutoffs", {}).get("default")
@@ -8564,14 +8675,16 @@ def compute_company_dna(df, settings, companies=None):
                       "companies": companies_payload, "metric_labels": dict(DNA_METRICS),
                       "definitions": DNA_DEFINITIONS,
                       "normalization_note":
-                          "레이더/히트맵/평행좌표의 축 값은 기업 간 비교를 위한 "
-                          "0~1 표준화 점수(log1p 일부 → 윈저라이즈 2% → IQR robust "
-                          "정규화)이며, 원값은 hover 와 기업 표에 함께 표시됩니다. "
-                          "표준화 모집단은 회사 선택과 무관하게 데이터셋 상위 "
-                          "기업군(최대 30개사)으로 고정 — 소수 기업만 선택해도 "
-                          "값이 0/1 극값으로 강제되지 않고 전체 보기와 동일합니다. "
-                          "유형 분류는 표준화 점수 ≥ cutoff(Settings 조정 가능) 규칙의 "
-                          "첫 매칭입니다.",
+                          "레이더/히트맵/평행좌표의 축 값 = 원값 ÷ 모집단 최대값 "
+                          "(최대 기업=1). 실제 비율이 그대로 유지되어, 예를 들어 "
+                          "패밀리 규모 6.4 vs 4.0 이면 1.00 vs 0.63 으로 표시됩니다 "
+                          "(최소값이 0 으로 강제되지 않음). 음수(감소 성장률)만 0 "
+                          "으로 표시되며 원값은 hover 와 기업 표에서 확인할 수 "
+                          "있습니다. 모집단은 회사 선택과 무관하게 데이터셋 상위 "
+                          "기업군(최대 30개사)으로 고정 — 몇 개사를 골라도 값은 "
+                          "전체 보기와 동일합니다. 출원인 집계는 공동출원 설정을 "
+                          "따릅니다(기본: 각각 집계). 유형 분류는 표준화 점수 ≥ "
+                          "cutoff(Settings 조정 가능) 규칙의 첫 매칭입니다.",
                       "similarity": sim_matrix, "overlap": overlap_matrix},
                      insight=insight)
 
@@ -8626,6 +8739,7 @@ def compute_lead_lag(df, settings, min_repeat=1):
         return empty_result("기업·기술분류·연도 시계열을 만들 데이터가 없습니다.")
     ex["_year_int"] = ex["_base_year"].astype(int)
 
+    ex = explode_applicants(ex, settings)  # 공동출원 각각 집계
     top_companies = set(ex["applicant_display"].value_counts().head(max_companies).index)
     ex = ex[ex["applicant_display"].isin(top_companies)]
 
@@ -8681,7 +8795,7 @@ def compute_lead_lag(df, settings, min_repeat=1):
         return empty_result("반복 관측된 선행 관계가 없습니다.")
     relations.sort(key=lambda r: -r["strength"])
 
-    counts = df["applicant_display"].value_counts()
+    counts = explode_applicants(df, settings)["applicant_display"].value_counts()
     node_names = sorted(set([r["leader"] for r in relations] + [r["follower"] for r in relations]))
     max_count = max((counts.get(n, 1) for n in node_names), default=1)
     nodes = [{"id": n, "label": n, "count": int(counts.get(n, 0)),
@@ -9321,7 +9435,7 @@ def compute_inventor_mobility(df, settings, include_uncertain=False):
     edges_data = sorted(edge_map.values(), key=lambda r: -len(r["inventors"]))[:max_edges]
 
     companies = sorted(set([e["from"] for e in edges_data] + [e["to"] for e in edges_data]))
-    counts = work["applicant_display"].value_counts()
+    counts = applicant_counts(work, settings)  # 공동출원 각각 집계
     max_count = max((counts.get(c, 1) for c in companies), default=1)
     nodes = [{"id": c, "label": c, "count": int(counts.get(c, 0)),
               "size": float(14 + 24 * np.sqrt(counts.get(c, 1) / max_count)),
@@ -10853,8 +10967,12 @@ def compute_portfolio_index(df, settings, companies=None):
     has_family = "family_id" in scoped.columns and scoped["family_id"].notna().any()
     all_years = work["_base_year"].dropna()
     y_max_all = int(all_years.max()) if len(all_years) else None
+    # 공동출원 각각 집계(설정 기준): 공동출원 특허의 CI 는 각 공동출원인
+    # 포트폴리오에 모두 계상됨 — 회사별 PAI 합계가 전체 CI 합을 초과할 수 있음
+    scoped_x = explode_applicants(scoped, settings)
+    work_x = explode_applicants(work, settings)
     rows = []
-    for company, grp in scoped.groupby("applicant_display"):
+    for company, grp in scoped_x.groupby("applicant_display"):
         n = len(grp)
         if n < min_n:
             continue
@@ -10863,7 +10981,7 @@ def compute_portfolio_index(df, settings, companies=None):
         fam = grp["family_id"] if has_family else None
         families = (int(fam.dropna().astype(str).nunique() + fam.isna().sum())
                     if fam is not None else n)
-        all_grp = work[work["applicant_display"] == company]
+        all_grp = work_x[work_x["applicant_display"] == company]
         yrs = all_grp["_base_year"].dropna().astype(int)
         # '최근 N년' 창은 데이터셋 최신 연도에 고정 (출원 끊긴 기업 왜곡 방지)
         growth, _ = (robust_growth(year_counts(yrs, year_max=y_max_all),
@@ -10886,7 +11004,7 @@ def compute_portfolio_index(df, settings, companies=None):
         if not shown:
             return empty_result("선택한 출원인(%s) 중 최소 표본(%d건) 이상인 회사가 "
                                 "없습니다." % (", ".join(comps_sel[:5]), int(min_n)))
-        scoped = scoped[scoped["applicant_display"].astype(str).isin(wanted_set)]
+        scoped_x = scoped_x[scoped_x["applicant_display"].astype(str).isin(wanted_set)]
     else:
         shown = rows[:30]
 
@@ -10986,11 +11104,11 @@ def compute_portfolio_index(df, settings, companies=None):
 
     # ③ 상위 5개사 연도별 CI 합 추이
     fig_trend = None
-    if scoped["_base_year"].notna().any():
+    if scoped_x["_base_year"].notna().any():
         series_list = []
         for r in shown[:5]:
-            grp = scoped[(scoped["applicant_display"] == r["company"])
-                         & scoped["_base_year"].notna()]
+            grp = scoped_x[(scoped_x["applicant_display"] == r["company"])
+                           & scoped_x["_base_year"].notna()]
             if not len(grp):
                 continue
             ci_by_year = grp.groupby(grp["_base_year"].astype(int))["_ci"].sum()
@@ -11165,6 +11283,7 @@ def _prosecution_section(df, settings):
         year_axis=True)
     min_n = get_threshold(settings, "min_class_patents")
     by_comp = both[both["applicant_display"].astype(str) != ""] \
+        .pipe(explode_applicants, settings) \
         .groupby("applicant_display")["_months"].agg(["mean", "size"])
     # 빠른 6 + 느린 6 — 빠른 순 상위 12개만 보이면 '느린 회사'(관심 대상)가
     # 조용히 사라진다
@@ -11240,6 +11359,7 @@ def _claims_section(df, settings):
     if has_indep:
         agg["indep"] = ("indep_claims_count", "mean")
     by_comp = sub[sub["applicant_display"].astype(str) != ""] \
+        .pipe(explode_applicants, settings) \
         .groupby("applicant_display").agg(**agg)
     by_comp = by_comp[by_comp["n"] >= min_n].sort_values("claims", ascending=False).head(12)
     fig_comp = None
@@ -11598,6 +11718,9 @@ def compute_scope_entropy(df, settings, companies=None):
                                                "엔트로피를 계산할 수 없습니다.")
     work = df[df["applicant_display"].astype(str) != ""].copy()
     min_docs = int(get_threshold(settings, "min_class_patents")) + 2  # 최소 5건
+    # 공동출원 각각 집계 — 전개로 생긴 중복 인덱스는 이후 .loc 정렬
+    # (_claim_clusters 등)이 오동작하지 않도록 리셋한다
+    work = explode_applicants(work, settings).reset_index(drop=True)
     counts = work["applicant_display"].value_counts()
     eligible = [c for c in counts.index if counts[c] >= min_docs]
     if companies:
@@ -12382,7 +12505,9 @@ def compute_emerging_clusters(df, settings, company=None, recent_years=None):
         # 특정 출원인 하나로 좁힌 보기에서는 '신규 출원인' 개념이 무의미하므로
         # 계산·표시하지 않고 점수에서도 제외한다 (가중치 재정규화).
         new_ratio = None
-        apps = sub[sub["applicant_display"].astype(str) != ""]
+        # 출원인 집계는 공동출원 설정을 따름 (기본 '각각 집계')
+        _aser = applicant_series(sub, settings)
+        apps = sub.loc[_aser.index].assign(applicant_display=_aser.values)
         if not company and len(apps):
             first_by_app = apps.groupby("applicant_display")["_base_year"].min()
             new_ratio = float((first_by_app >= recent_from).mean())
@@ -12800,7 +12925,7 @@ def compute_similarity_network(df, settings, threshold=None):
     for ci, (root, members) in enumerate(
             sorted(comp_members.items(), key=lambda kv: -len(kv[1]))):
         sub = work.iloc[members]
-        app_counts = sub["applicant_display"].replace("", np.nan).dropna().value_counts()
+        app_counts = applicant_series(sub, settings).value_counts()
         dom = str(app_counts.index[0]) if len(app_counts) else "-"
         dom_share = float(app_counts.iloc[0] / len(sub)) if len(app_counts) else None
         flags = sub["_active_flag"] if "_active_flag" in sub.columns else pd.Series(dtype=object)
@@ -13106,10 +13231,11 @@ def _survival_section(df, settings):
         yaxis={"title": "권리 유지 비율", "range": [0, 1.02], "tickformat": ".0%"})}
 
     by_comp = []
-    comp_counts = sub[sub["applicant_display"].astype(str) != ""] \
-        ["applicant_display"].value_counts()
+    # 공동출원은 설정(coapplicant_mode)에 따라 각 출원인에게 계상
+    sub_x = explode_applicants(sub, settings)
+    comp_counts = sub_x["applicant_display"].value_counts()
     for comp in [c for c in comp_counts.index if comp_counts[c] >= min_n][:10]:
-        g = sub[sub["applicant_display"] == comp]
+        g = sub_x[sub_x["applicant_display"] == comp]
         times, probs = _km_curve(g["_dur"], g["_event"])
         med = _km_median(times, probs)
         by_comp.append((str(comp), med, int(len(g))))
@@ -13179,14 +13305,15 @@ def _market_entry_section(df, settings):
                       "진입 문헌이 보입니다")
     sub["_ctry"] = sub["country"].astype(str).str.upper().str.strip().str[:2]
 
-    comp_counts = sub[sub["applicant_display"].astype(str) != ""] \
-        ["applicant_display"].value_counts()
+    # 공동출원은 설정(coapplicant_mode)에 따라 각 출원인에게 계상
+    sub_x = explode_applicants(sub, settings)
+    comp_counts = sub_x["applicant_display"].value_counts()
     top_comps = list(comp_counts.head(8).index)
     top_ctrys = list(sub["_ctry"].value_counts().head(8).index)
     z, hover = [], []
     for comp in top_comps:
         row_z, row_h = [], []
-        g = sub[sub["applicant_display"] == comp]
+        g = sub_x[sub_x["applicant_display"] == comp]
         for ct in top_ctrys:
             v = g[g["_ctry"] == ct]["_lag_m"]
             if len(v) >= 3:
@@ -13208,7 +13335,7 @@ def _market_entry_section(df, settings):
     recent_years = int(get_threshold(settings, "recent_years"))
     max_year = sub["_base_year"].dropna().max()
     for comp in top_comps:
-        g = fam_grp[fam_grp["applicant_display"] == comp]
+        g = fam_grp[applicant_mask(fam_grp, comp, scope="any")]
         if len(g) < 3:
             continue
         overall = g["_ctry"].value_counts()
@@ -13241,6 +13368,8 @@ def _agent_section(df, settings):
     sub["_agent"] = sub["agent"].astype(str).map(
         lambda v: parse_multiclass_cell(v)[0] if parse_multiclass_cell(v) else v.strip())
     sub["_y"] = sub["_base_year"].astype(int)
+    # 공동출원은 설정(coapplicant_mode)에 따라 각 출원인 행으로 전개해 집계
+    sub = explode_applicants(sub, settings)
     top_comps = list(sub["applicant_display"].value_counts().head(8).index)
     years = sorted(sub["_y"].unique())
     z, hover, signals = [], [], []
@@ -13458,7 +13587,9 @@ def _divisional_section(df, settings):
     if len(sub) < 5:
         return None, "분할·계속출원(원출원번호 보유) 문헌 부족 (5건 미만)"
     ids = _ids_of(sub)
-    comp_counts = sub["applicant_display"].value_counts()
+    # 공동출원 분할건은 각 출원인 레인에 모두 표시 (coapplicant_mode 따름)
+    sub_x = explode_applicants(sub, settings)
+    comp_counts = sub_x["applicant_display"].value_counts()
     top_comps = [c for c in comp_counts.index if comp_counts[c] >= 2][:8]
     if not top_comps:
         return None, "분할출원 2건 이상 기업 없음"
@@ -13466,7 +13597,7 @@ def _divisional_section(df, settings):
     traces = []
     bursts = []
     for lane, comp in enumerate(top_comps):
-        g = sub[sub["applicant_display"] == comp].sort_values("app_date")
+        g = sub_x[sub_x["applicant_display"] == comp].sort_values("app_date")
         xs = [d.strftime("%Y-%m-%d") for d in g["app_date"]]
         traces.append({
             "type": "scatter", "mode": "markers", "name": str(comp),
@@ -13584,7 +13715,10 @@ def _disclosure_section(df, settings):
               & (sub["applicant_display"].astype(str) != "")]
     if len(sub) < 15:
         return None, "도면 수·분류·출원인 표본 부족"
-    top_comps = list(sub["applicant_display"].value_counts().head(8).index)
+    # 공동출원은 설정(coapplicant_mode)에 따라 각 출원인에게 계상
+    # (분류 통계·산점도는 문헌 단위 sub, 기업별 집계는 전개된 sub_x 사용)
+    sub_x = explode_applicants(sub, settings)
+    top_comps = list(sub_x["applicant_display"].value_counts().head(8).index)
     top_techs = list(sub["_ptech"].value_counts().head(8).index)
     # 기술분류 내 z-score 로 정규화 → 분류 난이도·스타일 차이를 통제한 상대비교
     z_rows, hover = [], []
@@ -13593,7 +13727,7 @@ def _disclosure_section(df, settings):
                   for t in top_techs}
     for comp in top_comps:
         row_z, row_h = [], []
-        g = sub[sub["applicant_display"] == comp]
+        g = sub_x[sub_x["applicant_display"] == comp]
         for t in top_techs:
             v = g[g["_ptech"] == t]["_dr"]
             if len(v) >= 3:
@@ -13626,7 +13760,7 @@ def _disclosure_section(df, settings):
             "layout": base_layout(
                 "도면 수 vs 청구항 수 — 우하단(청구 많고 도면 적음)=서면 위주 출원 신호",
                 xaxis={"title": "청구항 수"}, yaxis={"title": "도면 수"})}
-    comp_avg = sub.groupby("applicant_display")["_dr"].agg(["mean", "size"])
+    comp_avg = sub_x.groupby("applicant_display")["_dr"].agg(["mean", "size"])
     comp_avg = comp_avg[comp_avg["size"] >= 5].sort_values("mean")
     lowest = str(comp_avg.index[0]) if len(comp_avg) else None
     highest = str(comp_avg.index[-1]) if len(comp_avg) else None
@@ -13805,12 +13939,11 @@ def _gov_program_section(df, settings):
     #  문제 방지)
     fig_comp = None
     comp_rows = []
-    apps = df["applicant_display"].replace("", np.nan).dropna()
-    if len(apps):
+    # 공동출원은 설정(coapplicant_mode)에 따라 각 출원인에게 계상
+    totals = applicant_counts(df, settings)
+    if len(totals):
         min_n = int(get_threshold(settings, "min_class_patents")) + 2
-        totals = apps.value_counts()
-        linked_by_comp = sub["applicant_display"].replace("", np.nan).dropna() \
-            .value_counts()
+        linked_by_comp = applicant_counts(sub, settings)
         comps = list(totals.head(12).index) + \
             [c for c in linked_by_comp.head(10).index
              if c not in totals.head(12).index]
@@ -14062,12 +14195,12 @@ def _expiry_cliff_section(df, settings, focal):
     if len(sub) < 5:
         return None, "향후 10년 내 만료 예정 특허 부족 (5건 미만)"
     years = list(range(now_y, now_y + 11))
-    top_apps = list(sub["applicant_display"].replace("", np.nan).dropna()
-                    .value_counts().head(7).index)
+    sub_x = explode_applicants(sub, settings)  # 공동출원 각각 집계
+    top_apps = list(sub_x["applicant_display"].value_counts().head(7).index)
     color_reg = {}
     traces = []
     for comp in top_apps:
-        g = sub[sub["applicant_display"] == comp]
+        g = sub_x[sub_x["applicant_display"] == comp]
         cnt = g.groupby("_exp_y").size()
         traces.append({"type": "bar", "name": str(comp)[:20],
                        "x": years, "y": [int(cnt.get(y, 0)) for y in years],
@@ -14076,7 +14209,7 @@ def _expiry_cliff_section(df, settings, focal):
                        "customdata": [{"drill": {"applicant": str(comp)}}] * len(years),
                        "hovertext": ["%s — %d년 만료 %d건" % (comp, y, int(cnt.get(y, 0)))
                                      for y in years], "hoverinfo": "text"})
-    others = sub[~sub["applicant_display"].isin(top_apps)]
+    others = sub_x[~sub_x["applicant_display"].isin(top_apps)]
     if len(others):
         cnt = others.groupby("_exp_y").size()
         traces.append({"type": "bar", "name": "기타",
@@ -14106,14 +14239,16 @@ def _expiry_cliff_section(df, settings, focal):
             "exp_year": int(r["_exp_y"]),
             "cites": (int(r["cites_forward"]) if "cites_forward" in sub.columns
                       and pd.notna(r.get("cites_forward")) else None),
-            "is_focal": str(r.get("applicant_display", "")) == focal,
+            "is_focal": (str(r.get("applicant_display", "")) == focal
+                         or focal in [str(a) for a in
+                                      (r.get("_co_applicants_display") or [])]),
             "drill": {"type": "ids", "ids": ids}})
     by_year = sub.groupby("_exp_y").size()
     peak_y = int(by_year.idxmax())
-    n_focal = int((sub["applicant_display"] == focal).sum())
-    comp_exp = sub[sub["applicant_display"] != focal]
-    comp_top = comp_exp["applicant_display"].replace("", np.nan).dropna() \
-        .value_counts()
+    _focal_m = applicant_mask(sub, focal, scope="any")
+    n_focal = int(_focal_m.sum())
+    comp_top = sub_x.loc[sub_x["applicant_display"] != focal,
+                         "applicant_display"].value_counts()
     return {"fig": fig, "key_rows": key_rows, "basis": basis,
             "key_basis": key_basis,
             "peak_year": peak_y, "peak_n": int(by_year.max()),
@@ -14128,8 +14263,7 @@ def _expiry_cliff_section(df, settings, focal):
 # ② R&D 효율 사분면
 # ---------------------------------------------------------------------------
 def _rnd_efficiency_section(df, settings, focal):
-    apps = df["applicant_display"].replace("", np.nan).dropna()
-    counts = apps.value_counts()
+    counts = applicant_counts(df, settings)  # 공동출원 각각 집계
     min_n = max(5, int(get_threshold(settings, "min_class_patents")))
     comps = [c for c in counts.index if counts[c] >= min_n][:12]
     if len(comps) < 3:
@@ -14144,7 +14278,7 @@ def _rnd_efficiency_section(df, settings, focal):
     max_year = df["_base_year"].dropna().max()
     rows = []
     for comp in comps:
-        g = df[df["applicant_display"] == comp]
+        g = df[applicant_mask(df, comp, scope="any")]  # 공동출원 포함 문헌
         met = {}
         if has_cites:
             met["cites"] = float(g["cites_forward"].dropna().mean() or 0)
@@ -14329,8 +14463,8 @@ def _catchup_section(df, settings, focal):
     rows = []
     for tech in tech_flat.value_counts().head(10).index:
         in_tech = df[df["_tech_list"].map(lambda lst: tech in (lst or []))]
-        counts = in_tech["applicant_display"].replace("", np.nan).dropna() \
-            .value_counts()
+        in_tech_x = explode_applicants(in_tech, settings)  # 공동출원 각각 집계
+        counts = in_tech_x["applicant_display"].value_counts()
         if not len(counts) or counts.iloc[0] < 5:
             continue
         leader = str(counts.index[0])
@@ -14347,7 +14481,7 @@ def _catchup_section(df, settings, focal):
         gap = int(counts.iloc[0]) - n_focal
         # 최근 3년 연평균 출원 속도
         def _speed(comp):
-            yrs = in_tech[in_tech["applicant_display"] == comp]["_base_year"] \
+            yrs = in_tech_x[in_tech_x["applicant_display"] == comp]["_base_year"] \
                 .dropna().astype(int)
             return float((yrs >= max_year - 2).sum()) / 3.0
         v_focal, v_leader = _speed(focal), _speed(leader)
@@ -14406,7 +14540,8 @@ def _threat_section(df, settings, focal):
     entrants = []
     for tech in focal_techs.index:
         in_tech = df[df["_tech_list"].map(lambda lst: tech in (lst or []))]
-        for comp, grp in in_tech.groupby("applicant_display"):
+        in_tech_x = explode_applicants(in_tech, settings)  # 공동출원 각각 집계
+        for comp, grp in in_tech_x.groupby("applicant_display"):
             comp = str(comp).strip()
             if not comp or comp == focal:
                 continue
@@ -14419,7 +14554,7 @@ def _threat_section(df, settings, focal):
             n_tech = int(len(grp))
             if n_tech < 2:
                 continue
-            total_n = int((df["applicant_display"] == comp).sum())
+            total_n = int(applicant_mask(df, comp, scope="any").sum())
             avg_c = (float(grp["cites_forward"].dropna().mean())
                      if "cites_forward" in grp.columns
                      and grp["cites_forward"].notna().any() else None)
@@ -14483,7 +14618,7 @@ def _threat_section(df, settings, focal):
 def _pruning_section(df, settings, focal):
     if "reg_date" not in df.columns or not df["reg_date"].notna().any():
         return None, "등록일 컬럼 필요 (등록 후 경과 연차 계산)"
-    g = df[(df["applicant_display"] == focal) & df["reg_date"].notna()].copy()
+    g = df[applicant_mask(df, focal, scope="any") & df["reg_date"].notna()].copy()
     if "_active_flag" in g.columns and \
             g["_active_flag"].map(lambda v: v is not None).any():
         g = g[g["_active_flag"].map(lambda v: v is True)]
@@ -14746,7 +14881,8 @@ def _license_section(df, settings):
             fig_tech["layout"]["xaxis"]["tickformat"] = ".0%"
     # 기업별 실시권 특허 수
     fig_comp = None
-    comp = lic["applicant_display"].replace("", np.nan).dropna().value_counts().head(10)
+    # 공동출원은 설정(coapplicant_mode)에 따라 각 출원인에게 계상
+    comp = applicant_counts(lic, settings).head(10)
     if len(comp):
         fig_comp = bar_chart(
             [str(c) for c in comp.index][::-1], [int(v) for v in comp.values][::-1],
@@ -14798,7 +14934,8 @@ def _sep_section(df, settings):
         [str(o) for o in org_counts.index][::-1],
         [int(v) for v in org_counts.values][::-1],
         title="표준화기구별 선언 특허 수 (SEP)", orientation="h", x_title="선언 특허 수")
-    comp = sep["applicant_display"].replace("", np.nan).dropna().value_counts().head(10)
+    # 공동출원은 설정(coapplicant_mode)에 따라 각 출원인에게 계상
+    comp = applicant_counts(sep, settings).head(10)
     fig_comp = None
     if len(comp):
         fig_comp = bar_chart(
@@ -14880,6 +15017,8 @@ def _rejection_section(df, settings):
     if has_flag:
         flag = df["rejection_flag"].map(parse_bool)
         base = df[flag.notna()]
+        # 공동출원은 설정(coapplicant_mode)에 따라 각 출원인에게 계상
+        base = explode_applicants(base, settings)
         for comp, grp in base.groupby("applicant_display"):
             comp = str(comp).strip()
             if not comp or len(grp) < 5:
@@ -14945,8 +15084,8 @@ def _science_section(df, settings):
                             for t in by_tech.index])
     fig_comp = None
     comp_rows = []
-    grp = work[work["applicant_display"].astype(str) != ""] \
-        .groupby("applicant_display")["_npl"]
+    # 공동출원은 설정(coapplicant_mode)에 따라 각 출원인에게 계상
+    grp = explode_applicants(work, settings).groupby("applicant_display")["_npl"]
     by_comp = grp.agg(["mean", "size"])
     by_comp["cited"] = grp.apply(lambda s: int((s > 0).sum()))
     by_comp = by_comp[by_comp["size"] >= 5].sort_values("mean").tail(10)
@@ -15276,7 +15415,9 @@ def compute_executive_summary(df, settings, company=None):
     max_year = int(df["_base_year"].dropna().max())
     recent_from = max_year - recent + 1
     apps = df["applicant_display"]
-    counts = apps.replace("", np.nan).dropna().value_counts()
+    # 출원인 순위·점유율은 공동출원 설정을 따름 (기본 '각각 집계')
+    _acounts = applicant_counts  # [merged import alias]
+    counts = _acounts(df, settings)
     # 공동출원 포함 membership 기준 — 공동출원으로만 등장하는 자사도 집계
     focal_mask = applicant_mask(df, focal, scope="any")
 
@@ -15284,7 +15425,7 @@ def compute_executive_summary(df, settings, company=None):
     rank_all = (int(list(counts.index).index(focal)) + 1
                 if focal in counts.index else None)
     rec_df = df[df["_base_year"] >= recent_from]
-    rec_counts = rec_df["applicant_display"].replace("", np.nan).dropna().value_counts()
+    rec_counts = _acounts(rec_df, settings)
     rank_recent = (int(list(rec_counts.index).index(focal)) + 1
                    if focal in rec_counts.index else None)
     share = float(focal_mask.sum()) / float(len(df))
@@ -15319,11 +15460,16 @@ def compute_executive_summary(df, settings, company=None):
 
     # ---- ② 성장-점유 매트릭스 (BCG 스타일) --------------------------------
     tech_flat = {}
-    for lst, app in zip(df["_tech_list"], apps):
+    _use_co = (str((settings or {}).get("coapplicant_mode") or "all") == "all"
+               and "_co_applicants_display" in df.columns)
+    _row_apps = (df["_co_applicants_display"] if _use_co
+                 else apps.map(lambda a: [a] if str(a).strip() else []))
+    for lst, row_apps in zip(df["_tech_list"], _row_apps):
+        row_apps = [str(a).strip() for a in (row_apps or []) if str(a).strip()]
         for t in set(lst or []):
             rec = tech_flat.setdefault(t, {"total": 0, "by_app": {}})
             rec["total"] += 1
-            if app:
+            for app in row_apps:
                 rec["by_app"][app] = rec["by_app"].get(app, 0) + 1
     top_techs = sorted(tech_flat, key=lambda t: -tech_flat[t]["total"])[:12]
     bcg_rows = []
@@ -15418,7 +15564,7 @@ def compute_executive_summary(df, settings, company=None):
         top_comps.append(focal)
     pos_rows = []
     for compny in top_comps:
-        m = apps == compny
+        m = applicant_mask(df, compny, scope="any")
         g = _growth_of(df, m, recent)
         if g is None:
             continue
@@ -16233,7 +16379,7 @@ def compute_quality_report(df, settings):
 
 
 # 검증 리포트용 빌드 정보 (tools/build_backend.py 가 실측 집계)
-_QR_BUILD_INFO = {'built_at': '2026-08-18 05:39', 'modules': 46, 'test_functions': 258, 'test_files': 14, 'source': 'build'}
+_QR_BUILD_INFO = {'built_at': '2026-08-18 06:17', 'modules': 46, 'test_functions': 266, 'test_files': 15, 'source': 'build'}
 
 
 

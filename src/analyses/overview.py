@@ -29,7 +29,8 @@ import pandas as pd
 
 from src.config import get_threshold, get_limit
 from src.metrics import robust_growth, hhi, cosine_sim_vec
-from src.analyses.common import combo_counts, tech_year_matrix, company_tech_shares
+from src.analyses.common import combo_counts, tech_year_matrix, company_tech_shares, \
+    applicant_counts as coapp_counts, explode_applicants
 from src.insights import build_insight, fmt_num, fmt_pct, period_label, check_small_sample
 from src.viz_payload import ok_result, empty_result
 
@@ -63,7 +64,7 @@ def _new_combos(df, settings, top_n):
     if not len(years):
         return []
     recent_from = int(years.max()) - recent + 1
-    pairs, _, _ = combo_counts(df, recent_year_from=recent_from)
+    pairs, _, _ = combo_counts(df, recent_year_from=recent_from, settings=settings)
     if not len(pairs):
         return []
     min_n = get_threshold(settings, "min_combo_patents")
@@ -99,8 +100,8 @@ def _strategy_changes(df, settings, top_n):
     if cur_sh.empty or prev_sh.empty:
         return []
     min_n = get_threshold(settings, "min_class_patents")
-    counts_cur = cur["applicant_display"].value_counts()
-    counts_prev = prev["applicant_display"].value_counts()
+    counts_cur = coapp_counts(cur, settings)
+    counts_prev = coapp_counts(prev, settings)
     all_techs = sorted(set(cur_sh.columns) | set(prev_sh.columns))
     out = []
     for company in set(cur_sh.index) & set(prev_sh.index):
@@ -134,10 +135,18 @@ def _barrier_and_whitespace(df, settings, top_n):
         if n_total < min_n:
             continue
         n_active_granted = int((in_tech & active_mask & granted_mask).sum())
-        applicant_counts = df.loc[in_tech, "applicant_display"] \
-            .replace("", np.nan).dropna().value_counts()
-        cr3 = float(applicant_counts.head(3).sum()) / n_total if n_total else 0.0
-        conc = hhi(applicant_counts.values) or 0.0
+        sub_t = df.loc[in_tech]
+        app_counts_t = coapp_counts(sub_t, settings)
+        top3 = set(map(str, app_counts_t.head(3).index))
+        if n_total and top3:
+            covered = sub_t["applicant_display"].astype(str).isin(top3)
+            if "_co_applicants_display" in sub_t.columns:
+                covered = covered | sub_t["_co_applicants_display"].map(
+                    lambda lst: bool(top3 & {str(a) for a in (lst or [])}))
+            cr3 = float(covered.mean())
+        else:
+            cr3 = 0.0
+        conc = hhi(app_counts_t.values) or 0.0
         growth, _ = robust_growth(mat.loc[tech], recent_years=recent)
         barrier_score = (n_active_granted / max(n_total, 1)) * cr3 * np.log1p(n_active_granted)
         barrier_rows.append({"tech": str(tech), "active_granted": n_active_granted,
@@ -154,7 +163,7 @@ def _barrier_and_whitespace(df, settings, top_n):
     return barrier_rows, white_rows
 
 
-def _alerts(df, top_n=5):
+def _alerts(df, settings, top_n=5):
     alerts = {"key_patents": [], "expiring": [], "key_companies": []}
     if "cites_forward" in df.columns and df["cites_forward"].notna().any():
         top_cited = df[df["cites_forward"].notna()].nlargest(top_n, "cites_forward")
@@ -165,8 +174,9 @@ def _alerts(df, top_n=5):
                 "applicant": str(r.get("applicant_display", "")),
                 "cites": int(r["cites_forward"]),
             })
-        counts = df["applicant_display"].replace("", np.nan).dropna().value_counts()
-        cited_by_company = df.groupby("applicant_display")["cites_forward"].sum() \
+        _exp = explode_applicants(df, settings)
+        counts = _exp["applicant_display"].value_counts()
+        cited_by_company = _exp.groupby("applicant_display")["cites_forward"].sum() \
             .sort_values(ascending=False).head(top_n)
         for comp, c in cited_by_company.items():
             if comp:
@@ -202,7 +212,7 @@ def compute_overview(df, settings):
     new_combos = new_combos_all[:top_n]
     strategy = _strategy_changes(df, settings, 5)
     barriers, whitespace = _barrier_and_whitespace(df, settings, 5)
-    alerts = _alerts(df)
+    alerts = _alerts(df, settings)
 
     years = df["_base_year"].dropna()
     active_flags = df["_active_flag"]
@@ -211,7 +221,7 @@ def compute_overview(df, settings):
     kpi = {
         "total": int(len(df)),
         "families": int(df["family_id"].nunique()) if "family_id" in df.columns else None,
-        "applicants": int(df["applicant_display"].replace("", np.nan).nunique()),
+        "applicants": int(coapp_counts(df, settings).index.nunique()),
         "countries": int(df["country"].astype(str).str.upper().nunique())
         if "country" in df.columns else None,
         "active_share": round(n_active / n_active_known, 3) if n_active_known else None,

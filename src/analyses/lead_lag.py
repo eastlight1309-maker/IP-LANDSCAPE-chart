@@ -27,6 +27,7 @@ Drill-down: 엣지 클릭 → 관련 기술분류 목록 + 양사 특허.
 """
 import numpy as np
 
+from src.analyses.common import explode_applicants
 from src.config import get_threshold, get_limit
 from src.metrics import cross_correlation_lag
 from src.preprocessing import explode_tech
@@ -50,6 +51,7 @@ def compute_lead_lag(df, settings, min_repeat=1):
         return empty_result("기업·기술분류·연도 시계열을 만들 데이터가 없습니다.")
     ex["_year_int"] = ex["_base_year"].astype(int)
 
+    ex = explode_applicants(ex, settings)  # 공동출원 각각 집계
     top_companies = set(ex["applicant_display"].value_counts().head(max_companies).index)
     ex = ex[ex["applicant_display"].isin(top_companies)]
 
@@ -105,7 +107,7 @@ def compute_lead_lag(df, settings, min_repeat=1):
         return empty_result("반복 관측된 선행 관계가 없습니다.")
     relations.sort(key=lambda r: -r["strength"])
 
-    counts = df["applicant_display"].value_counts()
+    counts = explode_applicants(df, settings)["applicant_display"].value_counts()
     node_names = sorted(set([r["leader"] for r in relations] + [r["follower"] for r in relations]))
     max_count = max((counts.get(n, 1) for n in node_names), default=1)
     nodes = [{"id": n, "label": n, "count": int(counts.get(n, 0)),

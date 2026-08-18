@@ -40,6 +40,7 @@ import re
 import numpy as np
 import pandas as pd
 
+from src.analyses.common import explode_applicants
 from src.config import get_limit, get_threshold
 from src.preprocessing import parse_multiclass_cell
 from src.embedding_adapter import get_adapter
@@ -226,6 +227,9 @@ def compute_scope_entropy(df, settings, companies=None):
                                                "엔트로피를 계산할 수 없습니다.")
     work = df[df["applicant_display"].astype(str) != ""].copy()
     min_docs = int(get_threshold(settings, "min_class_patents")) + 2  # 최소 5건
+    # 공동출원 각각 집계 — 전개로 생긴 중복 인덱스는 이후 .loc 정렬
+    # (_claim_clusters 등)이 오동작하지 않도록 리셋한다
+    work = explode_applicants(work, settings).reset_index(drop=True)
     counts = work["applicant_display"].value_counts()
     eligible = [c for c in counts.index if counts[c] >= min_docs]
     if companies:

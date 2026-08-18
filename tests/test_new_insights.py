@@ -1261,8 +1261,11 @@ def test_company_dna_formulas_and_fixes(settings):
     assert all(d["formula"] and d["reading"] for d in r["definitions"])
     assert r["normalization_note"]
     # 대표 기업 지표를 독립 코드로 재계산해 일치 확인
+    # (회사별 문헌 = 공동출원 포함 membership — 코드와 동일 기준)
+    from src.analyses.common import applicant_series
     p0 = r["companies"][0]
-    sub = df[df["applicant_display"].astype(str) == p0["company"]]
+    _aser = applicant_series(df, settings)
+    sub = df.loc[_aser.index[_aser == p0["company"]]]
     flat = pd.Series([t for lst in sub["_tech_list"] for t in (lst or [])])
     sh = flat.value_counts() / float(len(flat))
     assert abs(p0["raw"]["tech_concentration"] - float((sh ** 2).sum())) < 1e-3

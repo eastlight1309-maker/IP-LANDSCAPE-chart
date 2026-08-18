@@ -42,7 +42,8 @@ import pandas as pd
 
 from src.config import get_threshold, get_limit, LIFECYCLE_PHASES
 from src.metrics import robust_growth, hhi, linreg_slope, normalize_series
-from src.analyses.common import tech_year_matrix, combo_counts, diagnose_year_tech
+from src.analyses.common import tech_year_matrix, combo_counts, diagnose_year_tech, \
+    applicant_series, applicant_set
 from src.insights import build_insight, fmt_num, fmt_pct, period_label, check_small_sample
 from src.viz_payload import ok_result, empty_result, bubble_chart
 
@@ -120,7 +121,7 @@ def compute_lifecycle(df, settings, company=None):
     recent_from = y_max - recent + 1
 
     # 조합 성장률 (기술별): 최근 구간 첫 출현 조합 수
-    pairs, _, _ = combo_counts(df, recent_year_from=recent_from)
+    pairs, _, _ = combo_counts(df, recent_year_from=recent_from, settings=settings)
     combo_new_by_tech, combo_old_by_tech = {}, {}
     for _, r in (pairs.iterrows() if len(pairs) else []):
         first = min(r["years"]) if r["years"] else None
@@ -141,13 +142,12 @@ def compute_lifecycle(df, settings, company=None):
         growth, g_method = robust_growth(series, recent_years=recent)
         first_year = int(series[series > 0].index.min()) if (series > 0).any() else None
         age = (y_max - first_year) if first_year is not None else None
-        applicants_all = sub["applicant_display"].replace("", np.nan).dropna()
-        counts = applicants_all.value_counts()
+        # 출원인 집계는 공동출원 설정을 따름 (기본 '각각 집계' — 공동출원
+        # 1건이 각 공동출원인에게 1건씩, 신규 진입 판정도 membership 기준)
+        counts = applicant_series(sub, settings).value_counts()
         conc = hhi(counts.values)
-        recent_apps = set(sub.loc[sub["_base_year"] >= recent_from, "applicant_display"]
-                          .replace("", np.nan).dropna())
-        old_apps = set(sub.loc[sub["_base_year"] < recent_from, "applicant_display"]
-                       .replace("", np.nan).dropna())
+        recent_apps = applicant_set(sub[sub["_base_year"] >= recent_from], settings)
+        old_apps = applicant_set(sub[sub["_base_year"] < recent_from], settings)
         new_entrants = len(recent_apps - old_apps)
         flags = sub["_active_flag"]
         known = flags.map(lambda v: v is not None)

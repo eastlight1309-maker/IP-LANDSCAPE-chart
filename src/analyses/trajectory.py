@@ -27,7 +27,8 @@ import numpy as np
 
 from src.config import get_threshold, get_limit
 from src.gpu_utils import run_pca, run_umap
-from src.analyses.common import company_tech_shares
+from src.analyses.common import company_tech_shares, \
+    explode_applicants
 from src.insights import build_insight, fmt_num, period_label, check_small_sample
 from src.viz_payload import ok_result, empty_result, base_layout, PALETTE
 
@@ -46,12 +47,13 @@ def compute_trajectory(df, settings, companies=None, method="pca", weighting=Non
     max_companies = get_limit(settings, "trajectory_max_companies")
     tmp = df[df["_base_year"].notna()].copy()
     tmp["_year_int"] = tmp["_base_year"].astype(int)
+    tmp = explode_applicants(tmp, settings)  # 공동출원 각각 집계
     counts = tmp.groupby(["applicant_display", "_year_int"]).size()
 
     if companies:
         wanted = [str(c) for c in companies][:max_companies]
     else:
-        totals = df["applicant_display"].replace("", np.nan).dropna().value_counts()
+        totals = explode_applicants(df, settings)["applicant_display"].value_counts()
         wanted = totals.head(max_companies).index.tolist()
 
     rows = []

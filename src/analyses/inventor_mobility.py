@@ -30,6 +30,7 @@ Drill-down: 엣지 → 이동 발명자 목록, 발명자 → {"type":"inventor"
 """
 import numpy as np
 
+from src.analyses.common import applicant_counts
 from src.config import get_threshold, get_limit, MESSAGES
 from src.insights import build_insight, fmt_num, fmt_pct, period_label, check_small_sample
 from src.viz_payload import ok_result, empty_result, disabled_result, \
@@ -143,7 +144,7 @@ def compute_inventor_mobility(df, settings, include_uncertain=False):
     edges_data = sorted(edge_map.values(), key=lambda r: -len(r["inventors"]))[:max_edges]
 
     companies = sorted(set([e["from"] for e in edges_data] + [e["to"] for e in edges_data]))
-    counts = work["applicant_display"].value_counts()
+    counts = applicant_counts(work, settings)  # 공동출원 각각 집계
     max_count = max((counts.get(c, 1) for c in companies), default=1)
     nodes = [{"id": c, "label": c, "count": int(counts.get(c, 0)),
               "size": float(14 + 24 * np.sqrt(counts.get(c, 1) / max_count)),

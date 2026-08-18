@@ -39,6 +39,7 @@ import re as _re_mc
 import numpy as np
 import pandas as pd
 
+from src.analyses.common import explode_applicants, applicant_mask
 from src.config import get_threshold, get_limit
 from src.metrics import robust_growth, year_counts, safe_div
 from src.preprocessing import parse_multiclass_cell
@@ -249,8 +250,12 @@ def compute_portfolio_index(df, settings, companies=None):
     has_family = "family_id" in scoped.columns and scoped["family_id"].notna().any()
     all_years = work["_base_year"].dropna()
     y_max_all = int(all_years.max()) if len(all_years) else None
+    # 공동출원 각각 집계(설정 기준): 공동출원 특허의 CI 는 각 공동출원인
+    # 포트폴리오에 모두 계상됨 — 회사별 PAI 합계가 전체 CI 합을 초과할 수 있음
+    scoped_x = explode_applicants(scoped, settings)
+    work_x = explode_applicants(work, settings)
     rows = []
-    for company, grp in scoped.groupby("applicant_display"):
+    for company, grp in scoped_x.groupby("applicant_display"):
         n = len(grp)
         if n < min_n:
             continue
@@ -259,7 +264,7 @@ def compute_portfolio_index(df, settings, companies=None):
         fam = grp["family_id"] if has_family else None
         families = (int(fam.dropna().astype(str).nunique() + fam.isna().sum())
                     if fam is not None else n)
-        all_grp = work[work["applicant_display"] == company]
+        all_grp = work_x[work_x["applicant_display"] == company]
         yrs = all_grp["_base_year"].dropna().astype(int)
         # '최근 N년' 창은 데이터셋 최신 연도에 고정 (출원 끊긴 기업 왜곡 방지)
         growth, _ = (robust_growth(year_counts(yrs, year_max=y_max_all),
@@ -282,7 +287,7 @@ def compute_portfolio_index(df, settings, companies=None):
         if not shown:
             return empty_result("선택한 출원인(%s) 중 최소 표본(%d건) 이상인 회사가 "
                                 "없습니다." % (", ".join(comps_sel[:5]), int(min_n)))
-        scoped = scoped[scoped["applicant_display"].astype(str).isin(wanted_set)]
+        scoped_x = scoped_x[scoped_x["applicant_display"].astype(str).isin(wanted_set)]
     else:
         shown = rows[:30]
 
@@ -383,11 +388,11 @@ def compute_portfolio_index(df, settings, companies=None):
 
     # ③ 상위 5개사 연도별 CI 합 추이
     fig_trend = None
-    if scoped["_base_year"].notna().any():
+    if scoped_x["_base_year"].notna().any():
         series_list = []
         for r in shown[:5]:
-            grp = scoped[(scoped["applicant_display"] == r["company"])
-                         & scoped["_base_year"].notna()]
+            grp = scoped_x[(scoped_x["applicant_display"] == r["company"])
+                           & scoped_x["_base_year"].notna()]
             if not len(grp):
                 continue
             ci_by_year = grp.groupby(grp["_base_year"].astype(int))["_ci"].sum()

@@ -38,6 +38,7 @@ from src.embedding_adapter import get_adapter
 from src.analyses.claim_density import _tfidf_vectors
 from src.analyses.scope_entropy import doc_terms
 from src.insights import build_insight, fmt_num, fmt_pct, check_small_sample
+from src.analyses.common import applicant_mask, applicant_series
 from src.viz_payload import YLGNBU, ok_result, empty_result, base_layout, color_for, \
     cytoscape_network, PALETTE
 
@@ -204,7 +205,6 @@ def compute_emerging_clusters(df, settings, company=None, recent_years=None):
     공동출원 건은 해당 출원인이 공동출원인으로 포함되어 있으면 함께 집계한다.
     """
     if company:
-        from src.analyses.common import applicant_mask
         df = df[applicant_mask(df, company, scope="any")]
         if len(df) < 30:
             return empty_result("출원인 '%s'의 문헌이 %d건뿐이라 군집 기반 신흥 기술 "
@@ -261,7 +261,9 @@ def compute_emerging_clusters(df, settings, company=None, recent_years=None):
         # 특정 출원인 하나로 좁힌 보기에서는 '신규 출원인' 개념이 무의미하므로
         # 계산·표시하지 않고 점수에서도 제외한다 (가중치 재정규화).
         new_ratio = None
-        apps = sub[sub["applicant_display"].astype(str) != ""]
+        # 출원인 집계는 공동출원 설정을 따름 (기본 '각각 집계')
+        _aser = applicant_series(sub, settings)
+        apps = sub.loc[_aser.index].assign(applicant_display=_aser.values)
         if not company and len(apps):
             first_by_app = apps.groupby("applicant_display")["_base_year"].min()
             new_ratio = float((first_by_app >= recent_from).mean())
@@ -680,7 +682,7 @@ def compute_similarity_network(df, settings, threshold=None):
     for ci, (root, members) in enumerate(
             sorted(comp_members.items(), key=lambda kv: -len(kv[1]))):
         sub = work.iloc[members]
-        app_counts = sub["applicant_display"].replace("", np.nan).dropna().value_counts()
+        app_counts = applicant_series(sub, settings).value_counts()
         dom = str(app_counts.index[0]) if len(app_counts) else "-"
         dom_share = float(app_counts.iloc[0] / len(sub)) if len(app_counts) else None
         flags = sub["_active_flag"] if "_active_flag" in sub.columns else pd.Series(dtype=object)

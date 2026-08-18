@@ -25,6 +25,7 @@ Drill-down: 셀 클릭 → {"type":"cell","problem":…,"solution":…} → 패�
 import numpy as np
 import pandas as pd
 
+from src.analyses.common import applicant_series
 from src.config import get_threshold, get_limit
 from src.metrics import robust_growth, year_counts, normalize_series
 from src.insights import build_insight, fmt_num, fmt_pct, period_label, check_small_sample
@@ -224,7 +225,7 @@ def cell_detail(df, settings, problem, solution):
     flags = cell["_active_flag"]
     known = flags.map(lambda v: v is not None)
     active_ratio = float(flags[known].map(lambda v: v is True).mean()) if known.any() else None
-    top_apps = cell["applicant_display"].replace("", np.nan).dropna().value_counts().head(5)
+    top_apps = applicant_series(cell, settings).value_counts().head(5)
     rep_claim = None
     if "indep_claim" in cell.columns:
         claims = cell["indep_claim"].dropna().astype(str)

@@ -39,20 +39,25 @@ def diagnose_year_tech(df):
             % (detail, n, n_year, n_tech))
 
 
-def combo_counts(df, recent_year_from=None):
+def combo_counts(df, recent_year_from=None, settings=None):
     """기술분류 pair 동시출현 집계.
 
     반환 DataFrame: [a, b, n_ab(전체), n_recent(최근), applicants(set), new_applicants(set),
                      years(list)] — new_applicants 는 최근 구간에 처음 등장한 출원인.
     개별 기술 건수는 dict 로 함께 반환: (pairs_df, tech_counts, n_docs)
+    출원인 집합은 coapplicant_mode 를 따른다 (기본 'all'=공동출원인 각각 포함).
     """
     rows = []
     tech_counts = {}
     first_year_by_pair_applicant = {}
     pair_rows = {}
     n_docs = 0
-    for techs, year, applicant in zip(df["_tech_list"], df["_base_year"],
-                                      df["applicant_display"]):
+    use_co = (_coapp_mode(settings) == "all"
+              and "_co_applicants_display" in df.columns)
+    app_lists = (df["_co_applicants_display"] if use_co
+                 else df["applicant_display"].map(lambda a: [a] if str(a).strip() else []))
+    for techs, year, row_apps in zip(df["_tech_list"], df["_base_year"], app_lists):
+        row_apps = [str(a).strip() for a in (row_apps or []) if str(a).strip()]
         techs = sorted(set(techs or []))
         if not techs:
             continue
@@ -70,17 +75,18 @@ def combo_counts(df, recent_year_from=None):
             rec["n_ab"] += 1
             if y is not None:
                 rec["years"].append(y)
-            if applicant:
+            for applicant in row_apps:
                 rec["applicants"].add(applicant)
             if recent_year_from is not None and y is not None and y >= recent_year_from:
                 rec["n_recent"] += 1
-                if applicant:
+                for applicant in row_apps:
                     rec["recent_applicants"].add(applicant)
-            if applicant and y is not None:
-                fk = (key, applicant)
-                prev = first_year_by_pair_applicant.get(fk)
-                if prev is None or y < prev:
-                    first_year_by_pair_applicant[fk] = y
+            if y is not None:
+                for applicant in row_apps:
+                    fk = (key, applicant)
+                    prev = first_year_by_pair_applicant.get(fk)
+                    if prev is None or y < prev:
+                        first_year_by_pair_applicant[fk] = y
         rows.append(techs)
     # 신규 출원인: 해당 조합에 최근 구간에 처음 등장
     for (key, applicant), first_y in first_year_by_pair_applicant.items():
@@ -358,4 +364,75 @@ def export_dataframe(df, extra_fields=None, max_rows=20000):
     out["기술분류"] = techs
     years = df["_base_year"].head(int(max_rows))
     out["연도"] = years
+    return out
+
+
+# ---------------------------------------------------------------------------
+# 공동출원 집계 공용 헬퍼 — coapplicant_mode 설정을 모든 출원인 집계에 일관 적용
+# ---------------------------------------------------------------------------
+def _coapp_mode(settings):
+    return str((settings or {}).get("coapplicant_mode") or "all")
+
+
+def applicant_series(df, settings):
+    """coapplicant_mode 를 따르는 출원인 Series (index=문헌, 값=출원인명).
+
+    mode 'all'(기본, WIPS 방식): 공동출원 1건이 각 공동출원인 행으로 전개되어
+    출원인별 카운팅 시 각각 1건씩 계산된다 (합계가 문헌 수를 초과할 수 있음).
+    mode 'first': 대표(첫) 출원인만. 빈 이름은 제외.
+    """
+    import pandas as _pd
+    if _coapp_mode(settings) == "all" and "_co_applicants_display" in df.columns:
+        idx, vals = [], []
+        for i, lst in df["_co_applicants_display"].items():
+            for a in (lst or []):
+                s = str(a).strip()
+                if s:
+                    idx.append(i)
+                    vals.append(s)
+        if vals:
+            return _pd.Series(vals, index=idx)
+    s = df["applicant_display"].astype(str)
+    s = s[s.str.strip() != ""]
+    return s
+
+
+def applicant_counts(df, settings):
+    """coapplicant_mode 를 따르는 출원인별 문헌 수 value_counts."""
+    return applicant_series(df, settings).value_counts()
+
+
+def applicant_set(df, settings):
+    """coapplicant_mode 를 따르는 출원인 집합 (신규 진입 판정 등)."""
+    return set(applicant_series(df, settings))
+
+
+def company_groups(df, settings, min_n=0, head=None):
+    """(회사, 소속 문헌 subframe) 반복자 — 문헌 수 내림차순.
+
+    mode 'all': 회사별 subframe = 그 회사가 (공동)출원인으로 포함된 문헌 전체
+    (공동출원 1건이 양쪽 회사 subframe 에 모두 나타남 — 각각 집계).
+    mode 'first': 대표 출원인 일치 문헌만.
+    """
+    ser = applicant_series(df, settings)
+    counts = ser.value_counts()
+    if head:
+        counts = counts.head(int(head))
+    for comp, n in counts.items():
+        if n < min_n:
+            continue
+        yield str(comp), df.loc[ser.index[ser == comp]]
+
+
+def explode_applicants(df, settings):
+    """출원인별 groupby 용 전개 프레임 — applicant_display 를 coapplicant_mode
+    기준으로 치환한 복사본. mode 'all'이면 공동출원 1건이 공동출원인 수만큼
+    행으로 복제된다 (출원인별 집계 전용 — 문헌 단위 집계에 쓰면 중복됨).
+
+    입력 인덱스가 중복(예: 기술분류 전개 프레임)이어도 안전하도록 내부에서
+    위치 기반 인덱스로 재설정한 뒤 전개한다."""
+    work = df.reset_index(drop=True)
+    ser = applicant_series(work, settings)
+    out = work.loc[ser.index].copy()
+    out["applicant_display"] = ser.values
     return out

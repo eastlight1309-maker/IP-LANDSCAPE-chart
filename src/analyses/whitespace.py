@@ -42,7 +42,8 @@ import pandas as pd
 from src.config import get_threshold, get_limit, get_weights
 from src.metrics import robust_growth, normalize_series, weighted_geometric_mean, \
     cosine_sim_vec, safe_div
-from src.analyses.common import tech_year_matrix, combo_counts, diagnose_year_tech
+from src.analyses.common import tech_year_matrix, combo_counts, diagnose_year_tech, \
+    applicant_counts, applicant_set
 from src.insights import build_insight, fmt_num, fmt_pct, period_label, check_small_sample
 from src.viz_payload import RDYLGN, ok_result, empty_result
 
@@ -100,7 +101,7 @@ def _own_capability(df, tech, settings, own_mask=None):
         if n_own > 0:
             return True, 1.0, "자사 특허 %d건 보유" % n_own
         own_techs = set(t for lst in df.loc[own_mask, "_tech_list"] for t in (lst or []))
-        neighbors, _, _ = combo_counts(df)
+        neighbors, _, _ = combo_counts(df, settings=settings)
         adj = set()
         for _, r in (neighbors.iterrows() if len(neighbors) else []):
             if r["a"] == tech:
@@ -155,7 +156,7 @@ def compute_opportunity(df, settings, company=None):
     recent_from = y_max - recent + 1
     now = pd.Timestamp.now()
 
-    pairs, _, _ = combo_counts(df, recent_year_from=recent_from)
+    pairs, _, _ = combo_counts(df, recent_year_from=recent_from, settings=settings)
     combo_new_by_tech, combo_old_by_tech, adjacency = {}, {}, {}
     for _, r in (pairs.iterrows() if len(pairs) else []):
         first = min(r["years"]) if r["years"] else None
@@ -175,10 +176,8 @@ def compute_opportunity(df, settings, company=None):
         if len(sub) < min_n:
             continue
         growth, g_method = robust_growth(series, recent_years=recent)
-        recent_apps = set(sub.loc[sub["_base_year"] >= recent_from, "applicant_display"]
-                          .replace("", np.nan).dropna())
-        old_apps = set(sub.loc[sub["_base_year"] < recent_from, "applicant_display"]
-                       .replace("", np.nan).dropna())
+        recent_apps = applicant_set(sub[sub["_base_year"] >= recent_from], settings)
+        old_apps = applicant_set(sub[sub["_base_year"] < recent_from], settings)
         new_entrants = len(recent_apps - old_apps)
         combo_new = combo_new_by_tech.get(tech, 0)
         combo_old = combo_old_by_tech.get(tech, 0)
@@ -191,9 +190,18 @@ def compute_opportunity(df, settings, company=None):
         # 권리장벽 성분
         active_granted = int((sub["_active_flag"].map(lambda v: v is True)
                               & sub["_is_granted_bool"].map(lambda v: v is True)).sum())
-        counts = sub["applicant_display"].replace("", np.nan).dropna().value_counts()
-        # CR3 분모는 같은 기준의 문헌 수 — 가중 합(total)과 섞으면 100% 초과 왜곡
-        cr3 = float(counts.head(3).sum()) / float(len(sub)) if len(sub) else 0.0
+        # CR3 = 상위 3사(공동출원 각각 집계 기준)가 (공동)출원인으로 포함된
+        # 문헌 비율 — 문헌 커버리지 정의라 어떤 모드에서도 0~1 이 보장됨
+        app_counts_t = applicant_counts(sub, settings)
+        top3 = set(map(str, app_counts_t.head(3).index))
+        if len(sub) and top3:
+            covered = sub["applicant_display"].astype(str).isin(top3)
+            if "_co_applicants_display" in sub.columns:
+                covered = covered | sub["_co_applicants_display"].map(
+                    lambda lst: bool(top3 & {str(a) for a in (lst or [])}))
+            cr3 = float(covered.mean())
+        else:
+            cr3 = 0.0
         if "cites_forward" in sub.columns and sub["cites_forward"].notna().any():
             cites = sub["cites_forward"].fillna(0)
             top_cites = float(cites.nlargest(max(int(len(cites) * 0.1), 1)).sum())

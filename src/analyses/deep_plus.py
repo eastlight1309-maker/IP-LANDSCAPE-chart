@@ -32,6 +32,8 @@ from src.insights import build_insight, fmt_num, fmt_pct, period_label, \
     check_small_sample
 from src.viz_payload import ok_result, empty_result, bar_chart, base_layout, \
     color_for
+from src.analyses.common import applicant_mask, applicant_counts, \
+    explode_applicants
 
 _DP_MIN_N = 3
 
@@ -91,7 +93,8 @@ def _license_section(df, settings):
             fig_tech["layout"]["xaxis"]["tickformat"] = ".0%"
     # 기업별 실시권 특허 수
     fig_comp = None
-    comp = lic["applicant_display"].replace("", np.nan).dropna().value_counts().head(10)
+    # 공동출원은 설정(coapplicant_mode)에 따라 각 출원인에게 계상
+    comp = applicant_counts(lic, settings).head(10)
     if len(comp):
         fig_comp = bar_chart(
             [str(c) for c in comp.index][::-1], [int(v) for v in comp.values][::-1],
@@ -143,7 +146,8 @@ def _sep_section(df, settings):
         [str(o) for o in org_counts.index][::-1],
         [int(v) for v in org_counts.values][::-1],
         title="표준화기구별 선언 특허 수 (SEP)", orientation="h", x_title="선언 특허 수")
-    comp = sep["applicant_display"].replace("", np.nan).dropna().value_counts().head(10)
+    # 공동출원은 설정(coapplicant_mode)에 따라 각 출원인에게 계상
+    comp = applicant_counts(sep, settings).head(10)
     fig_comp = None
     if len(comp):
         fig_comp = bar_chart(
@@ -225,6 +229,8 @@ def _rejection_section(df, settings):
     if has_flag:
         flag = df["rejection_flag"].map(parse_bool)
         base = df[flag.notna()]
+        # 공동출원은 설정(coapplicant_mode)에 따라 각 출원인에게 계상
+        base = explode_applicants(base, settings)
         for comp, grp in base.groupby("applicant_display"):
             comp = str(comp).strip()
             if not comp or len(grp) < 5:
@@ -290,8 +296,8 @@ def _science_section(df, settings):
                             for t in by_tech.index])
     fig_comp = None
     comp_rows = []
-    grp = work[work["applicant_display"].astype(str) != ""] \
-        .groupby("applicant_display")["_npl"]
+    # 공동출원은 설정(coapplicant_mode)에 따라 각 출원인에게 계상
+    grp = explode_applicants(work, settings).groupby("applicant_display")["_npl"]
     by_comp = grp.agg(["mean", "size"])
     by_comp["cited"] = grp.apply(lambda s: int((s > 0).sum()))
     by_comp = by_comp[by_comp["size"] >= 5].sort_values("mean").tail(10)
@@ -457,7 +463,6 @@ def compute_deep_plus(df, settings, only_sections=None, company=None):
     company 지정 시 해당 출원인 문헌(공동출원 포함)만으로 계산한다.
     """
     if company:
-        from src.analyses.common import applicant_mask
         df = df[applicant_mask(df, company, scope="any")]
         if not len(df):
             return empty_result("출원인 '%s'의 문헌이 없습니다 (공동출원 포함 검색)."

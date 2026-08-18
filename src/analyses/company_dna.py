@@ -24,7 +24,9 @@ analyses/company_dna.py — 4.5 경쟁사 기술 DNA Fingerprint (+전략 유사
   11 inventor_concentration 발명자 집중도 (발명자 HHI)
   12 recent_growth       최근 3년 성장률 (robust_growth)
 
-지표별 원값(raw)과 표준화값(0~1, normalize_series)을 함께 제공 (Hover/토글).
+지표별 원값(raw)과 표준화값(0~1, 원값 ÷ 모집단 최대값 비율)을 함께 제공
+(Hover/토글). 예: 패밀리 6.4 vs 4.0 → 1.00 vs 0.63 — 상대적으로 낮다고
+0이 되지 않는다. 모집단은 데이터셋 상위 기업으로 고정(선택 무관).
 
 그래프: 기업 수 <= max_companies_compare → 레이더, 초과 → 히트맵.
         세부 비교용 평행좌표(parcoords) payload 도 항상 포함.
@@ -49,7 +51,8 @@ import pandas as pd
 from src.config import get_threshold, get_limit
 from src.metrics import hhi, shannon_entropy, robust_growth, year_counts, \
     normalize_series, cosine_sim_vec
-from src.analyses.common import company_tech_shares
+from src.analyses.common import company_tech_shares, \
+    applicant_series, applicant_counts
 from src.insights import build_insight, fmt_num, fmt_pct, period_label, check_small_sample
 from src.viz_payload import BLUES, PURPLES, ok_result, empty_result, radar_chart, heatmap
 
@@ -118,6 +121,17 @@ DNA_DEFINITIONS = [
      "basis": "출원일(없으면 우선일/공개일)",
      "reading": "양수=확대, 음수=축소 · 출원을 멈춘 기업은 0 채움으로 음수가 됨"},
 ]
+
+
+def _ratio_to_max(vals):
+    """값 ÷ 모집단 최대값 — 최소값이 0 으로 강제되지 않고 실제 비율 유지.
+    예: 패밀리 6.4 vs 4.0 → 1.00 vs 0.63. 음수(감소 성장률)는 0 으로
+    표시하고 원값은 hover 에 그대로 제공한다."""
+    a = np.asarray([0.0 if v is None or (isinstance(v, float) and np.isnan(v))
+                    else float(v) for v in vals])
+    a = np.clip(a, 0.0, None)
+    m = float(a.max())
+    return a / m if m > 0 else np.zeros_like(a)
 
 
 def _company_metrics(sub, recent_from, recent):
@@ -213,7 +227,7 @@ def compute_company_dna(df, settings, companies=None):
     min_n = get_threshold(settings, "min_class_patents")
     max_cmp = get_limit(settings, "max_companies_compare")
 
-    totals = df["applicant_display"].replace("", np.nan).dropna().value_counts()
+    totals = applicant_counts(df, settings)  # 공동출원 각각 집계 (설정 기준)
     pool_all = [c for c in totals.index if totals[c] >= min_n]
     if companies:
         wanted = [c for c in map(str, companies) if totals.get(c, 0) >= min_n][:30]
@@ -228,18 +242,22 @@ def compute_company_dna(df, settings, companies=None):
     # 않는다 (전체 보기와 동일한 값).
     pool = list(dict.fromkeys(pool_all[:30] + wanted))
 
+    # 회사별 문헌 = 공동출원 포함 membership (공동출원 1건이 양쪽 회사 지표에
+    # 모두 반영 — '각각 집계' 원칙과 일치)
+    _app_ser = applicant_series(df, settings)
     raw_by_company = {}
     for c in pool:
-        sub = df[df["applicant_display"].astype(str) == c]
+        sub = df.loc[_app_ser.index[_app_ser == c]]
         raw_by_company[c] = _company_metrics(sub, recent_from, recent)
 
     keys = [k for k, _ in DNA_METRICS]
+
     std_by_metric = {}
     for k in keys:
         vals = [raw_by_company[c][k] if raw_by_company[c][k] is not None else 0.0
                 for c in pool]
-        std_by_metric[k] = normalize_series(vals, log=(k in ("family_size", "avg_citations", "intl_scope")))
-    n_ranks = normalize_series([raw_by_company[c]["n"] for c in pool], log=True)
+        std_by_metric[k] = _ratio_to_max(vals)
+    n_ranks = _ratio_to_max([raw_by_company[c]["n"] for c in pool])
     pool_idx = {c: i for i, c in enumerate(pool)}
     from src.config import WEIGHTS
     try:
@@ -333,13 +351,15 @@ def compute_company_dna(df, settings, companies=None):
                       "companies": companies_payload, "metric_labels": dict(DNA_METRICS),
                       "definitions": DNA_DEFINITIONS,
                       "normalization_note":
-                          "레이더/히트맵/평행좌표의 축 값은 기업 간 비교를 위한 "
-                          "0~1 표준화 점수(log1p 일부 → 윈저라이즈 2% → IQR robust "
-                          "정규화)이며, 원값은 hover 와 기업 표에 함께 표시됩니다. "
-                          "표준화 모집단은 회사 선택과 무관하게 데이터셋 상위 "
-                          "기업군(최대 30개사)으로 고정 — 소수 기업만 선택해도 "
-                          "값이 0/1 극값으로 강제되지 않고 전체 보기와 동일합니다. "
-                          "유형 분류는 표준화 점수 ≥ cutoff(Settings 조정 가능) 규칙의 "
-                          "첫 매칭입니다.",
+                          "레이더/히트맵/평행좌표의 축 값 = 원값 ÷ 모집단 최대값 "
+                          "(최대 기업=1). 실제 비율이 그대로 유지되어, 예를 들어 "
+                          "패밀리 규모 6.4 vs 4.0 이면 1.00 vs 0.63 으로 표시됩니다 "
+                          "(최소값이 0 으로 강제되지 않음). 음수(감소 성장률)만 0 "
+                          "으로 표시되며 원값은 hover 와 기업 표에서 확인할 수 "
+                          "있습니다. 모집단은 회사 선택과 무관하게 데이터셋 상위 "
+                          "기업군(최대 30개사)으로 고정 — 몇 개사를 골라도 값은 "
+                          "전체 보기와 동일합니다. 출원인 집계는 공동출원 설정을 "
+                          "따릅니다(기본: 각각 집계). 유형 분류는 표준화 점수 ≥ "
+                          "cutoff(Settings 조정 가능) 규칙의 첫 매칭입니다.",
                       "similarity": sim_matrix, "overlap": overlap_matrix},
                      insight=insight)

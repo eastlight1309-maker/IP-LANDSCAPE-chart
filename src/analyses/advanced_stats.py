@@ -30,6 +30,7 @@ import re
 import numpy as np
 import pandas as pd
 
+from src.analyses.common import explode_applicants
 from src.config import get_threshold, get_limit
 from src.preprocessing import parse_multiclass_cell, auto_standardize_name
 from src.insights import build_insight, fmt_num, fmt_pct, period_label, check_small_sample
@@ -60,6 +61,7 @@ def _prosecution_section(df, settings):
         year_axis=True)
     min_n = get_threshold(settings, "min_class_patents")
     by_comp = both[both["applicant_display"].astype(str) != ""] \
+        .pipe(explode_applicants, settings) \
         .groupby("applicant_display")["_months"].agg(["mean", "size"])
     # 빠른 6 + 느린 6 — 빠른 순 상위 12개만 보이면 '느린 회사'(관심 대상)가
     # 조용히 사라진다
@@ -135,6 +137,7 @@ def _claims_section(df, settings):
     if has_indep:
         agg["indep"] = ("indep_claims_count", "mean")
     by_comp = sub[sub["applicant_display"].astype(str) != ""] \
+        .pipe(explode_applicants, settings) \
         .groupby("applicant_display").agg(**agg)
     by_comp = by_comp[by_comp["n"] >= min_n].sort_values("claims", ascending=False).head(12)
     fig_comp = None
