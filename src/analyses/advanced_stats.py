@@ -174,14 +174,30 @@ def _claims_section(df, settings):
 
 
 def _coapplicant_section(df, settings):
-    """④ 공동출원 협력 네트워크."""
-    if "_co_applicants" not in df.columns:
+    """④ 공동출원 협력 네트워크.
+
+    노드 이름은 출원인 표준화 결과(_co_applicants_display: 사용자 표준화
+    규칙·그룹 + 표준화 출원인 컬럼 + 자동 표준화)를 그대로 사용한다 —
+    원본(_co_applicants)에 자동 표준화만 적용하면 사용자가 지정한 표준명이
+    반영되지 않고 드릴다운 매칭도 어긋난다. 표준화로 같은 회사로 합쳐진
+    공동출원(예: 'A' + 'A(주)')은 1개 주체가 되어 관계에서 제외된다.
+    """
+    if "_co_applicants_display" in df.columns:
+        lists = df["_co_applicants_display"]
+        pre_standardized = True
+    elif "_co_applicants" in df.columns:
+        lists = df["_co_applicants"]          # 구버전 프레임 폴백
+        pre_standardized = False
+    else:
         return None, "출원인 컬럼 필요"
     pair_counts = {}
-    for names in df["_co_applicants"]:
+    for names in lists:
         if not names or len(names) < 2:
             continue
-        std = sorted(set(auto_standardize_name(n) for n in names if str(n).strip()))
+        if pre_standardized:
+            std = sorted({str(n).strip() for n in names if str(n).strip()})
+        else:
+            std = sorted({auto_standardize_name(n) for n in names if str(n).strip()})
         std = [s for s in std if s]
         for i in range(len(std)):
             for j in range(i + 1, len(std)):

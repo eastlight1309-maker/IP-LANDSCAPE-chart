@@ -106,8 +106,8 @@ DNA_DEFINITIONS = [
      "basis": "패밀리 ID 또는 패밀리 수 컬럼", "reading": "높음=핵심 발명을 계속 보강"},
     {"code": "공동출원 비율", "name": "co_apply_ratio",
      "definition": "다른 주체와 함께 출원하는 비율 (개방형 협력 성향)",
-     "formula": "출원인 2인 이상 문헌 ÷ 전체 문헌 — 원본 출원인 리스트 기준 "
-                "(공동출원 집계 설정과 무관)",
+     "formula": "표준화 후 서로 다른 출원인 2인 이상 문헌 ÷ 전체 문헌 "
+                "(공동출원 집계 설정과 무관, 출원인 표준화 규칙은 반영)",
      "basis": "출원인 컬럼", "reading": "높음=산학·기업 간 협력형"},
     {"code": "발명자 집중도", "name": "inventor_concentration",
      "definition": "발명이 소수 발명자에게 몰려 있는 정도 (키맨 의존)",
@@ -153,8 +153,12 @@ def _company_metrics(sub, recent_from, recent):
     inventors = [i for lst in (sub["_inventor_list"] if "_inventor_list" in sub.columns else [])
                  for i in (lst or [])]
     inv_counts = pd.Series(inventors).value_counts() if inventors else None
-    co_apply = sub["_co_applicants"].map(lambda lst: len(lst or []) >= 2) \
-        if "_co_applicants" in sub.columns else pd.Series(dtype=bool)
+    # 공동출원 판정은 표준화 후 서로 다른 출원인 2인 이상 기준 —
+    # 같은 회사의 표기 변형('A' vs 'A(주)')이 공동출원으로 잡히지 않게
+    co_apply = sub["_co_applicants_display"].map(lambda lst: len(lst or []) >= 2) \
+        if "_co_applicants_display" in sub.columns else \
+        (sub["_co_applicants"].map(lambda lst: len(lst or []) >= 2)
+         if "_co_applicants" in sub.columns else pd.Series(dtype=bool))
     # 후속출원 비율: 패밀리 내 문헌 2건 이상 패밀리 비율.
     # 문헌 단위에서는 family_id 중복으로 직접 계산하지만, 분석 단위가 '패밀리
     # 대표'(기본)이면 dedup 후 family_id 가 전부 유일해져 0 으로 붕괴하므로

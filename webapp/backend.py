@@ -1819,7 +1819,8 @@ def standardize_applicants(df, applicant_rules=None):
       _co_applicants_display: 공동출원인 전원의 표준명 리스트 (대표 출원인 포함,
         중복 제거). 출원인별 집계에서 공동출원 1건을 각 출원인에게 귀속시키거나
         특정 출원인 선택 시 공동출원 건을 포함하는 데 사용한다.
-        원본 리스트(_co_applicants)는 협력 네트워크 등 공동출원 분석용으로 유지.
+        협력 네트워크 등 이름이 화면에 드러나는 공동출원 분석도 이 표준명
+        리스트를 사용한다. 원본 리스트(_co_applicants)는 원문 복원용으로 유지.
 
     방어: 출원인/표준화 출원인 컬럼의 값이 대부분 숫자(오매핑된 건수 컬럼 등)이면
     해당 컬럼을 무시하고 다른 소스를 사용한다.
@@ -8431,8 +8432,8 @@ DNA_DEFINITIONS = [
      "basis": "패밀리 ID 또는 패밀리 수 컬럼", "reading": "높음=핵심 발명을 계속 보강"},
     {"code": "공동출원 비율", "name": "co_apply_ratio",
      "definition": "다른 주체와 함께 출원하는 비율 (개방형 협력 성향)",
-     "formula": "출원인 2인 이상 문헌 ÷ 전체 문헌 — 원본 출원인 리스트 기준 "
-                "(공동출원 집계 설정과 무관)",
+     "formula": "표준화 후 서로 다른 출원인 2인 이상 문헌 ÷ 전체 문헌 "
+                "(공동출원 집계 설정과 무관, 출원인 표준화 규칙은 반영)",
      "basis": "출원인 컬럼", "reading": "높음=산학·기업 간 협력형"},
     {"code": "발명자 집중도", "name": "inventor_concentration",
      "definition": "발명이 소수 발명자에게 몰려 있는 정도 (키맨 의존)",
@@ -8478,8 +8479,12 @@ def _company_metrics(sub, recent_from, recent):
     inventors = [i for lst in (sub["_inventor_list"] if "_inventor_list" in sub.columns else [])
                  for i in (lst or [])]
     inv_counts = pd.Series(inventors).value_counts() if inventors else None
-    co_apply = sub["_co_applicants"].map(lambda lst: len(lst or []) >= 2) \
-        if "_co_applicants" in sub.columns else pd.Series(dtype=bool)
+    # 공동출원 판정은 표준화 후 서로 다른 출원인 2인 이상 기준 —
+    # 같은 회사의 표기 변형('A' vs 'A(주)')이 공동출원으로 잡히지 않게
+    co_apply = sub["_co_applicants_display"].map(lambda lst: len(lst or []) >= 2) \
+        if "_co_applicants_display" in sub.columns else \
+        (sub["_co_applicants"].map(lambda lst: len(lst or []) >= 2)
+         if "_co_applicants" in sub.columns else pd.Series(dtype=bool))
     # 후속출원 비율: 패밀리 내 문헌 2건 이상 패밀리 비율.
     # 문헌 단위에서는 family_id 중복으로 직접 계산하지만, 분석 단위가 '패밀리
     # 대표'(기본)이면 dedup 후 family_id 가 전부 유일해져 0 으로 붕괴하므로
@@ -11396,14 +11401,30 @@ def _claims_section(df, settings):
 
 
 def _coapplicant_section(df, settings):
-    """④ 공동출원 협력 네트워크."""
-    if "_co_applicants" not in df.columns:
+    """④ 공동출원 협력 네트워크.
+
+    노드 이름은 출원인 표준화 결과(_co_applicants_display: 사용자 표준화
+    규칙·그룹 + 표준화 출원인 컬럼 + 자동 표준화)를 그대로 사용한다 —
+    원본(_co_applicants)에 자동 표준화만 적용하면 사용자가 지정한 표준명이
+    반영되지 않고 드릴다운 매칭도 어긋난다. 표준화로 같은 회사로 합쳐진
+    공동출원(예: 'A' + 'A(주)')은 1개 주체가 되어 관계에서 제외된다.
+    """
+    if "_co_applicants_display" in df.columns:
+        lists = df["_co_applicants_display"]
+        pre_standardized = True
+    elif "_co_applicants" in df.columns:
+        lists = df["_co_applicants"]          # 구버전 프레임 폴백
+        pre_standardized = False
+    else:
         return None, "출원인 컬럼 필요"
     pair_counts = {}
-    for names in df["_co_applicants"]:
+    for names in lists:
         if not names or len(names) < 2:
             continue
-        std = sorted(set(auto_standardize_name(n) for n in names if str(n).strip()))
+        if pre_standardized:
+            std = sorted({str(n).strip() for n in names if str(n).strip()})
+        else:
+            std = sorted({auto_standardize_name(n) for n in names if str(n).strip()})
         std = [s for s in std if s]
         for i in range(len(std)):
             for j in range(i + 1, len(std)):
@@ -16379,7 +16400,7 @@ def compute_quality_report(df, settings):
 
 
 # 검증 리포트용 빌드 정보 (tools/build_backend.py 가 실측 집계)
-_QR_BUILD_INFO = {'built_at': '2026-08-18 07:21', 'modules': 46, 'test_functions': 266, 'test_files': 15, 'source': 'build'}
+_QR_BUILD_INFO = {'built_at': '2026-08-19 07:45', 'modules': 46, 'test_functions': 268, 'test_files': 15, 'source': 'build'}
 
 
 
