@@ -12618,14 +12618,19 @@ def compute_emerging_clusters(df, settings, company=None, recent_years=None):
         "hovertext": hovers,
         "hoverinfo": "text",
         "customdata": [{"drill": c["drill"],
-                        "m": {"건수": c["n"], "최초연도": c["first_year"],
-                              "최근비중": c["recent_share"],
-                              "신규출원인비율": c["new_applicant_ratio"],
-                              "점수": c["score"]}} for c in clusters],
+                        # Excel/LLM 전달용 — 키에 축 역할을 명시해 화면 그래프와
+                        # 내보내기 데이터의 대응이 바로 읽히게 한다
+                        "m": {"평균출원연도(X축)": c["mean_year"],
+                              "최근%d년 출원비중(Y축)" % recent_n: c["recent_share"],
+                              "건수(버블 크기)": c["n"],
+                              "신규출원인비율(색)": c["new_applicant_ratio"],
+                              "최초출원연도": c["first_year"],
+                              "신흥점수": c["score"]}} for c in clusters],
         "marker": marker}],
         "layout": base_layout(
             title,
-            xaxis={"title": "군집 평균 출원연도", "tickformat": "d"},
+            xaxis={"title": "군집 평균 출원연도 (오른쪽일수록 최근에 형성된 주제)",
+                   "tickformat": "d"},
             yaxis={"title": "최근 %d년 출원 비중" % recent_n, "range": [-0.08, 1.1],
                    "tickformat": ".0%"}, height=520)}
     # 군집 라벨: 지시선 주석으로 겹침 없이 배치 (점수 높은 군집 우선,
@@ -12683,7 +12688,18 @@ def compute_emerging_clusters(df, settings, company=None, recent_years=None):
     methods = dict(methods, scope=("출원인 '%s' 문헌만 (공동출원 포함)" % company)
                    if company else "전체 문헌")
     methods = dict(methods, labeling=label_method)
-    return ok_result({"figure": fig, "clusters": clusters[:20], "methods": methods},
+    # 신흥점수 계산식 공개 — 표·Excel 의 '점수'가 무엇의 점수인지 화면에 명시
+    if company:
+        score_formula = ("신흥점수 = (0.5×최근%d년 출원비중 + 0.2×새 군집 여부(1/0)) ÷ 0.7 "
+                         "— 단일 출원인 보기에서는 신규 출원인 지표를 제외하고 "
+                         "가중치를 재정규화한 0~1 값" % recent_n)
+    else:
+        score_formula = ("신흥점수 = 0.5×최근%d년 출원비중 + 0.3×신규 출원인 비율 "
+                         "+ 0.2×새 군집 여부(1/0) — 출원 시점 신호를 종합한 0~1 값 "
+                         "(기술 가치 평가 아님)" % recent_n)
+    return ok_result({"figure": fig, "clusters": clusters[:20], "methods": methods,
+                      "score_formula": score_formula,
+                      "recent_window_years": recent_n},
                      insight=insight,
                      meta={"note": "임베딩: %s (%s 기반). 군집 명칭: %s. 표본 상한 "
                                    "초과 시 무작위 샘플링됩니다."
@@ -16400,7 +16416,7 @@ def compute_quality_report(df, settings):
 
 
 # 검증 리포트용 빌드 정보 (tools/build_backend.py 가 실측 집계)
-_QR_BUILD_INFO = {'built_at': '2026-08-19 07:45', 'modules': 46, 'test_functions': 268, 'test_files': 15, 'source': 'build'}
+_QR_BUILD_INFO = {'built_at': '2026-08-19 07:59', 'modules': 46, 'test_functions': 269, 'test_files': 15, 'source': 'build'}
 
 
 

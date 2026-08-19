@@ -2287,3 +2287,35 @@ def test_claim_density_joint_filing_disclosure(settings):
     # 독립 재계산: '공동테스트사'가 어떤 클러스터든 상위 3에 들 만큼 몰려 있으면
     # top_applicants 에도 나타나야 함 (표본 배치에 따라 조건부)
     assert manual.get("공동테스트사", 0) >= 6
+
+
+def test_emerging_chart_export_matches_axes(settings):
+    """신흥 탐지: Excel/LLM 전달 데이터(m)가 화면 축과 정확히 대응.
+
+    회귀: 내보내기에 X축(평균출원연도) 값이 빠지고 '점수' 의미가 미공개라
+    그래프와 데이터의 대응을 알 수 없던 문제.
+    """
+    from src.analyses.semantic_insights import compute_emerging_clusters
+    df = make_prepared(generate_sample(n=200, seed=9))
+    r = compute_emerging_clusters(df, settings)
+    assert r["status"] == "ok"
+    tr = r["figure"]["data"][0]
+    recent_n = int(r["recent_window_years"])
+    xk = "평균출원연도(X축)"
+    yk = "최근%d년 출원비중(Y축)" % recent_n
+    for i, cd in enumerate(tr["customdata"]):
+        m = cd["m"]
+        assert m[xk] == tr["x"][i]          # 내보내기 X = 그래프 X
+        assert m[yk] == tr["y"][i]          # 내보내기 Y = 그래프 Y
+        assert "신흥점수" in m and 0.0 <= m["신흥점수"] <= 1.0
+    # 점수 계산식이 화면에 공개된다
+    assert "신흥점수 =" in r["score_formula"]
+    assert "0.5" in r["score_formula"] and "%d년" % recent_n in r["score_formula"]
+    # 점수 독립 재계산 검증 (전체 보기 공식)
+    c0 = r["clusters"][0]
+    expect = round(0.5 * c0["recent_share"]
+                   + 0.3 * (c0["new_applicant_ratio"] or 0.0)
+                   + 0.2 * (1.0 if c0["is_new_cluster"] else 0.0), 3)
+    assert abs(c0["score"] - expect) < 1e-9
+    # X축 제목이 의미를 설명한다
+    assert "평균 출원연도" in r["figure"]["layout"]["xaxis"]["title"]

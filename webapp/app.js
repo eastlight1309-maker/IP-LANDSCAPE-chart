@@ -3278,11 +3278,14 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
             '출원 시점 분포를 봅니다. 최근 3년에 몰려 있고, 신규 출원인이 늘고, 이전에 없던 ' +
             '새 군집이면 신흥 기술 후보입니다. 군집 라벨은 중심에 가까운 특허들의 특징 키워드로 ' +
             '자동 생성됩니다.',
-          guide: 'X축=군집 평균 출원연도(오른쪽=최근 기술), Y축=최근 3년 출원 비중(위=신흥), ' +
+          guide: 'X축=군집 평균 출원연도 — 그 주제의 특허들이 평균적으로 언제 출원됐는지로, ' +
+            '오른쪽일수록 최근에 형성된 젊은 주제이고 왼쪽은 오래된 성숙 주제입니다 (신흥 여부를 ' +
+            '가르는 핵심 축). Y축=최근 N년(기본 3년, 상단에서 변경) 출원 비중(위=활동이 최근에 집중). ' +
             '버블 크기=군집 특허 수, 색=신규 출원인 비율(진할수록 새 플레이어 유입), ' +
             '빨간 테두리=이전 기간에 없던 새 군집. 읽는 법: 우상단의 진한 버블이 가장 강한 ' +
-            '신흥 신호입니다. 버블 클릭 시 군집 소속 특허가 열립니다. 군집·라벨은 임베딩 기반 ' +
-            '자동 산출로, 기술 가치 판단이 아닌 조기 탐지 신호입니다.',
+            '신흥 신호입니다. 표·Excel 의 "신흥 점수"는 이 시점 신호들(최근 비중·신규 출원인·새 군집)을 ' +
+            '가중 합산한 0~1 종합 지표로, 계산식은 표 아래에 표시됩니다. 버블 클릭 시 군집 소속 특허가 ' +
+            '열립니다. 군집·라벨은 임베딩 기반 자동 산출로, 기술 가치 판단이 아닌 조기 탐지 신호입니다.',
           renderOk: function (r, c, setTarget) {
             var holder = Ui.el('<div class="chart-holder tall"></div>');
             c.body.appendChild(holder);
@@ -3314,12 +3317,17 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
                 }).join('') + '</td>');
               return tr;
             });
+            var winY = r.recent_window_years || 3;
             var tbl = Ui.el(simpleTable(
-              ['군집 명칭', '대표 특허 (중심 최근접)', '판정', '건수', '최초 출원', '최근 3년 비중', '신규 출원인', '점수', '주요 출원인'], []));
+              ['군집 명칭', '대표 특허 (중심 최근접)', '판정', '건수', '최초 출원', '최근 ' + winY + '년 비중', '신규 출원인', '신흥 점수', '주요 출원인'], []));
             rows.forEach(function (tr) { tbl.querySelector('tbody').appendChild(tr); });
             var wrap = Ui.el('<div style="overflow-x:auto;max-height:320px;overflow-y:auto;margin-top:8px"></div>');
             wrap.appendChild(tbl);
             c.body.appendChild(wrap);
+            if (r.score_formula) {
+              c.body.appendChild(Ui.el('<div style="margin-top:6px;color:#647b8d;' +
+                'font-size:11.5px">📐 ' + Ui.esc(r.score_formula) + '</div>'));
+            }
             if (r.methods) {
               c.body.appendChild(Ui.el('<div style="margin-top:6px;color:#647b8d;font-size:11.5px">방법: 임베딩 ' +
                 Ui.esc(r.methods.embedding) + ' · 텍스트 ' + Ui.esc(r.methods.text_source) +
