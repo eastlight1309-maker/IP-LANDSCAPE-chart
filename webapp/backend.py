@@ -648,13 +648,18 @@ CONCEPTS = {
     },
     "family_id": {
         "label": "패밀리 ID", "dtype": "문자열 또는 숫자 (INPADOC/DOCDB 패밀리 식별자)",
-        "variants": ["패밀리 id", "패밀리id", "패밀리 번호", "family id", "family_id", "famid",
+        "preferred": ["WIPS패밀리 ID"],  # 기본 매핑 (윈텔립스)
+        "variants": ["WIPS패밀리 ID", "wips패밀리 id", "EPO패밀리 ID", "epo패밀리 id",
+                     "패밀리 id", "패밀리id", "패밀리 번호", "family id", "family_id", "famid",
                      "inpadoc family id", "docdb family id", "패밀리번호", "family no", "패밀리"],
     },
     "family_rep": {
         "label": "패밀리 대표문헌", "dtype": "문자열 (대표 공개/등록번호)",
-        "variants": ["패밀리 대표문헌", "대표문헌", "대표 문헌", "family representative",
-                     "representative document", "대표특허", "rep document", "대표문헌번호"],
+        "preferred": ["WIPS패밀리 Basic Patent 문헌번호"],  # 기본 매핑 (윈텔립스)
+        "variants": ["WIPS패밀리 Basic Patent 문헌번호", "wips패밀리 basic patent 문헌번호",
+                     "패밀리 대표문헌", "대표문헌", "대표 문헌", "family representative",
+                     "representative document", "대표특허", "rep document", "대표문헌번호",
+                     "basic patent"],
     },
     "title": {
         "label": "발명의 명칭", "dtype": "문자열",
@@ -903,7 +908,11 @@ CONCEPTS = {
     },
     "ipc": {
         "label": "IPC/CPC 분류", "dtype": "문자열 (분류코드 목록: H01L 23/28; H01L 25/065)",
-        "variants": ["ipc", "ipc 분류", "ipc분류", "ipc 코드", "국제특허분류", "메인 ipc",
+        "preferred": ["Current IPC All"],  # 기본 매핑 (윈텔립스 — 최신 전체 IPC)
+        "variants": ["Current IPC All", "Current IPC Main", "Original IPC All",
+                     "Original IPC Main", "Current CPC All", "Current CPC Main",
+                     "Original CPC All", "Original CPC Main",
+                     "ipc", "ipc 분류", "ipc분류", "ipc 코드", "국제특허분류", "메인 ipc",
                      "대표 ipc", "ipc(메인)", "ipc 전체", "cpc", "cpc 분류", "cpc분류",
                      "cpc 코드", "ipc/cpc", "공통특허분류"],
     },
@@ -930,7 +939,9 @@ CONCEPTS = {
     },
     "expedited_exam": {
         "label": "우선심사 여부", "dtype": "불리언/문자열 (Y/N, 우선심사·조기공개)",
-        "variants": ["우선심사 여부", "우선심사여부", "우선심사", "조기공개 신청", "조기공개",
+        "preferred": ["우선심사청구 여부"],  # 기본 매핑 (윈텔립스)
+        "variants": ["우선심사청구 여부", "우선심사청구여부", "우선심사 청구 여부",
+                     "우선심사 여부", "우선심사여부", "우선심사", "조기공개 신청", "조기공개",
                      "expedited examination", "accelerated exam", "우선 심사"],
     },
     "exam_request_date": {
@@ -1040,8 +1051,9 @@ CONCEPTS = {
     },
     "drawings_count": {
         "label": "도면 수", "dtype": "숫자",
-        "variants": ["도면 수", "도면수", "도면의 수", "figures", "number of drawings",
-                     "도면 개수"],
+        "preferred": ["개별도면 수"],  # 기본 매핑 (윈텔립스)
+        "variants": ["개별도면 수", "개별도면수", "도면 수", "도면수", "도면의 수", "figures",
+                     "number of drawings", "도면 개수"],
     },
     "spec_length": {
         "label": "명세서 분량", "dtype": "숫자 (페이지/문자 수)",
@@ -16416,7 +16428,7 @@ def compute_quality_report(df, settings):
 
 
 # 검증 리포트용 빌드 정보 (tools/build_backend.py 가 실측 집계)
-_QR_BUILD_INFO = {'built_at': '2026-08-19 07:59', 'modules': 46, 'test_functions': 269, 'test_files': 15, 'source': 'build'}
+_QR_BUILD_INFO = {'built_at': '2026-08-25 07:39', 'modules': 46, 'test_functions': 270, 'test_files': 15, 'source': 'build'}
 
 
 
