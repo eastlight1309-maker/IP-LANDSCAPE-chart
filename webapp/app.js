@@ -219,11 +219,13 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
         State.filters = collect();
         Scope.restore();     // 🎯 분석 범위 (1개 회사/여러 회사) 브라우저 기억 복원
         injectScopeUI();
+        injectFilterToggle();  // 상세 필터 기본 접힘 (상단바 정돈)
       });
     }
     function apply() {
       State.filters = collect();
       Api.post('/api/filter-state', { filters: State.filters }).catch(function () {});
+      if (window.__iplsFilterBadge) window.__iplsFilterBadge();
       Views.render(State.view);
     }
     function reset() {
@@ -1177,11 +1179,20 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
   /* ----------------------------------------------------- 공통 카드 빌더 */
   function card(title, helpText) {
     // 설명(helpText)은 hover 툴팁이 아니라 카드 상단에 상시 표시한다.
+    // 긴 설명은 2줄로 접어 화면을 정돈하고, 클릭하면 전체가 펼쳐진다.
     var c = Ui.el(
       '<div class="card"><div class="card-head"><span class="card-title">' + Ui.esc(title) +
       '</span><span class="card-controls"></span></div>' +
       (helpText ? '<div class="card-desc">' + Ui.esc(helpText) + '</div>' : '') +
       '<div class="card-body"></div></div>');
+    var descEl = c.querySelector('.card-desc');
+    if (descEl && (helpText || '').length > 170) {
+      descEl.classList.add('clamped');
+      descEl.title = '클릭하면 설명을 펼치거나 접습니다';
+      descEl.addEventListener('click', function () {
+        descEl.classList.toggle('clamped');
+      });
+    }
     return { root: c, controls: c.querySelector('.card-controls'),
              body: c.querySelector('.card-body'), desc: helpText || '' };
   }
@@ -1205,6 +1216,25 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
   function chartCap(text) {
     /* 개별 차트 바로 아래에 붙는 축 의미·해석 캡션 */
     return Ui.el('<div class="chart-guide"><b>📖 해석</b>' + Ui.esc(text) + '</div>');
+  }
+
+  function clampGuides(body) {
+    /* 카드 안의 긴 해석/캡션 박스(📖·💡)를 2줄로 접어 화면을 정돈한다.
+       클릭하면 펼쳐지고 다시 클릭하면 접힌다. 텍스트는 DOM 에 그대로 있어
+       Excel 설명 시트·PPT 캡션·LLM 컨텍스트 추출에는 영향이 없다.
+       사용자가 직접 생성한 🤖 차트 인사이트 결과는 접지 않는다. */
+    body.querySelectorAll('.chart-guide').forEach(function (g) {
+      if (g.__clampBound) return;
+      var t = g.textContent || '';
+      if (t.length <= 220 || t.indexOf('🤖') >= 0) return;
+      g.__clampBound = true;
+      g.classList.add('clamped');
+      g.title = '클릭하면 전체 해석을 펼치거나 접습니다';
+      g.addEventListener('click', function (ev) {
+        if (ev.target && ev.target.closest('a, button, .clickable')) return;
+        g.classList.toggle('clamped');
+      });
+    });
   }
 
   function miniInsight(sentences) {
@@ -2398,6 +2428,39 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
     bar.insertBefore(wrap, bar.firstChild);
   }
 
+  function injectFilterToggle() {
+    /* 상세 필터(기간·기업·분류·국가·상태)는 기본 접힘 — 상단바를 정돈하고
+       필요할 때만 펼친다. 적용 중인 필터 수는 버튼에 항상 표시. */
+    var bar = document.getElementById('ipls-filterbar');
+    if (!bar || document.getElementById('filter-toggle')) return;
+    var btn = Ui.el('<button id="filter-toggle" class="btn small" ' +
+      'title="기간·기업·기술분류·국가·법적상태 상세 필터 열기/닫기"></button>');
+    var expanded = false;
+    try { expanded = localStorage.getItem('ipls-filters-open') === '1'; } catch (e) { }
+    function refresh() {
+      var f = State.filters || {};
+      var n = 0;
+      ['applicants', 'tech_l1', 'tech_l2', 'tech_l3', 'countries', 'legal_statuses']
+        .forEach(function (k) { if ((f[k] || []).length) n += 1; });
+      if (f.year_from || f.year_to) n += 1;
+      if (f.active_only) n += 1;
+      btn.textContent = '🔍 상세 필터' + (n ? ' · ' + n + '개 적용 중' : '') +
+        (expanded ? ' ▴' : ' ▾');
+      btn.classList.toggle('primary', !expanded && n > 0);
+      bar.classList.toggle('expanded', expanded);
+    }
+    btn.addEventListener('click', function () {
+      expanded = !expanded;
+      try { localStorage.setItem('ipls-filters-open', expanded ? '1' : '0'); } catch (e) { }
+      refresh();
+    });
+    var scopeWrap = document.getElementById('scope-mode');
+    var anchor = scopeWrap ? scopeWrap.parentNode.nextSibling : bar.firstChild;
+    bar.insertBefore(btn, anchor);
+    refresh();
+    window.__iplsFilterBadge = refresh;   // Filters.apply/reset 후 배지 갱신
+  }
+
 
   /* 카드에 차트가 여러 개면 각 차트 아래에 "이 차트만" 도구 행을 붙인다:
      ① 출원인 선택(지원 분석 한정) — 그 차트만 선택 출원인 기준으로 재계산·교체.
@@ -2582,6 +2645,7 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
         c.body.appendChild(Insight.box(r, opts.analysis));
         c.body.appendChild(Insight.aiPanel(opts.analysis, r, opts.title + ' — ' + (c.desc || '')));
         attachPerChartTools(c, opts, r, currentBody);  // 차트별 출원인·인사이트 도구
+        clampGuides(c.body);     // 긴 해석 박스는 접어 정돈 (클릭=펼침)
         paginateCharts(c.body);  // 카드에 차트가 여러 개면 한 화면 한 차트 페이저
       }).catch(function (e) {
         c.body.innerHTML = Render.statusBlock({ status: 'error', message: e.message });
@@ -2703,8 +2767,12 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
               : Array.prototype.slice.call(
                   el.querySelectorAll ? el.querySelectorAll('.ipls-chart') : []);
             gds.forEach(function (gd) {
-              if (window.Plotly && Plotly.Plots && Plotly.Plots.resize) {
-                Plotly.Plots.resize(gd);
+              // 탭 전환 직후 등 숨김 상태면 건너뜀 — Plotly.resize 는 Promise 로
+              // 비동기 거부되어 try/catch 로 잡히지 않으므로 사전 차단 + catch
+              if (window.Plotly && Plotly.Plots && Plotly.Plots.resize &&
+                  gd.offsetParent !== null) {
+                var pr = Plotly.Plots.resize(gd);
+                if (pr && pr.catch) pr.catch(function () { });
               }
             });
             var cys = el.classList.contains('cy-holder') ? [el]
@@ -5151,24 +5219,30 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
       '<li><b>컬럼 매핑 확인</b> — Settings → 컬럼 매핑에서 자동 추천 결과를 확인하고, 잘못 잡힌 항목은 직접 수정 후 저장합니다. ' +
       '각 컬럼의 "예시 값"으로 실제 데이터를 확인할 수 있습니다.</li>' +
       '<li><b>분석 단위 선택</b> — 문헌(건별) 또는 패밀리 대표 중 선택합니다. 지정국 진입 시차 등 일부 분석은 문헌 단위가 필요합니다. <b>공동출원 집계 방식</b>(공동출원인 각각 집계 / 대표 출원인만)도 이 단계에서 Settings → 분석 설정으로 정해 두세요 — 출원인 순위·매트릭스·버블 등 출원인별 차트의 집계 기준이 됩니다.</li>' +
+      '<li><b>분석 범위 선택</b> — 🚀 시작하기 STEP 3 또는 상단 필터바의 🎯 분석 범위에서 "여러 회사 (전체)" 또는 "1개 회사"를 고릅니다. 1개 회사를 고르면 모든 차트·인사이트가 그 회사 중심으로 재구성됩니다 (자세한 동작은 아래 "차트 공통 기능" 참조).</li>' +
       '<li><b>분석 목적 선택</b> — 업로드 직후(또는 Settings → 분석 설정, 좌측 🎯 목적 맞춤 분석 메뉴) 기술 동향 / 경쟁사 / R&amp;D 방향 / White Space / 특허 회피 / FTO / 포트폴리오 평가 / M&amp;A·투자 / 국가 R&amp;D / 라이선스 중 목적을 고르면, 그 목적에 맞는 차트가 <b>우선순위·이유·바로가기</b>와 함께 추천됩니다. 목적은 언제든 변경 가능하며 분석 값 자체는 바뀌지 않습니다.</li>' +
       '<li><b>분석 시작</b> — 목적 맞춤 추천 순서대로 보거나, 좌측 메뉴를 자유롭게 탐색하세요. 필수 컬럼이 없는 분석은 비활성 안내와 함께 필요한 매핑을 알려줍니다.</li></ol>' +
       '<div class="disclaimer">모든 분석은 매핑된 실제 데이터로만 계산되며 값을 임의로 만들지 않습니다. 데이터가 없는 항목은 "계산 불가 + 사유"로 표시됩니다.</div>');
     section('🗺️ 메뉴 안내',
       '<table class="ipls-table"><thead><tr><th>메뉴</th><th>내용</th></tr></thead><tbody>' +
+      '<tr><td>🚀 시작하기</td><td>로그인 → 데이터 준비(작업자·작업명·엑셀 업로드) → 분석 범위 → 분석 목적·분석 시작을 순서대로 안내하는 단계별 화면. 데이터가 설정되지 않은 상태로 접속하면 자동으로 열립니다.</td></tr>' +
       '<tr><td>🎯 목적 맞춤 분석</td><td>분석 목적(기술 동향·경쟁사·R&amp;D 방향·White Space·특허 회피·FTO·포트폴리오·M&amp;A·국가 R&amp;D·라이선스) 선택 → 목적별 추천 차트를 우선순위·이유와 함께 표시, [열기]로 바로 이동. 특허 회피·FTO 목적에는 법률 자문 아님 고지가 함께 표시됩니다.</td></tr>' +
       '<tr><td>📊 Executive Overview</td><td>경영 요약(KPI·경보·BCG 매트릭스·경쟁 포지션) + 경영 차트 6종: 📅만료 절벽 / 💰R&amp;D 효율 사분면 / 👤키맨 리스크 / ⏱️추격 시계 / 🚨위협 레이더 / ✂️포트폴리오 다이어트 (탭마다 자사 기준 선택 가능)</td></tr>' +
-      '<tr><td>📈 전체 동향</td><td>포트폴리오 전체의 기본 현황: 연도별 출원 동향(출원인 선택 가능), 국가별 분포·출원인 순위·활동 매트릭스, 심화 분석(심사기간·만료 타임라인·청구항·공동출원·IPC)</td></tr>' +
+      '<tr><td>📈 전체 동향</td><td>포트폴리오 전체의 기본 현황: 연도별 출원 동향(출원인 선택 가능), 국가별 분포·출원인 순위·활동 매트릭스, 심화 분석(심사기간·만료 타임라인·청구항·공동출원 협력 네트워크·IPC/CPC 분포). 협력 네트워크는 선(두 회사) 또는 노드(기업) 클릭으로 공동출원 특허 목록(출원번호·출원인 전원·명칭·대표청구항)을 열 수 있고, IPC/CPC 차트는 분류 체계·매핑 컬럼과 코드별 한글 설명을 함께 표시합니다.</td></tr>' +
       '<tr><td colspan="2" style="background:#f4f8fb;font-weight:700">🔬 기술 분석 — "어떤 기술이 어디로 가는가"</td></tr>' +
       '<tr><td>🔬 기술 분석</td><td>기술분류 동향(출원인 선택 가능), 기술분류 트리맵(대·중·소 계층, 면적=문헌 수), 기술×연도 버블(대·중·소 선택 + 최대 3사 비교), 기술 생애주기 Phase Map, 전이 Sankey, Emerging Radar, 조합 네트워크, 분류축 교차(A·B·C), 신흥 기술 탐지(임베딩 — 출원인·기간 선택 가능)</td></tr>' +
       '<tr><td>🎯 White Space &amp; R&amp;D</td><td>Opportunity Matrix(자사=출원인 선택 가능, ◇=자사 역량 보유, 상위 기회 주석 표시), 미점유 조합 UpSet, 문제–해결수단 매트릭스(C축=해결과제 × B축=해결수단 — 두 축 매핑 시 활성), 추천 R&amp;D 테마</td></tr>' +
       '<tr><td colspan="2" style="background:#f4f8fb;font-weight:700">🏢 기업(출원인) 분석 — "이 회사는 무엇을 하는가"</td></tr>' +
-      '<tr><td>🏢 기업 분석</td><td>출원인 포커스(집중 기술 + 🆕 신규 진입 기술(최근 N년 내 첫 출원) + ★ 급부상 아이템), 기업 DNA(12지표 계산식 정의표 포함), 기술 궤적, 선도–추종, 권리범위 엔트로피, 출원인·현재권리자 관계(양도 네트워크), 전략 유사도·중첩도, Patent Asset Index(공식 방법론 TR·MC·CI·PAI), Portfolio 종합</td></tr>' +
+      '<tr><td>🏢 기업 분석</td><td>출원인 포커스(집중 기술 + 🆕 신규 진입 기술(최근 N년 내 첫 출원) + ★ 급부상 아이템), 기술 DNA(12지표 계산식 정의표 포함), 기술 궤적, 선도–추종, 권리범위 엔트로피, 출원인·권리자 관계(양도 네트워크), 유사도·중첩도, Patent Asset Index(공식 방법론 TR·MC·CI·PAI), Portfolio 종합</td></tr>' +
       '<tr><td>⚖️ Patent Power</td><td>특허 한 건 단위의 힘: 핵심특허 영향력(출원인 선택 가능 — 점수는 전체 기준 유지), 인용 확산, 청구항 밀집도, 발명자 이동, 의미 기반 영향력(임베딩), 권리 중첩 네트워크(임베딩)</td></tr>' +
       '<tr><td colspan="2" style="background:#f4f8fb;font-weight:700">🔎 심층·품질</td></tr>' +
       '<tr><td>🔎 심층 시그널</td><td>잘 안 쓰는 WIPS 필드 기반 신호 6개 탭(모두 출원인 선택 가능): 수명·시장(생존곡선·진입 시차) / 심사 이력(심사관 인용·우선심사·이상탐지) / 출원 행태(대리인·분할·개시 충실도) / 분쟁·국가과제 / 라이선스·표준·양도 / 거절·과학·심사관</td></tr>' +
-      '<tr><td>🧪 Data Quality</td><td><b>검증 리포트</b>(엔진 검증 정보·데이터 정합성 셀프 체크·검증 레지스트리), 분류 품질 진단(Confusion Map·응집도), 출원인 표준화 검토</td></tr></tbody></table>' +
-      '<div style="color:#647b8d;font-size:11.5px;margin-top:6px">좌측 메뉴는 ① 전체 동향 → ② 기술 분석(어떤 기술) → ③ 기업 분석(어느 회사) → ④ 심층·품질 순서로 배열되어 있습니다 — 전체를 훑고, 기술을 고르고, 회사를 파고드는 흐름입니다.</div>');
+      '<tr><td>🧪 Data Quality</td><td><b>검증 리포트</b>(엔진 검증 정보·데이터 정합성 셀프 체크·검증 레지스트리), 분류 품질 진단(Confusion Map·응집도), 출원인 표준화 검토</td></tr>' +
+      '<tr><td colspan="2" style="background:#f4f8fb;font-weight:700">🗂️ 보관·설정</td></tr>' +
+      '<tr><td>🗂️ 인사이트 보관함</td><td>생성한 LLM 인사이트가 차트 이미지와 함께 작업별로 자동 저장되는 곳 — 항목을 골라 임원 보고용 PPT 로 내려받습니다.</td></tr>' +
+      '<tr><td>📖 사용 설명서</td><td>지금 보고 있는 이 화면입니다.</td></tr>' +
+      '<tr><td>⚙️ Settings &amp; Admin</td><td>엑셀 업로드(작업 저장소)·임베딩 벡터 파일·컬럼 매핑·분석 단위·공동출원 집계·분석 목적·임계값·LLM 설정·출원인 표준화·분석 스냅샷·사용자 관리.</td></tr></tbody></table>' +
+      '<div style="color:#647b8d;font-size:11.5px;margin-top:6px">좌측 메뉴는 🚀 시작하기·🎯 목적 맞춤 분석으로 시작해 ① 전체 동향 → ② 기술 분석(어떤 기술) → ③ 기업 분석(어느 회사) → ④ 심층·품질 순서로 배열되어 있습니다 — 전체를 훑고, 기술을 고르고, 회사를 파고드는 흐름입니다.</div>');
     section('🖱️ 차트 공통 기능',
       '<ul style="padding-left:18px;line-height:1.9">' +
       '<li><b>드릴다운</b>: 차트의 점·막대·셀·노드를 클릭하면 근거 특허 목록이 열립니다. 표의 파란 텍스트도 클릭 가능합니다.</li>' +
@@ -5182,7 +5256,7 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
       '<li><b>👤 내 작업만 보기</b>: 업로드 작업·분석 스냅샷 목록에서 작업자 드롭다운으로 고르거나 이름/팀명을 직접 입력하면 내 작업만 날짜별로 표시됩니다. 이름은 브라우저에 기억되어 다음 방문 때 자동 적용되고, "전체 보기"로 다른 사람 작업도 볼 수 있습니다 (편의 필터 — 접근 차단은 Dataiku 권한으로 관리).</li>' +
       '<li><b>비차단 로딩</b>: 계산이 오래 걸리는 분석은 우하단 배지로 진행 상태만 표시됩니다 — 기다리는 동안 다른 탭을 자유롭게 볼 수 있고, 돌아오면 캐시에서 바로 열립니다.</li>' +
       '<li><b>📑 한 화면 한 차트 (차트 페이저)</b>: 카드에 차트가 여러 개면 상단 페이저(◀ 이전 / 목록 선택 / 다음 ▶)로 <b>한 번에 한 차트씩</b> 크게 봅니다. 스크롤로 길게 나열되지 않아 각 차트에 집중할 수 있고, 예전처럼 세로로 모두 펼치려면 "전체 보기"를 켜세요 (선택은 브라우저에 기억됩니다). 차트 해석·인사이트·AI 패널은 페이지와 무관하게 항상 하단에 표시됩니다.</li>' +
-      '<li><b>📖 차트 해석</b>: 각 차트 아래 회색 박스에 축 의미와 읽는 법이 항상 표시됩니다.</li>' +
+      '<li><b>📖 차트 해석 · 접힌 설명</b>: 각 차트 아래 노란 박스에 축 의미와 읽는 법이 표시됩니다. 화면 정돈을 위해 <b>긴 해석·카드 설명은 2줄로 접혀</b> 있고, 박스를 클릭하면 전체가 펼쳐집니다(다시 클릭=접기). 상단의 기간·기업·분류 상세 필터도 기본 접힘 — <b>🔍 상세 필터</b> 버튼으로 열고, 적용 중인 필터 수는 버튼에 항상 표시됩니다.</li>' +
       '<li><b>🖱️ 휠 스크롤 보호</b>: 차트 영역은 흐린 테두리로 구분되어 있고, 차트 위에서 마우스 휠을 굴려도 차트가 확대/축소되지 않습니다 (페이지 스크롤만 동작). 확대가 필요하면 차트 우상단 도구 모음의 줌 버튼을 사용하세요.</li>' +
       '<li><b>🤝 공동출원 처리</b>: 출원건수·기술분석 등 <b>모든 출원인별 집계 차트</b>(순위·매트릭스·버블·기술 생애주기·경쟁 구도·기업 DNA·PAI·만료 절벽·심층 시그널 등)는 Settings → 분석 설정의 "공동출원 집계"를 따릅니다 — 기본 "각각 집계"는 공동출원 1건을 각 공동출원인에게 1건씩 세고(회사별 합계가 전체 건수를 넘을 수 있음, 차트 아래에 안내 표시), "대표 출원인만"은 첫 출원인에게만 셉니다. 출원 동향·기술분류 동향·신흥 기술 탐지의 <b>출원인 선택</b>과 기업 필터는 어느 모드에서든 공동출원 건을 포함해 그 회사 문헌을 찾습니다. 협력 네트워크·공동출원 비율 등 공동출원 자체 분석과 양도(권리이전) 분석은 이 설정과 무관합니다.</li></ul>');
     section('✅ 검증 체계 — 이 앱의 수치를 신뢰할 수 있는 이유',
