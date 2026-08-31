@@ -1516,6 +1516,206 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
     }
   }
 
+  /* ---------- 0. 🚀 시작하기 — 단계별 안내 화면 ----------
+     로그인 → ② 작업자·작업명·엑셀 업로드(저장하고 분석 시작) → ③ 분석 범위
+     → ④ 분석 목적 선택·분석 시작. 흩어져 있던 시작 절차를 한 화면에 순서대로
+     모은 가이드로, 각 단계는 기존 기능(Settings 업로드·필터바 분석 범위·목적
+     화면)과 같은 저장소를 공유한다 — 어디서 바꿔도 서로 동기화. */
+  Views.start = function (content) {
+    var s = (State.config && State.config.settings) || {};
+    var hasDataset = !!(s.dataset || s.demo_mode);
+
+    function stepCard(no, title, done, lockedMsg) {
+      var badge = done
+        ? '<span class="badge good">✔ 완료</span>'
+        : (lockedMsg ? '<span class="badge">⏳ 이전 단계 먼저</span>'
+                     : '<span class="badge warn">진행 필요</span>');
+      var c = card('STEP ' + no + '. ' + title);
+      c.controls.appendChild(Ui.el(badge));
+      content.appendChild(c.root);
+      if (lockedMsg && !done) {
+        c.body.appendChild(Ui.el('<div class="status-empty" style="text-align:left">' +
+          Ui.esc(lockedMsg) + '</div>'));
+        return null;
+      }
+      return c;
+    }
+
+    content.appendChild(Ui.el('<div class="card"><div class="card-body" ' +
+      'style="font-size:13px;line-height:1.9"><b style="font-size:15px">🚀 분석 시작 가이드</b><br>' +
+      '아래 순서대로 진행하세요: <b>① 로그인 → ② 작업자·작업명 입력 + 엑셀 업로드 ' +
+      '(저장하고 분석 시작) → ③ 분석 범위 선택 → ④ 분석 목적 선택 후 분석 시작</b>. ' +
+      '이미 완료한 단계는 ✔ 로 표시되며, 언제든 이 화면(좌측 🚀 시작하기)으로 돌아와 ' +
+      '바꿀 수 있습니다.</div></div>'));
+
+    // ── STEP 1. 로그인 ──────────────────────────────────────────
+    var c1 = stepCard(1, '로그인 (작업 구분용)', !!Auth.user());
+    if (c1) {
+      c1.body.appendChild(Ui.el('<div style="font-size:12.5px;color:#46607a">' +
+        (Auth.user()
+          ? '현재 사용자: <b>' + Ui.esc(Auth.user()) + '</b>' +
+            (Auth.isAdmin() ? ' <span class="badge good">관리자</span>' : '') +
+            ' — 다른 사용자로 바꾸려면 우측 상단 로그아웃을 누르세요.'
+          : '앱 진입 시 자동으로 로그인 창이 표시됩니다. 처음이면 팀명/이름과 사원번호로 ' +
+            '자동 등록됩니다.') + '</div>'));
+    }
+
+    // ── STEP 2. 데이터 준비: 작업자·작업명 + 엑셀 업로드 ─────────
+    var c2 = stepCard(2, '데이터 준비 — 작업자·작업명 입력 후 엑셀 업로드', hasDataset);
+    if (hasDataset) {
+      c2.body.appendChild(Ui.el('<div style="font-size:12.5px;color:#46607a;margin-bottom:8px">' +
+        '현재 분석 Dataset: <b>' + Ui.esc(s.dataset || '데모 데이터') + '</b> — 다른 파일로 ' +
+        '바꾸려면 아래에 새로 업로드하거나 저장된 작업을 불러오세요.</div>'));
+    }
+    var form = Ui.el('<div>' +
+      '<div class="settings-row"><label>작업자 이름 *</label>' +
+      '<input type="text" id="st-worker" maxlength="60" placeholder="예: 홍길동" style="flex:1"></div>' +
+      '<div class="settings-row"><label>작업명 *</label>' +
+      '<input type="text" id="st-job" maxlength="120" placeholder="예: 2026 상반기 패키징 IP 조사" style="flex:1"></div>' +
+      '<div class="settings-row"><label>엑셀 파일 *</label>' +
+      '<input type="file" id="st-file" accept=".xlsx,.xls,.csv" style="flex:1"></div></div>');
+    c2.body.appendChild(form);
+    var upBtn = Ui.el('<button class="btn primary">📤 업로드 → 저장하고 분석 시작</button>');
+    c2.body.appendChild(upBtn);
+    form.querySelector('#st-worker').value = getWorkerName() || Auth.user() || '';
+    function afterDataset(name) {
+      // 업로드/불러오기 완료 → 이 화면을 유지한 채 다음 단계(③ 범위)로 진행
+      return Api.post('/api/settings', { dataset: name }).then(function (resp) {
+        State.config.settings = resp.settings;
+        Ui.toast('✔ STEP 2 완료 — Dataset "' + name + '" 설정. 이제 분석 범위를 선택하세요.');
+        State.view = 'start';
+        boot(true);
+      });
+    }
+    upBtn.addEventListener('click', function () {
+      var worker = form.querySelector('#st-worker').value.trim();
+      var job = form.querySelector('#st-job').value.trim();
+      var fileEl = form.querySelector('#st-file');
+      if (!worker || !job) { Ui.toast('작업자 이름과 작업명을 반드시 입력하세요.', 'error'); return; }
+      if (!fileEl.files || !fileEl.files[0]) { Ui.toast('엑셀 파일을 선택하세요.', 'error'); return; }
+      setWorkerName(worker);
+      var fd = new FormData();
+      fd.append('file', fileEl.files[0]);
+      fd.append('worker', worker);
+      fd.append('job', job);
+      upBtn.disabled = true;
+      Api.upload('/api/uploads', fd, '엑셀 업로드·저장 중…').then(function (r) {
+        Ui.toast('업로드 완료: ' + r.entry.n_rows + '행 저장됨.');
+        return afterDataset(r.entry.dataset);
+      }).catch(errToast).finally(function () { upBtn.disabled = false; });
+    });
+    // 저장된 작업 다시 불러오기 (내 작업 우선 표시)
+    var savedRow = Ui.el('<div class="settings-row" style="margin-top:10px">' +
+      '<label>저장된 작업</label><select id="st-saved" style="flex:1">' +
+      '<option value="">저장된 작업 불러오기… (작업명 · 작업자 · 날짜)</option></select>' +
+      '<button class="btn small" id="st-load">불러와 분석</button></div>');
+    c2.body.appendChild(savedRow);
+    Api.get('/api/uploads').then(function (d) {
+      var mine = getWorkerName();
+      var items = (d.items || []).slice().sort(function (a, b) {
+        var am = mine && workerMatches(a.worker, mine) ? 0 : 1;
+        var bm = mine && workerMatches(b.worker, mine) ? 0 : 1;
+        return am - bm || String(b.uploaded_at || '').localeCompare(String(a.uploaded_at || ''));
+      });
+      var sel = savedRow.querySelector('#st-saved');
+      items.forEach(function (it) {
+        if (!it.file_exists) return;
+        var o = document.createElement('option');
+        o.value = it.id;
+        o.textContent = it.job + ' · ' + it.worker + ' · ' +
+          String(it.uploaded_at || '').slice(0, 10) + ' (' + it.n_rows + '행)';
+        sel.appendChild(o);
+      });
+    }).catch(function () { /* 목록 실패는 업로드 흐름에 영향 없음 */ });
+    savedRow.querySelector('#st-load').addEventListener('click', function () {
+      var id = savedRow.querySelector('#st-saved').value;
+      if (!id) { Ui.toast('불러올 작업을 선택하세요.', 'warn'); return; }
+      Api.post('/api/uploads/load', { id: id }, '저장 파일 불러오는 중…')
+        .then(function (r) { return afterDataset(r.entry.dataset); }).catch(errToast);
+    });
+
+    // ── STEP 3. 분석 범위 선택 ──────────────────────────────────
+    var sc = Scope.get();
+    var scopeDone = hasDataset && (sc.mode === 'multi' || (sc.mode === 'single' && sc.company));
+    var c3 = stepCard(3, '분석 범위 선택 — 여러 회사(전체) vs 1개 회사 집중', scopeDone,
+      hasDataset ? null : 'STEP 2 에서 엑셀을 업로드하면 선택할 수 있습니다.');
+    if (c3) {
+      c3.body.appendChild(Ui.el('<div style="font-size:12.5px;color:#46607a;margin-bottom:8px">' +
+        '<b>여러 회사 (전체)</b>: 시장 전체·경쟁 비교 분석 (기본). <b>1개 회사</b>: 그 회사 ' +
+        '중심으로 모든 차트·인사이트를 재구성 — 비교 전용 분석은 자동 비활성화, 공동출원 건 ' +
+        '포함 매칭. 상단 필터바의 🎯 분석 범위와 동일한 설정입니다.</div>'));
+      var row3 = Ui.el('<div class="settings-row"><label>분석 범위</label>' +
+        '<select id="st-scope-mode"><option value="multi">여러 회사 (전체)</option>' +
+        '<option value="single">1개 회사</option></select>' +
+        '<select id="st-scope-co" style="flex:1;max-width:260px;display:none">' +
+        '<option value="">회사 선택…</option></select></div>');
+      c3.body.appendChild(row3);
+      var m3 = row3.querySelector('#st-scope-mode');
+      var co3 = row3.querySelector('#st-scope-co');
+      ((State.filterOptions || {}).applicants || []).slice(0, 300).forEach(function (a) {
+        var o = document.createElement('option'); o.value = a; o.textContent = a;
+        co3.appendChild(o);
+      });
+      m3.value = sc.mode === 'single' ? 'single' : 'multi';
+      co3.value = sc.company || '';
+      co3.style.display = m3.value === 'single' ? '' : 'none';
+      function applyScope3() {
+        State.scope = { mode: m3.value, company: co3.value || null };
+        co3.style.display = m3.value === 'single' ? '' : 'none';
+        Scope.save();
+        var fm = document.getElementById('scope-mode');   // 필터바 UI 동기화
+        var fc = document.getElementById('scope-company');
+        if (fm) { fm.value = m3.value; }
+        if (fc) { fc.value = co3.value || ''; fc.style.display = m3.value === 'single' ? '' : 'none'; }
+        if (m3.value === 'single' && !co3.value) {
+          Ui.toast('집중 분석할 회사를 선택하세요.', 'warn');
+        } else {
+          Views.render('start');  // 단계 완료 표시 갱신
+        }
+      }
+      m3.addEventListener('change', applyScope3);
+      co3.addEventListener('change', applyScope3);
+    }
+
+    // ── STEP 4. 분석 목적 선택 → 분석 시작 ──────────────────────
+    var cur = currentPurpose();
+    var c4 = stepCard(4, '분석 목적 선택 → 분석 시작', hasDataset && !!cur,
+      hasDataset ? null : 'STEP 2 에서 엑셀을 업로드하면 선택할 수 있습니다.');
+    if (c4) {
+      c4.body.appendChild(Ui.el('<div style="font-size:12.5px;color:#46607a;margin-bottom:8px">' +
+        '목적을 고르면 그 목적에 맞는 차트가 우선순위와 함께 추천됩니다' +
+        (cur ? ' — 현재 목적: <b>' + cur.icon + ' ' + Ui.esc(cur.label) + '</b>' : '') +
+        '.</div>'));
+      var row4 = Ui.el('<div class="settings-row"><label>분석 목적</label>' +
+        '<select id="st-purpose" style="flex:1;max-width:320px">' +
+        '<option value="">목적 선택… (선택 안 해도 분석 가능)</option></select></div>');
+      PURPOSES.forEach(function (p) {
+        var o = document.createElement('option');
+        o.value = p.key; o.textContent = p.icon + ' ' + p.label + ' — ' + p.desc;
+        row4.querySelector('#st-purpose').appendChild(o);
+      });
+      c4.body.appendChild(row4);
+      row4.querySelector('#st-purpose').value = (cur && cur.key) || '';
+      var btnRow = Ui.el('<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px"></div>');
+      var goBtn = Ui.el('<button class="btn primary">🚀 분석 시작 (목적 맞춤 추천 보기)</button>');
+      var goAll = Ui.el('<button class="btn">목적 없이 Executive Overview 부터 보기</button>');
+      goBtn.addEventListener('click', function () {
+        var k = row4.querySelector('#st-purpose').value;
+        if (k) {
+          savePurpose(k);   // 저장 후 목적 맞춤 화면으로 이동
+        } else {
+          Ui.toast('목적을 선택하거나 "목적 없이 보기"를 누르세요.', 'warn');
+        }
+      });
+      goAll.addEventListener('click', function () {
+        Views.render('overview');
+      });
+      btnRow.appendChild(goBtn);
+      btnRow.appendChild(goAll);
+      c4.body.appendChild(btnRow);
+    }
+  };
+
   Views.purpose = function (content) {
     var cur = currentPurpose();
     if (!cur) {
@@ -4945,8 +5145,9 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
       content.appendChild(c.root);
     }
     section('🚀 시작하기 (4단계)',
+      '<div style="margin-bottom:6px;font-size:12.5px">좌측 맨 위 <b>🚀 시작하기</b> 메뉴가 이 4단계를 순서대로 안내하는 화면입니다 — 처음 접속(데이터 미설정) 시 자동으로 열리며, ① 로그인 → ② 작업자·작업명 입력 + 엑셀 업로드(저장하고 분석 시작) → ③ 분석 범위 선택(여러 회사/1개 회사) → ④ 분석 목적 선택 후 분석 시작 순서로 진행하면 됩니다. 완료된 단계는 ✔ 로 표시됩니다.</div>' +
       '<ol style="padding-left:18px;line-height:1.9">' +
-      '<li><b>데이터 준비</b> — Settings &amp; Admin → "📤 엑셀 업로드"에서 <b>작업자 이름·작업명을 입력</b>하고 WIPS Excel 을 직접 올리면 서버에 저장되고 바로 분석 Dataset 으로 설정됩니다 (저장된 작업은 목록에서 언제든 다시 불러오기 가능). 또는 Flow 에 이미 있는 Dataset 을 선택해도 됩니다.</li>' +
+      '<li><b>데이터 준비</b> — 🚀 시작하기 STEP 2 (또는 Settings &amp; Admin → "📤 엑셀 업로드")에서 <b>작업자 이름·작업명을 입력</b>하고 WIPS Excel 을 직접 올리면 서버에 저장되고 바로 분석 Dataset 으로 설정됩니다 (저장된 작업은 목록에서 언제든 다시 불러오기 가능). 또는 Flow 에 이미 있는 Dataset 을 선택해도 됩니다.</li>' +
       '<li><b>컬럼 매핑 확인</b> — Settings → 컬럼 매핑에서 자동 추천 결과를 확인하고, 잘못 잡힌 항목은 직접 수정 후 저장합니다. ' +
       '각 컬럼의 "예시 값"으로 실제 데이터를 확인할 수 있습니다.</li>' +
       '<li><b>분석 단위 선택</b> — 문헌(건별) 또는 패밀리 대표 중 선택합니다. 지정국 진입 시차 등 일부 분석은 문헌 단위가 필요합니다. <b>공동출원 집계 방식</b>(공동출원인 각각 집계 / 대표 출원인만)도 이 단계에서 Settings → 분석 설정으로 정해 두세요 — 출원인 순위·매트릭스·버블 등 출원인별 차트의 집계 기준이 됩니다.</li>' +
@@ -5891,14 +6092,24 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
     li.addEventListener('click', function () { Views.render(li.getAttribute('data-view')); });
   });
 
+  function injectStartMenu() {
+    // 좌측 메뉴 맨 위에 🚀 시작하기 (단계별 가이드) — HTML 수정 없이 JS 주입
+    var menu = document.getElementById('ipls-menu');
+    if (!menu || menu.querySelector('li[data-view="start"]')) return;
+    var li = Ui.el('<li data-view="start">🚀 시작하기</li>');
+    li.addEventListener('click', function () { Views.render('start'); });
+    menu.insertBefore(li, menu.firstElementChild);
+  }
+
   function boot(keepView) {
     Api.get('/api/config').then(function (cfg) {
       State.config = cfg;
       document.getElementById('ipls-generated-at').textContent = 'v' + cfg.version;
+      injectStartMenu();
       var hasDataset = cfg.settings.dataset || cfg.settings.demo_mode;
       if (!hasDataset) {
-        Ui.toast('Dataset 이 선택되지 않았습니다. Settings 에서 선택하거나 Demo mode 를 켜세요.', 'warn');
-        Views.render('settings');
+        Ui.toast('먼저 🚀 시작하기에서 작업자·작업명을 입력하고 엑셀을 업로드하세요.', 'warn');
+        Views.render('start');
         refreshProjects();
         return;
       }
