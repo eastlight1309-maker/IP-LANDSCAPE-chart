@@ -3128,16 +3128,41 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
               var cyHolder = Ui.el('<div class="cy-holder"></div>');
               c.body.appendChild(cyHolder);
               Render.cytoscape(cyHolder, s.coapplicant.network, {});
-              c.body.appendChild(chartCap('노드=기업(크기=공동출원 참여 건수), 선=두 기업의 ' +
-                '공동출원 건수(두께=빈도). 읽는 법: 굵게 연결된 기업쌍은 공동 R&D·산학협력 등 ' +
-                '긴밀한 협력 관계입니다. 경쟁사가 누구와 협력하는지로 공급망·기술 제휴 구도를 ' +
-                '읽을 수 있습니다. 노드 클릭 시 해당 기업 특허가 열립니다.'));
+              c.body.appendChild(chartCap('노드=기업(크기=공동출원 참여 건수 — 3사 공동출원은 ' +
+                '쌍마다 계산되어 합산), 선=두 기업의 공동출원 건수(두께=빈도). 읽는 법: 굵게 ' +
+                '연결된 기업쌍은 공동 R&D·산학협력 등 긴밀한 협력 관계입니다. ' +
+                '👆 선(연결선)을 클릭하면 그 두 회사가 함께 출원한 특허 목록이, 노드(기업)를 ' +
+                '클릭하면 그 회사의 공동출원 특허 전체가 열립니다 — 목록에서 출원번호·출원인·' +
+                '발명의 명칭·대표청구항을 바로 확인하고 Excel 로 내려받을 수 있습니다.'));
             }
             if (s.ipc) {
               addFig(s.ipc.fig,
-                'X축=건수, Y축=IPC/CPC 서브클래스(4자리, 예: H01L=반도체 장치). 읽는 법: ' +
-                '당사 기술분류 체계와 별개인 국제 표준 분류 관점의 분포로, 내부 분류가 놓친 ' +
-                '인접 기술 영역을 확인할 수 있습니다.');
+                'X축=문헌 수(문헌당 같은 코드 1회), Y축=' + Ui.esc(s.ipc.scheme || 'IPC/CPC') +
+                ' 서브클래스(4자리, 예: H01L=반도체 장치)' +
+                (s.ipc.source_col ? ' — 매핑된 원본 컬럼: ' + Ui.esc(s.ipc.source_col) : '') +
+                '. 읽는 법: 당사 기술분류 체계와 별개인 국제 표준 분류 관점의 분포로, 내부 ' +
+                '분류가 놓친 인접 기술 영역을 확인할 수 있습니다. 막대·아래 표의 코드를 ' +
+                '클릭하면 해당 분류 문헌 목록이 열립니다.');
+              if ((s.ipc.rows || []).length) {
+                var ipcRows = s.ipc.rows.map(function (x) {
+                  var tr = document.createElement('tr');
+                  var td0 = document.createElement('td');
+                  td0.appendChild(drillCell(x.code, x.drill));
+                  tr.appendChild(td0);
+                  tr.insertAdjacentHTML('beforeend', '<td>' + Ui.esc(x.desc) + '</td>' +
+                    '<td class="num">' + Ui.num(x.n, 0) + '</td>');
+                  return tr;
+                });
+                var ipcTbl = Ui.el(simpleTable(['코드', '설명', '문헌 수'], []));
+                ipcRows.forEach(function (tr) { ipcTbl.querySelector('tbody').appendChild(tr); });
+                c.body.appendChild(Ui.el('<div style="margin-top:6px"><b style="font-size:12px">' +
+                  Ui.esc(s.ipc.scheme || 'IPC/CPC') + ' 코드 설명</b></div>'));
+                c.body.appendChild(ipcTbl);
+                if (s.ipc.desc_note) {
+                  c.body.appendChild(Ui.el('<div class="disclaimer">' +
+                    Ui.esc(s.ipc.desc_note) + '</div>'));
+                }
+              }
             }
             if ((r.skipped || []).length) {
               c.body.appendChild(Ui.el('<div class="disclaimer">생략된 섹션: ' +

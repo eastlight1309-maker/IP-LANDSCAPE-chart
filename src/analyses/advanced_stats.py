@@ -37,7 +37,7 @@ from src.insights import build_insight, fmt_num, fmt_pct, period_label, check_sm
 from src.viz_payload import ok_result, empty_result, bar_chart, line_chart, \
     cytoscape_network, base_layout
 
-_IPC_MAIN_RE = re.compile(r"^([A-H]\d{2}[A-Z])")
+_IPC_MAIN_RE = re.compile(r"^([A-HY]\d{2}[A-Z])")  # Y = CPC 전용 섹션 포함
 
 
 def _prosecution_section(df, settings):
@@ -212,13 +212,17 @@ def _coapplicant_section(df, settings):
         node_totals[a] = node_totals.get(a, 0) + n
         node_totals[b] = node_totals.get(b, 0) + n
     nmax = max(node_totals.values())
+    # 노드 클릭 = 그 회사의 공동출원 특허 목록 (공동출원인 포함 매칭 + 공동출원 건만)
     nodes = [{"id": name, "label": name, "count": total,
               "size": float(14 + 26 * np.sqrt(total / nmax)), "color": "#B07AA1",
-              "drill": {"type": "applicant", "applicant": name}}
+              "drill": {"type": "applicant", "applicant": name,
+                        "applicant_scope": "any", "joint_only": True}}
              for name, total in node_totals.items()]
     emax = max(n for _, n in top_pairs)
+    # 선(엣지) 클릭 = 두 회사가 함께 출원한 특허 목록 (양사 모두 (공동)출원인)
     edges = [{"source": a, "target": b, "weight": n,
               "width": float(1.5 + 6 * n / emax), "label": "%d건" % n,
+              "drill": {"applicant": a, "applicant_scope": "any", "co_applicant": b},
               "color": "#9C755F"} for (a, b), n in top_pairs]
     top_pair = top_pairs[0]
     return {"network": cytoscape_network(nodes, edges),
@@ -226,24 +230,111 @@ def _coapplicant_section(df, settings):
             "top_pair": {"a": top_pair[0][0], "b": top_pair[0][1], "n": top_pair[1]}}, None
 
 
+# IPC/CPC 섹션(1자리) 표준 명칭 — 국제특허분류 공식 섹션 구분
+IPC_SECTION_KO = {
+    "A": "생활필수품", "B": "처리조작; 운수", "C": "화학; 야금",
+    "D": "섬유; 지류", "E": "고정구조물(건설)",
+    "F": "기계공학; 조명; 가열; 무기; 폭파", "G": "물리학", "H": "전기",
+    "Y": "CPC 전용 태그(신기술·범분야 — 기후변화 대응 등)",
+}
+
+# 자주 나오는 서브클래스(4자리) 한글 설명 — 사전에 없는 코드는 섹션 설명만 표시
+# (표준 분류표 전체를 내장하지 않고, 확실한 대표 코드만 수록해 임의 설명을 만들지 않음)
+IPC_SUBCLASS_KO = {
+    "H01L": "반도체 장치", "H01M": "전지(배터리·연료전지)", "H01R": "전기 접속(커넥터)",
+    "H01S": "레이저", "H01F": "자석·변압기·인덕터", "H01B": "케이블·도체·절연체",
+    "H01G": "커패시터", "H01J": "전자관·방전 장치", "H01Q": "안테나",
+    "H02J": "전력 급전·배전 시스템", "H02M": "전력 변환(인버터·컨버터)",
+    "H02K": "전동기·발전기", "H03K": "펄스 회로", "H03M": "부호화·복호화",
+    "H04L": "디지털 정보의 전송(네트워크 통신)", "H04W": "무선통신 네트워크",
+    "H04N": "화상 통신(영상·카메라)", "H04B": "전송 일반", "H04R": "스피커·마이크",
+    "H05K": "인쇄회로(PCB)·전자기기 조립", "H10K": "유기 전자 소자(OLED 등)",
+    "G01N": "재료의 분석·시험", "G01R": "전기량 측정", "G02B": "광학 요소·시스템",
+    "G02F": "광 제어 장치(액정 등)", "G03F": "포토리소그래피(패턴 노광)",
+    "G05B": "제어·조절 시스템 일반", "G06F": "전기적 디지털 데이터 처리(컴퓨팅)",
+    "G06N": "AI·기계학습 등 특정 계산 모델", "G06Q": "관리·상거래용 데이터 처리",
+    "G06T": "이미지 데이터 처리·생성", "G06V": "이미지·비디오 인식",
+    "G09G": "표시장치 구동·제어", "G11C": "메모리(정적 기억장치)",
+    "G16H": "헬스케어 정보학",
+    "A61B": "진단·수술(의료기기)", "A61K": "의약용 제제", "A61P": "의약의 치료 활성",
+    "C01B": "비금속 원소·화합물", "C07D": "복소환 화합물", "C07K": "펩티드",
+    "C08J": "고분자 가공·후처리", "C08L": "고분자 조성물", "C09D": "코팅 조성물(도료)",
+    "C09J": "접착제", "C12N": "미생물·효소(유전공학)", "C23C": "금속 피복(코팅·증착)",
+    "B01D": "분리(여과·증류)", "B01J": "촉매·화학 반응 장치", "B23K": "납땜·용접·절단",
+    "B29C": "플라스틱 성형·접합", "B32B": "적층체(라미네이트)",
+    "B60L": "전기 추진 차량", "B60W": "차량 통합 제어(하이브리드·주행)",
+    "B65D": "포장 용기", "B81B": "마이크로구조 장치(MEMS)", "B82Y": "나노기술 응용",
+    "Y02E": "온실가스 감축 — 에너지 생산·전송·배전", "Y02T": "온실가스 감축 — 운송",
+    "Y02P": "온실가스 감축 — 생산·가공", "Y04S": "스마트그리드 정보통신",
+}
+
+
+def _ipc_desc(code):
+    """서브클래스 코드 → 한글 설명 (사전 없으면 섹션 설명으로 폴백)."""
+    code = str(code)
+    sub = IPC_SUBCLASS_KO.get(code)
+    sec = IPC_SECTION_KO.get(code[:1], "")
+    if sub:
+        return "%s (섹션 %s: %s)" % (sub, code[:1], sec) if sec else sub
+    if sec:
+        return "섹션 %s(%s) — 세부 설명 사전 미수록" % (code[:1], sec)
+    return "설명 미수록"
+
+
 def _ipc_section(df, settings):
-    """⑤ IPC/CPC 메인클래스 분포."""
+    """⑤ IPC/CPC 메인클래스 분포.
+
+    - 어떤 분류 체계(IPC/CPC)인지 매핑된 원본 컬럼명으로 표시 (유실 시 값 기반 추정)
+    - 문헌 단위 집계: 한 문헌에 같은 서브클래스가 여러 번 있어도 1회 —
+      막대 클릭 drill(해당 코드 보유 문헌 목록)과 건수가 정확히 일치
+    - 코드별 한글 설명(hover + 하단 표)
+    """
     if "ipc" not in df.columns:
         return None, "IPC/CPC 분류 컬럼 필요"
     mains = []
     for v in df["ipc"]:
+        row_codes = set()
         for code in parse_multiclass_cell(v):
             m = _IPC_MAIN_RE.match(str(code).strip().upper().replace(" ", ""))
             if m:
-                mains.append(m.group(1))
+                row_codes.add(m.group(1))
+        mains.extend(sorted(row_codes))
     if not mains:
         return None, "IPC 형식(예: H01L 23/28) 값 없음"
+    # 분류 체계 표기: 매핑된 원본 컬럼명 우선, 없으면 값(Y섹션=CPC 전용)으로 추정
+    src_col = ""
+    try:
+        src_col = str((df.attrs.get("concept_source_cols") or {}).get("ipc") or "")
+    except Exception:
+        src_col = ""
+    low = src_col.lower()
+    if "cpc" in low and "ipc" not in low:
+        scheme = "CPC"
+    elif "ipc" in low:
+        scheme = "IPC"
+    elif any(c.startswith("Y") for c in mains):
+        scheme = "CPC(Y섹션 포함 — 컬럼명 미상)"
+    else:
+        scheme = "IPC/CPC(컬럼명 미상)"
     counts = pd.Series(mains).value_counts().head(15)
-    fig = bar_chart([str(c) for c in counts.index][::-1],
-                    [int(v) for v in counts.values][::-1],
-                    title="IPC/CPC 메인클래스 분포 (서브클래스 4자리)", orientation="h",
-                    x_title="건수")
-    return {"fig": fig, "top_class": str(counts.index[0]), "n_classes": int(len(set(mains)))}, None
+    codes = [str(c) for c in counts.index]
+    fig = bar_chart(
+        codes[::-1], [int(v) for v in counts.values][::-1],
+        title="%s 서브클래스(4자리) 분포 — 문헌 단위%s"
+              % (scheme, (" · 매핑 컬럼: %s" % src_col) if src_col else ""),
+        orientation="h", x_title="문헌 수",
+        hovertext=["%s — %s · %d건 (클릭=해당 문헌 목록)"
+                   % (c, _ipc_desc(c), int(n))
+                   for c, n in zip(codes, counts.values)][::-1],
+        customdata=[{"drill": {"ipc_main": c}} for c in codes][::-1])
+    rows = [{"code": c, "desc": _ipc_desc(c), "n": int(n),
+             "drill": {"ipc_main": c}}
+            for c, n in zip(codes, counts.values)]
+    return {"fig": fig, "top_class": codes[0], "n_classes": int(len(set(mains))),
+            "scheme": scheme, "source_col": src_col, "rows": rows,
+            "desc_note": "코드 설명은 대표 서브클래스 사전 기준이며, 사전에 없는 "
+                         "코드는 섹션(1자리) 설명만 표시합니다 (임의 설명을 만들지 "
+                         "않음 — 정확한 정의는 WIPO/특허청 IPC·CPC 분류표 참조)."}, None
 
 
 def compute_advanced_stats(df, settings):

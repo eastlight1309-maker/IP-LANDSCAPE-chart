@@ -215,6 +215,16 @@ def select_patents(df, drill):
         # 출원인 화면을 특정 회사로 좁혀 본 상태의 drill: 그 회사가 (공동)출원인으로
         # 포함된 건으로 추가 제한
         mask &= applicant_mask(df, drill["co_applicant"], scope="any")
+    if drill.get("joint_only") and "_co_applicants_display" in df.columns:
+        # 공동출원 건만: 표준화 후 서로 다른 출원인 2인 이상 (협력 네트워크 노드 drill)
+        mask &= df["_co_applicants_display"].map(lambda lst: len(lst or []) >= 2)
+    if drill.get("ipc_main") and "ipc" in df.columns:
+        # IPC/CPC 서브클래스(4자리) drill: 해당 코드로 시작하는 분류 보유 문헌
+        from src.preprocessing import parse_multiclass_cell as _pmc
+        _code = str(drill["ipc_main"]).upper().replace(" ", "")
+        mask &= df["ipc"].map(lambda v: any(
+            str(x).strip().upper().replace(" ", "").startswith(_code)
+            for x in _pmc(v)))
     if drill.get("owner") and "owner_display" in df.columns:
         mask &= df["owner_display"].astype(str) == str(drill["owner"])
     if drill.get("transferred") is not None and "owner_display" in df.columns:
@@ -342,8 +352,25 @@ def patent_records(df, page=1, page_size=25, max_page_size=200, extra_fields=Non
                 rec[label] = v if v is None or isinstance(v, (int, float, bool)) else str(v)
         y = row.get("_base_year")
         rec["연도"] = int(y) if y is not None and not (isinstance(y, float) and np.isnan(y)) else None
+        # 공동출원 건은 출원인 전원(표준명) 표시 — 대표 출원인만 보이면
+        # 협력 네트워크 등에서 연 목록에서 상대 회사가 확인되지 않는다
+        co_all = row.get("_co_applicants_display") or []
+        if len(co_all) >= 2 and "출원인" in rec:
+            rec["출원인"] = "; ".join(map(str, co_all))
         techs = row.get("_tech_list") or []
         rec["기술분류"] = "; ".join(map(str, techs[:6]))
+        # 대표청구항: 윈텔립스 '대표청구항'(claims) 우선, 없으면 독립청구항 앞부분.
+        # 컬럼이 매핑돼 있으면 모든 행에 키를 넣어 목록 표의 열이 항상 표시되게 한다.
+        if "claims" in sub.columns or "indep_claim" in sub.columns:
+            claim = ""
+            for ccol in ("claims", "indep_claim"):
+                if ccol in sub.columns:
+                    v = row.get(ccol)
+                    s = "" if v is None else str(v).strip()
+                    if s and s.lower() not in ("nan", "none"):
+                        claim = s
+                        break
+            rec["대표청구항"] = claim[:180] + ("…" if len(claim) > 180 else "")
         active = row.get("_active_flag")
         rec["유효특허"] = ("Y" if active is True else ("N" if active is False else "?"))
         records.append(rec)

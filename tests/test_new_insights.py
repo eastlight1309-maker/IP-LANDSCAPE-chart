@@ -2319,3 +2319,89 @@ def test_emerging_chart_export_matches_axes(settings):
     assert abs(c0["score"] - expect) < 1e-9
     # X축 제목이 의미를 설명한다
     assert "평균 출원연도" in r["figure"]["layout"]["xaxis"]["title"]
+
+
+def test_coapplicant_network_drills_match_counts(settings):
+    """협력 네트워크: 선 클릭=두 회사 공동출원 목록, 노드 클릭=그 회사 공동출원 —
+    drill 결과 건수가 화면 수치와 정확히 일치."""
+    from src.analyses.advanced_stats import _coapplicant_section
+    from src.analyses.common import select_patents
+    from src.preprocessing import standardize_applicants
+    df = pd.DataFrame({
+        "applicant": ["A사; B사", "A사; B사", "A사; C사", "B사", "A사"],
+        "app_number": ["1", "2", "3", "4", "5"],
+        "title": ["t1", "t2", "t3", "t4", "t5"],
+    })
+    df = standardize_applicants(df, None)
+    result, reason = _coapplicant_section(df, settings)
+    assert reason is None, reason
+    edges = result["network"]["edges"]
+    nodes = result["network"]["nodes"]
+    for e in edges:
+        d = e["data"]
+        assert d["drill"], "엣지 drill 없음"
+        picked = select_patents(df, d["drill"])
+        assert len(picked) == d["weight"], \
+            "%s-%s: drill %d건 != 표시 %d건" % (d["source"], d["target"],
+                                               len(picked), d["weight"])
+    # 노드 drill = 그 회사의 공동출원 특허 (단독 출원 제외)
+    a_node = next(n["data"] for n in nodes if n["data"]["id"] == "A사")
+    picked_a = select_patents(df, a_node["drill"])
+    assert set(picked_a["app_number"]) == {"1", "2", "3"}   # 단독 5번 제외
+    b_node = next(n["data"] for n in nodes if n["data"]["id"] == "B사")
+    picked_b = select_patents(df, b_node["drill"])
+    assert set(picked_b["app_number"]) == {"1", "2"}        # 단독 4번 제외
+
+
+def test_patent_records_include_rep_claim():
+    """근거 특허 목록에 대표청구항(또는 독립청구항) 열이 포함된다."""
+    from src.analyses.common import patent_records
+    df = pd.DataFrame({
+        "app_number": ["1", "2"],
+        "title": ["t1", "t2"],
+        "applicant_display": ["A사", "B사"],
+        "claims": ["청구항 1. " + "가" * 300, ""],
+        "indep_claim": ["", "독립청구항 텍스트"],
+    })
+    df["_co_applicants_display"] = [["A사", "B사"], ["B사"]]
+    out = patent_records(df)
+    r0, r1 = out["records"]
+    assert r0["대표청구항"].startswith("청구항 1.") and r0["대표청구항"].endswith("…")
+    assert len(r0["대표청구항"]) <= 185
+    assert r1["대표청구항"] == "독립청구항 텍스트"   # claims 비면 독립청구항 폴백
+    # 공동출원 건은 출원인 전원 표시, 단독 건은 그대로
+    assert r0["출원인"] == "A사; B사"
+    assert r1["출원인"] == "B사"
+
+
+def test_ipc_section_scheme_desc_and_drill(settings):
+    """IPC 분포: 체계(IPC/CPC)·원본 컬럼 표기, 문헌 단위 집계=drill 일치, 코드 설명."""
+    from src.analyses.advanced_stats import _ipc_section
+    from src.analyses.common import select_patents
+    df = pd.DataFrame({
+        "ipc": ["H01L 23/28; H01L 25/065", "H01L 21/56", "G06F 3/041; Y02E 10/50",
+                "", "H01L 23/00"],
+        "app_number": ["1", "2", "3", "4", "5"],
+    })
+    df.attrs["concept_source_cols"] = {"ipc": "Current IPC All"}
+    result, reason = _ipc_section(df, settings)
+    assert reason is None, reason
+    assert result["scheme"] == "IPC"
+    assert result["source_col"] == "Current IPC All"
+    assert "IPC" in result["fig"]["layout"]["title"]["text"] if isinstance(
+        result["fig"]["layout"].get("title"), dict) else "IPC" in str(
+        result["fig"]["layout"].get("title"))
+    rows = {r["code"]: r for r in result["rows"]}
+    # 문헌 단위: 1번 문헌의 H01L 2회는 1회로 — H01L=3건 (1,2,5)
+    assert rows["H01L"]["n"] == 3
+    assert "반도체" in rows["H01L"]["desc"]
+    assert "Y02E" in rows           # CPC Y섹션도 집계
+    # drill 과 정확 일치
+    for code, r in rows.items():
+        picked = select_patents(df, r["drill"])
+        assert len(picked) == r["n"], "%s drill 불일치" % code
+    # 원본 컬럼 정보가 없으면 값 기반 추정 (Y 포함 → CPC 추정 문구)
+    df2 = df.copy()
+    df2.attrs = {}
+    r2, _ = _ipc_section(df2, settings)
+    assert "CPC" in r2["scheme"]

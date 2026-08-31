@@ -563,6 +563,12 @@ def build_standard_frame(raw_df, mapping, applicant_rules=None):
     df = df.rename(columns=rename)
     # 동일 실제 컬럼이 두 개념에 매핑될 수는 없음(automap 이 보장) — 방어적으로 중복 제거
     df = df.loc[:, ~df.columns.duplicated()]
+    # 개념 → 원본 헤더명 기록: IPC vs CPC 등 화면 표기가 어떤 원본 컬럼이
+    # 매핑됐는지 알아야 할 때 사용 (attrs 유실 시 값 기반 추정으로 폴백)
+    try:
+        df.attrs["concept_source_cols"] = {v: k for k, v in rename.items()}
+    except Exception:
+        pass
 
     # 텍스트 계열 개념의 결측(NaN)은 빈 문자열로 통일 — pandas 3 부터
     # astype(str) 가 NaN 을 'nan' 문자열로 바꾸지 않아, 'nan' 문자열 가드에
