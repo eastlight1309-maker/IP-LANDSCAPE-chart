@@ -5636,7 +5636,8 @@ def llm_chat(analysis_name, metrics, sentences, question, history, settings,
         "다음은 특허 IP Landscape 분석 화면 '%s' 의 요약 정보입니다."
         % sanitize_for_llm(analysis_name, 80)]
     if description:
-        parts.append("그래프 설명: %s" % sanitize_for_llm(description, 500))
+        # 800자: 프론트의 [분석 범위] 프레이밍(1개 회사 관점) 포함 수용
+        parts.append("그래프 설명: %s" % sanitize_for_llm(description, 800))
     if rule_summary:
         parts.append("규칙 기반 요약: %s" % sanitize_for_llm(rule_summary, 1200))
     if metrics:
@@ -5702,7 +5703,8 @@ def llm_augment_insight(analysis_name, rule_insight, summary_stats, settings,
     parts = ["다음은 특허 IP Landscape 분석 '%s' 의 정보입니다."
              % sanitize_for_llm(analysis_name, 100)]
     if description:
-        parts.append("차트 의미·해석 가이드: %s" % sanitize_for_llm(description, 900))
+        # 1100자: 프론트가 앞에 붙이는 [분석 범위] 프레이밍(1개 회사 관점)까지 수용
+        parts.append("차트 의미·해석 가이드: %s" % sanitize_for_llm(description, 1100))
     rule_summary = " / ".join(str(s) for s in rule_insight.get("sentences", [])[:6])
     if rule_summary:
         parts.append("규칙 기반 요약: %s" % sanitize_for_llm(rule_summary, 1200))
@@ -16428,7 +16430,7 @@ def compute_quality_report(df, settings):
 
 
 # 검증 리포트용 빌드 정보 (tools/build_backend.py 가 실측 집계)
-_QR_BUILD_INFO = {'built_at': '2026-08-25 07:39', 'modules': 46, 'test_functions': 270, 'test_files': 15, 'source': 'build'}
+_QR_BUILD_INFO = {'built_at': '2026-08-31 01:12', 'modules': 46, 'test_functions': 270, 'test_files': 15, 'source': 'build'}
 
 
 

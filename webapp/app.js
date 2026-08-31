@@ -217,6 +217,8 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
           'Dataset: ' + (data.dataset || '-') + ' (' + Ui.num(data.n_rows, 0) + '건)';
         restore(State.config && State.config.filter_state);
         State.filters = collect();
+        Scope.restore();     // 🎯 분석 범위 (1개 회사/여러 회사) 브라우저 기억 복원
+        injectScopeUI();
       });
     }
     function apply() {
@@ -326,8 +328,8 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
           var pt = ev.points && ev.points[0];
           if (!pt) return;
           var cd = pt.customdata;
-          if (cd && cd.drill) onDrill(cd.drill, cd);
-          else if (cd && cd.length && cd[0] && cd[0].drill) onDrill(cd[0].drill, cd[0]);
+          if (cd && cd.drill) onDrill(cd.drill, cd, holder);
+          else if (cd && cd.length && cd[0] && cd[0].drill) onDrill(cd[0].drill, cd[0], holder);
         });
       }
       return holder;
@@ -370,12 +372,12 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
       cy.on('tap', 'node', function (ev) {
         var d = ev.target.data();
         if (opts.onNode) opts.onNode(d);
-        else if (d.drill) Drill.open(d.drill, d.label);
+        else if (d.drill) Drill.open(scopedDrill(holder, d.drill), d.label);
       });
       cy.on('tap', 'edge', function (ev) {
         var d = ev.target.data();
         if (opts.onEdge) opts.onEdge(d);
-        else if (d.drill) Drill.open(d.drill, d.source + ' × ' + d.target);
+        else if (d.drill) Drill.open(scopedDrill(holder, d.drill), d.source + ' × ' + d.target);
       });
       return cy;
     }
@@ -823,7 +825,7 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
      해당 차트의 이미지·집계 데이터만 전달해 개별 해석하고, 서버가 보관함에 저장. */
   function chartInsightRequest(analysisName, cardBody, cardDesc, ins, ch, opts2) {
     opts2 = opts2 || {};
-    var desc = ((cardDesc || '') +
+    var desc = (scopeDesc() + (cardDesc || '') +
       (opts2.withTitle ? ' [대상 차트] ' + ch.title : '') +
       (ch.caption ? ' [차트 읽는 법] ' + ch.caption : '') +
       (opts2.company ? ' [이 차트 적용 출원인] ' + opts2.company : '')).trim();
@@ -833,7 +835,7 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
         chart_title: opts2.withTitle ? ch.title : null,
         metrics: (ins && ins.metrics) || {},
         sentences: (ins && ins.sentences) || [],
-        description: desc.slice(0, 900),
+        description: desc.slice(0, 1100),
         chart_data: compactChartData(cardBody, ch.el),
         chart_image: img,
         chart_images: img ? [img] : []
@@ -888,7 +890,9 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
       var drills = Ui.el('<div class="insight-drills"></div>');
       (ins.drills || []).forEach(function (d) {
         var b = Ui.el('<button class="btn small">' + Ui.esc(d.label) + ' →</button>');
-        b.addEventListener('click', function () { Drill.open(d.drill, d.label); });
+        b.addEventListener('click', function () {
+          Drill.open(scopedDrill(b, d.drill), d.label);
+        });
         drills.appendChild(b);
       });
       if (State.config && State.config.settings && State.config.settings.llm_insights_enabled) {
@@ -926,7 +930,7 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
               return Api.post('/api/insight', {
                 analysis: analysisName, metrics: ins.metrics || {},
                 sentences: ins.sentences || [],
-                description: (cardDesc || '').slice(0, 900),
+                description: (scopeDesc() + (cardDesc || '')).slice(0, 1100),
                 chart_data: compactChartData(cardBody),
                 chart_image: imgs[0] || null, chart_images: imgs
               }, 'LLM 인사이트 생성 중…');
@@ -1081,7 +1085,7 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
             analysis: analysisName, chat: true, question: question || null,
             history: history.slice(-8),
             metrics: ins.metrics || {}, sentences: ins.sentences || [],
-            description: (description || '').slice(0, 500),
+            description: (scopeDesc() + (description || '')).slice(0, 800),
             chart_data: compactChartData(cardBody),
             chart_image: imgs[0] || null,
             chart_images: imgs,
@@ -1192,7 +1196,9 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
 
   function drillCell(label, drill) {
     var span = Ui.el('<span class="clickable">' + Ui.esc(label) + '</span>');
-    span.addEventListener('click', function () { Drill.open(drill, label); });
+    span.addEventListener('click', function () {
+      Drill.open(scopedDrill(span, drill), label);
+    });
     return span;
   }
 
@@ -1818,10 +1824,14 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
     var c = card('Executive Overview', '기술·경쟁·권리 신호 요약. KPI 카드와 목록 클릭 시 근거 특허/상세 메뉴로 이동합니다.');
     content.appendChild(c.root);
     if (!availabilityGuard('overview', c.body)) return;
-    Api.post('/api/overview', { filters: State.filters }, 'Overview 계산 중…').then(function (r) {
+    Api.post('/api/overview', { filters: scopedFilters() }, 'Overview 계산 중…').then(function (r) {
       State.lastResults.overview = r;
       if (r.status !== 'ok') { c.body.innerHTML = Render.statusBlock(r); return; }
       c.body.innerHTML = '';
+      // 1개 회사 범위면 목록 드릴다운에도 같은 조건 주입 (근거 일치)
+      var ovCo = Scope.single();
+      if (ovCo) c.body.dataset.scopeCo = ovCo;
+      else delete c.body.dataset.scopeCo;
       var k = r.kpi;
       var kpis = [
         { v: Ui.num(k.total, 0), l: '분석 문헌 수', view: null },
@@ -2059,8 +2069,135 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
     'basic-stats': 1, 'lifecycle': 1, 'tech-tree': 1, 'company-focus': 1,
     'citation-diffusion': 1, 'emerging-clusters': 1, 'wips-deep': 1,
     'deep-plus': 1, 'exec-plus': 1, 'executive-summary': 1, 'opportunity': 1,
-    'technology-network': 1, 'emerging-combinations': 1, 'classification-quality': 1
+    'technology-network': 1
   };
+
+  /* ---------- 분석 범위 (여러 회사 전체 vs 1개 회사 집중) ----------
+     상단 필터바의 🎯 분석 범위 선택기. '1개 회사'를 고르면:
+     - company/companies 파라미터를 받는 분석은 그 회사를 관점(자사)으로 재계산
+     - 파라미터가 없는 분석은 필터(공동출원 포함 membership)로 그 회사 문헌만 집계
+     - 여러 회사 비교 전용 분석은 사유와 함께 비활성화
+     - 차트 드릴다운·LLM 인사이트도 같은 범위·관점으로 정렬 */
+  var SCOPE_COMPANY_PARAM = {
+    'basic-stats': 1, 'lifecycle': 1, 'tech-tree': 1, 'company-focus': 1,
+    'emerging-clusters': 1, 'wips-deep': 1, 'deep-plus': 1, 'technology-network': 1,
+    'opportunity': 1, 'citation-diffusion': 1, 'exec-plus': 1, 'executive-summary': 1
+  };
+  var SCOPE_COMPANIES_PARAM = {
+    'trajectory': 1, 'company-dna': 1, 'tech-year-bubble': 1, 'portfolio-index': 1
+  };
+  // 전체 데이터 대비 관점을 유지하는 분석(자사 vs 경쟁·전체 기준 점수·모집단
+  // 표준화 등) — 차트에 다른 회사도 등장하므로 드릴다운에 회사 조건을 주입하지
+  // 않는다 (집계 근거와 목록이 정확히 일치해야 함)
+  var SCOPE_FULL_CONTEXT = {
+    'opportunity': 1, 'citation-diffusion': 1, 'exec-plus': 1, 'executive-summary': 1,
+    'trajectory': 1, 'company-dna': 1, 'tech-year-bubble': 1, 'portfolio-index': 1
+  };
+  // 1개 회사 분석에서 의미가 없는(잘못된 해석을 유도하는) 여러 회사 비교 전용 분석
+  var SCOPE_DISABLED = {
+    'lead-lag': '선행-추종 분석은 두 회사 이상의 출원 시계열을 비교해 따라가기 패턴을 찾는 분석입니다',
+    'inventor-mobility': '발명자 이동 분석은 회사 간 발명자 이동을 추적하는 비교 분석입니다',
+    'scope-entropy': '권리범위 엔트로피는 기업 간 다양성 비교 분석입니다 (최소 2개 회사 필요)',
+    'ownership': '양도·권리이전 분석은 시장 전체의 거래 동향을 보는 분석입니다 (단일 회사 필터 미지원)'
+  };
+  var SCOPE_UNSCOPED = { 'quality-report': 1 };  // 데이터 검증은 데이터셋 전체 대상
+
+  var Scope = (function () {
+    var KEY = 'ipls-scope';
+    function get() {
+      if (!State.scope) State.scope = { mode: 'multi', company: null };
+      return State.scope;
+    }
+    function single() {
+      var s = get();
+      return (s.mode === 'single' && s.company) ? s.company : null;
+    }
+    function save() {
+      try { localStorage.setItem(KEY, JSON.stringify(get())); } catch (e) { }
+    }
+    function restore() {
+      try {
+        var raw = localStorage.getItem(KEY);
+        if (!raw) return;
+        var s = JSON.parse(raw);
+        var apps = (State.filterOptions || {}).applicants || [];
+        if (s && s.mode === 'single' && s.company && apps.indexOf(s.company) >= 0) {
+          State.scope = { mode: 'single', company: s.company };
+        }
+      } catch (e) { }
+    }
+    return { get: get, single: single, save: save, restore: restore };
+  })();
+
+  function scopedFilters() {
+    /* company 파라미터가 없는 분석용: 1개 회사 범위를 필터(공동출원 포함)로 적용 */
+    var co = Scope.single();
+    if (!co) return State.filters;
+    return Object.assign({}, State.filters, { applicants: [co] });
+  }
+
+  function scopeDesc() {
+    /* LLM 인사이트 프레이밍: 1개 회사 분석임을 명시해 그 회사 관점으로 해석 */
+    var co = Scope.single();
+    if (!co) return '';
+    return "[분석 범위] 이 분석은 '" + co + "' 1개 회사 집중 분석입니다. " +
+      '모든 해석·시사점은 이 회사의 전략·리스크·기회 관점에서 작성하고, ' +
+      '시장 전체 일반론은 피하세요. 화면에 등장하는 다른 회사·공동출원 상대는 ' +
+      "이 회사와의 관계(협력·경쟁·비교 기준) 맥락으로 해석하세요. ";
+  }
+
+  function scopedDrill(el, drill) {
+    /* 1개 회사 범위 카드의 드릴다운에 회사 조건(공동출원 포함)을 주입해
+       차트 수치와 근거 특허 목록이 정확히 일치하게 한다.
+       이미 특정 문헌(ids)·특정 출원인 조건이 있는 드릴은 그대로 둔다. */
+    try {
+      // 중첩 카드(목록 카드 등) 안에서도 찾도록 속성 보유 조상 기준으로 탐색
+      var host = el && el.closest ? el.closest('[data-scope-co]') : null;
+      var co = host ? host.getAttribute('data-scope-co') : '';
+      if (co && drill && !drill.ids && !drill.applicant && !drill.co_applicant) {
+        return Object.assign({}, drill, { co_applicant: co });
+      }
+    } catch (e) { /* 주입 실패 시 원본 드릴 유지 */ }
+    return drill;
+  }
+
+  function injectScopeUI() {
+    var bar = document.getElementById('ipls-filterbar');
+    if (!bar || document.getElementById('scope-mode')) return;
+    var wrap = Ui.el('<span style="display:inline-flex;gap:6px;align-items:center;' +
+      'margin-right:10px;padding:3px 8px;border:1px solid #cfe0ec;border-radius:8px;' +
+      'background:#f4f9fd"><b style="font-size:11.5px;color:#2c4a63;white-space:nowrap">' +
+      '🎯 분석 범위</b></span>');
+    var mode = Ui.el('<select id="scope-mode" title="여러 회사(전체) 분석과 1개 회사 집중 분석을 전환합니다">' +
+      '<option value="multi">여러 회사 (전체)</option>' +
+      '<option value="single">1개 회사</option></select>');
+    var comp = Ui.el('<select id="scope-company" style="max-width:190px" ' +
+      'title="집중 분석할 회사 (공동출원 건 포함 매칭)"><option value="">회사 선택…</option></select>');
+    ((State.filterOptions || {}).applicants || []).slice(0, 300).forEach(function (a) {
+      var o = document.createElement('option'); o.value = a; o.textContent = a;
+      comp.appendChild(o);
+    });
+    var s = Scope.get();
+    mode.value = s.mode === 'single' ? 'single' : 'multi';
+    comp.value = s.company || '';
+    comp.style.display = mode.value === 'single' ? '' : 'none';
+    function apply() {
+      State.scope = { mode: mode.value, company: comp.value || null };
+      comp.style.display = mode.value === 'single' ? '' : 'none';
+      Scope.save();
+      if (mode.value === 'single' && !comp.value) {
+        Ui.toast('집중 분석할 회사를 선택하세요 — 선택 전까지는 전체 기준으로 표시됩니다.', 'warn');
+        return;
+      }
+      Views.render(State.view);
+    }
+    mode.addEventListener('change', apply);
+    comp.addEventListener('change', apply);
+    wrap.appendChild(mode);
+    wrap.appendChild(comp);
+    bar.insertBefore(wrap, bar.firstChild);
+  }
+
 
   /* 카드에 차트가 여러 개면 각 차트 아래에 "이 차트만" 도구 행을 붙인다:
      ① 출원인 선택(지원 분석 한정) — 그 차트만 선택 출원인 기준으로 재계산·교체.
@@ -2193,13 +2330,29 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
     var c = card(opts.title, opts.help);
     opts.holder.appendChild(c.root);
     if (!availabilityGuard(opts.analysis, c.body)) return null;
+    var scopeCo0 = Scope.single();
+    if (scopeCo0 && SCOPE_DISABLED[opts.analysis]) {
+      // 1개 회사 분석에서 의미 없는 비교 분석은 계산하지 않고 사유를 안내
+      c.body.innerHTML = '<div class="status-empty" style="text-align:left;line-height:1.8">' +
+        '⛔ <b>1개 회사 분석에서는 비활성화된 분석입니다.</b><br>' +
+        Ui.esc(SCOPE_DISABLED[opts.analysis]) + '.<br>' +
+        '상단 🎯 <b>분석 범위</b>를 "여러 회사 (전체)"로 바꾸면 다시 활성화됩니다.</div>';
+      return null;
+    }
     var chartTarget = null;
     var lastExtra = {};
     c.controls.appendChild(Render.chartButtons(function () { return chartTarget; },
       opts.analysis.replace(/-/g, '_')));
     c.controls.appendChild(Render.excelButton(opts.analysis, function () { return c.body; }, opts.drill || null));
     function currentBody() {
-      return Object.assign({ filters: State.filters }, opts.body || {}, lastExtra);
+      var base = { filters: State.filters };
+      var co = Scope.single();
+      if (co && !SCOPE_UNSCOPED[opts.analysis]) {
+        if (SCOPE_COMPANY_PARAM[opts.analysis]) base.company = co;
+        else if (SCOPE_COMPANIES_PARAM[opts.analysis]) base.companies = [co];
+        else base.filters = scopedFilters();  // 파라미터 미지원 → 필터로 범위 적용
+      }
+      return Object.assign(base, opts.body || {}, lastExtra);
     }
     function reload(extraBody) {
       if (extraBody) lastExtra = Object.assign({}, lastExtra, extraBody);
@@ -2209,6 +2362,16 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
       Api.post('/api/' + opts.analysis, body, opts.title + ' 계산 중…').then(function (r) {
         State.lastResults[opts.analysis] = r;
         c.body.innerHTML = '';
+        // 이 카드가 특정 회사 문헌으로만 집계됐으면 드릴다운에도 같은 조건을
+        // 주입할 수 있게 카드에 표시 (전체 대비 관점 유지 분석은 제외)
+        var effCo = null;
+        if (!SCOPE_FULL_CONTEXT[opts.analysis] && !SCOPE_UNSCOPED[opts.analysis]) {
+          effCo = body.company ||
+            (body.filters && body.filters.applicants &&
+             body.filters.applicants.length === 1 ? body.filters.applicants[0] : null);
+        }
+        if (effCo) c.body.dataset.scopeCo = effCo;
+        else delete c.body.dataset.scopeCo;
         if (r.status !== 'ok') { c.body.innerHTML = Render.statusBlock(r); return; }
         opts.renderOk(r, c, function (t) { chartTarget = t; });
         var guideText = opts.guide || CHART_GUIDE[opts.analysis];
@@ -2229,7 +2392,7 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
     return { card: c, reload: reload };
   }
 
-  function plotlyDrill(drill) { Drill.open(drill, '근거 특허'); }
+  function plotlyDrill(drill, _cd, el) { Drill.open(scopedDrill(el, drill), '근거 특허'); }
 
   /* ---------- 차트 페이저: 카드에 차트가 여러 개면 한 화면에 한 개씩 ----------
      카드 본문의 최상위 자식들을 "차트를 포함한 요소 = 새 페이지 시작, 그 뒤의
@@ -2376,6 +2539,9 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
         var o = document.createElement('option'); o.value = a; o.textContent = a;
         sel.appendChild(o);
       });
+      // 🎯 1개 회사 분석 모드면 카드 선택기도 그 회사로 표시 (범위 일치)
+      var gco = Scope.single();
+      if (gco) sel.value = gco;
       sel.addEventListener('change', function () {
         reload({ company: sel.value || null });
       });
@@ -3040,9 +3206,9 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
           renderOk: function (r, c, setTarget) {
             var holder = Ui.el('<div class="chart-holder tall"></div>');
             c.body.appendChild(holder);
-            Render.plotly(holder, r.figure, function (drill, cd) {
+            Render.plotly(holder, r.figure, function (drill, cd, el) {
               if (cd && cd.leaf === false) return; // 상위 칸 클릭=확대만
-              plotlyDrill(drill);
+              plotlyDrill(drill, cd, el);
             });
             setTarget({ kind: 'plotly', el: holder });
           }
@@ -3790,7 +3956,8 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
           c.body.appendChild(Insight.box(res, 'opportunity'));
         }
         if (r) renderIt(r);
-        else Api.post('/api/opportunity', { filters: State.filters }).then(function (res) {
+        else Api.post('/api/opportunity',
+          { filters: State.filters, company: Scope.single() }).then(function (res) {
           State.lastResults.opportunity = res; renderIt(res);
         }).catch(errToast);
       } }
@@ -4020,7 +4187,7 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
         c.body.appendChild(detail);
         function openCell(problem, solution) {
           Api.post('/api/problem-solution', {
-            filters: State.filters, cell: true, problem: problem, solution: solution
+            filters: scopedFilters(), cell: true, problem: problem, solution: solution
           }, '셀 상세 계산 중…').then(function (d) {
             detail.innerHTML = '';
             if (d.status !== 'ok') { detail.innerHTML = Render.statusBlock(d); return; }
@@ -4779,6 +4946,7 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
     section('🖱️ 차트 공통 기능',
       '<ul style="padding-left:18px;line-height:1.9">' +
       '<li><b>드릴다운</b>: 차트의 점·막대·셀·노드를 클릭하면 근거 특허 목록이 열립니다. 표의 파란 텍스트도 클릭 가능합니다.</li>' +
+      '<li><b>🎯 분석 범위 (1개 회사 / 여러 회사)</b>: 상단 필터바의 <b>분석 범위</b>에서 "여러 회사 (전체)"와 "1개 회사"를 전환할 수 있습니다. <b>1개 회사</b>를 고르고 회사를 선택하면 모든 분석이 그 회사 중심으로 다시 계산됩니다 — ① 자사 관점 분석(White Space·경영 요약·핵심특허 영향력 등)은 그 회사를 자사/관점으로 삼아 <b>전체 시장 대비</b>로 계산하고, ② 나머지 분석은 그 회사 문헌(공동출원 포함)만 집계하며, ③ 여러 회사 비교 전용 분석(선행-추종·발명자 이동·권리범위 엔트로피·양도 분석)은 사유와 함께 자동 비활성화됩니다. 차트 클릭 드릴다운도 같은 범위로 정렬되고, LLM 인사이트는 그 회사의 전략·리스크·기회 관점으로 작성됩니다 (공동출원 상대 등 다른 회사 정보는 관계 맥락으로 표시). 선택은 브라우저에 기억됩니다.</li>' +
       '<li><b>👥 출원인 선택</b>: 출원 동향 · 기술분류 동향 · 출원인 포커스 · 신흥 기술 탐지 · 기술×연도 버블 · 심층 시그널 4개 탭 · 특수 신호 2개 탭(심사관 인텔리전스 포함) · 핵심특허 영향력 카드 상단의 드롭다운으로 특정 출원인만 골라 볼 수 있습니다 (공동출원 건 포함 매칭). White Space Map 에서는 선택한 출원인이 <b>자사</b>가 되어 ◇(자사 역량 보유) 판정 기준이 됩니다. 출원인 포커스 탭은 선택한 회사의 집중 기술과 "작지만 최근 3년에 급부상한 아이템"을 찾아줍니다. <b>차트가 여러 개인 탭</b>에서는 각 차트 아래의 <b>"이 차트만: 출원인 선택"</b> 드롭다운으로 차트마다 서로 다른 출원인을 적용할 수 있습니다 — 선택한 차트만 그 출원인 기준으로 재계산되어 교체되고 나머지 차트·표는 그대로 유지됩니다 (카드 상단 드롭다운은 탭 전체에 적용). 선택 출원인 기준으로 계산할 수 없는 차트(표본 부족 등)는 사유가 표시되고 원래 차트가 유지됩니다.</li>' +
       '<li><b>Excel</b>: 카드 우상단 Excel 버튼 — 화면 차트의 집계 데이터를 시트별로 다운로드합니다. 첫 시트 "설명"에 카드 설명·각 시트의 축/색 의미·차트 해석·인사이트가 함께 들어가 파일만 열어도 데이터 의미를 알 수 있습니다. 일부 차트는 화면보다 상세한 원천 데이터 시트가 추가로 붙습니다 (예: 기업별 과학 근접도 — 회사별 평균 NPL·표본 수·NPL 인용 특허 수).</li>' +
       '<li><b>PNG/SVG</b>: 보고서용 이미지 저장. PNG 와 PPT 용 차트 캡처는 <b>글자를 1.45배(최소 13px)로 키우고 2배 해상도·흰 배경</b>으로 렌더되어, 슬라이드 전체 폭으로 확대해도 흐리지 않고 글자가 선명하게 읽힙니다 (화면 차트는 그대로 유지 — 내보내기 복제본에만 적용).</li>' +
