@@ -179,3 +179,37 @@ def test_availability_with_ipc_only():
         assert av[a]["available"], "%s 비활성: %s" % (a, av[a]["missing"])
     # B·C축이 필요한 문제-해결 매트릭스는 여전히 비활성 (IPC 로 대체 불가)
     assert not av["problem-solution"]["available"]
+
+
+def test_korean_transliterated_corp_suffix_not_split():
+    """'마이크론 테크놀로지, 인크' 류 한글 음역 법인명이 유령 공동출원인
+    ('인크')으로 쪼개지지 않고, 표준화에서 접미사가 제거된다. (사용자 보고 버그)"""
+    import pandas as pd
+    from src.preprocessing import split_names, auto_standardize_name, \
+        standardize_applicants
+    # 쉼표 뒤 음역 접미사 → 분리 금지
+    assert split_names("마이크론 테크놀로지, 인크") == ["마이크론 테크놀로지, 인크"]
+    assert split_names("어플라이드 머티어리얼스, 인코포레이티드") == \
+        ["어플라이드 머티어리얼스, 인코포레이티드"]
+    assert split_names("타이완 세미컨덕터 매뉴팩처링 컴퍼니, 리미티드") == \
+        ["타이완 세미컨덕터 매뉴팩처링 컴퍼니, 리미티드"]
+    # 진짜 복수 출원인(세미콜론·일반 쉼표)은 여전히 분리
+    assert split_names("삼성전자; 마이크론 테크놀로지, 인크") == \
+        ["삼성전자", "마이크론 테크놀로지, 인크"]
+    assert split_names("삼성전자, SK하이닉스") == ["삼성전자", "SK하이닉스"]
+    # 표준화: 음역 접미사 제거 (경계 필요 — 이름 일부 오절단 금지)
+    assert auto_standardize_name("마이크론 테크놀로지, 인크") == "마이크론 테크놀로지"
+    assert auto_standardize_name("마이크론 테크놀로지, 인코포레이티드") == "마이크론 테크놀로지"
+    assert auto_standardize_name("인터링크") == "인터링크"
+    assert auto_standardize_name("다이니혼 잉크") == "다이니혼 잉크"
+    assert auto_standardize_name("화웨이기술유한공사") == "화웨이기술"
+    assert auto_standardize_name("가부시키가이샤 한도오따이 에네루기 켄큐쇼") == \
+        "한도오따이 에네루기 켄큐쇼"
+    # 통합: 표준 프레임에 '인크'가 출원인으로 등장하지 않음
+    df = pd.DataFrame({"applicant": ["마이크론 테크놀로지, 인크",
+                                     "삼성전자; 마이크론 테크놀로지, 인크"],
+                       "app_number": ["1", "2"]})
+    df = standardize_applicants(df, None)
+    assert df["applicant_display"].tolist() == ["마이크론 테크놀로지", "삼성전자"]
+    assert df["_co_applicants_display"].tolist() == \
+        [["마이크론 테크놀로지"], ["삼성전자", "마이크론 테크놀로지"]]

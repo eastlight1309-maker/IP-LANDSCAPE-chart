@@ -1825,8 +1825,23 @@ _CORP_SUFFIXES = [
     "l.l.c.", "gmbh & co. kg", "gmbh", "ag", "s.a.", "sa", "s.p.a.", "spa", "b.v.", "bv",
     "n.v.", "nv", "k.k.", "kk", "kabushiki kaisha", "co", "limited", "plc",
     "주식회사", "(주)", "㈜", "유한회사", "유한책임회사", "합자회사", "재단법인", "사단법인", "학교법인",
-    "국립대학법인", "주)",
+    "국립대학법인", "주)", "유한공사", "고분유한공사",
 ]
+
+# 한글 음역 법인 접미사 — 앞에 공백(또는 쉼표+공백) 경계가 있을 때만 제거.
+# '인크' 등 짧은 음역을 경계 없이 자르면 실제 이름 일부를 훼손할 수 있어
+# ASCII 접미사와 같은 경계 규칙을 적용한다 (예: "마이크론 테크놀로지, 인크").
+_KO_TRANSLIT_SUFFIXES = frozenset([
+    "인코포레이티드", "인코퍼레이티드", "아이엔씨", "인크",
+    "리미티드", "리미테드", "엘티디", "엘엘씨", "엘엘피", "피엘씨",
+    "코퍼레이션", "코포레이션", "코오포레이션", "컴퍼니", "캄파니",
+    "게엠베하", "아게", "에스에이", "에스피에이", "에스알엘",
+    "비브이", "엔브이", "카게", "피티이",
+    "가부시키가이샤", "가부시끼가이샤", "카부시키가이샤", "카부시키카이샤",
+    "유겐가이샤", "유겐카이샤",
+])
+_CORP_SUFFIXES = list(_CORP_SUFFIXES) + sorted(_KO_TRANSLIT_SUFFIXES,
+                                               key=len, reverse=True)
 _PAREN_RE = re.compile(r"[\(\)\[\]\{\}（）]")
 _MULTISPACE_RE = re.compile(r"\s+")
 _SPECIAL_RE = re.compile(r"[\"'`!@#$%^*+=~?<>]")
@@ -1856,8 +1871,10 @@ def auto_standardize_name(name):
         for suf in _CORP_SUFFIXES:
             # 영문(ASCII) 접미사는 단어 경계 필수 — 경계 없이 자르면
             # POSCO→POS, SUMCO→SUM 같은 오절단이 생긴다. 한글 접미사는
-            # 붙여쓰기 관행(삼성전자주식회사)이 있어 경계 없이도 허용.
-            ascii_suf = bool(re.fullmatch(r"[\x00-\x7F]+", suf))
+            # 붙여쓰기 관행(삼성전자주식회사)이 있어 경계 없이도 허용하되,
+            # 음역 접미사('인크' 등)는 오절단 위험이 있어 경계를 요구한다.
+            ascii_suf = bool(re.fullmatch(r"[\x00-\x7F]+", suf)) \
+                or suf in _KO_TRANSLIT_SUFFIXES
             hit = (low == suf or low.endswith(" " + suf)
                    or (not ascii_suf and low.endswith(suf)))
             if hit:
@@ -1868,7 +1885,9 @@ def auto_standardize_name(name):
                     changed = True
                     break
         low2 = s.lower()
-        for pre in ("주식회사 ", "(주)", "㈜", "유한회사 "):
+        for pre in ("주식회사 ", "(주)", "㈜", "유한회사 ",
+                    "가부시키가이샤 ", "가부시끼가이샤 ", "카부시키가이샤 ",
+                    "카부시키카이샤 ", "유겐가이샤 ", "유겐카이샤 "):
             if low2.startswith(pre.lower()):
                 trimmed = s[len(pre):].strip(" ,.-·")
                 if trimmed:
@@ -1905,11 +1924,23 @@ def split_names(value):
     return [s]
 
 
-# 쉼표 분리 금지 판정용 법인 접미사 토큰 (split_names)
+# 쉼표 분리 금지 판정용 법인 접미사 토큰 (split_names).
+# 영문뿐 아니라 한글 음역 표기("마이크론 테크놀로지, 인크" 의 '인크' 등)도
+# 포함 — 이 토큰이 보이면 쉼표는 이름 내부 구두점으로 보고 분리하지 않는다.
 _COMMA_CORP_TOKENS = frozenset([
-    "ltd", "ltd.", "inc", "inc.", "llc", "l.l.c", "co", "co.", "corp", "corp.",
-    "limited", "plc", "gmbh", "ag", "sa", "s.a", "spa", "s.p.a", "bv", "b.v",
-    "nv", "n.v", "kk", "k.k", "kg"])
+    "ltd", "ltd.", "inc", "inc.", "llc", "l.l.c", "llp", "lp", "co", "co.",
+    "corp", "corp.", "limited", "plc", "gmbh", "ag", "sa", "s.a", "spa",
+    "s.p.a", "bv", "b.v", "nv", "n.v", "kk", "k.k", "kg", "sarl", "s.a.r.l",
+    "srl", "s.r.l", "pte", "pte. ltd", "pty", "pty. ltd",
+    # 한글 음역 법인 접미사
+    "인크", "잉크", "인코포레이티드", "인코퍼레이티드", "아이엔씨",
+    "리미티드", "리미테드", "엘티디", "엘엘씨", "엘엘피", "엘피", "피엘씨",
+    "코퍼레이션", "코포레이션", "코오포레이션", "컴퍼니", "캄파니",
+    "게엠베하", "아게", "에스에이", "에스피에이", "에스알엘",
+    "비브이", "엔브이", "카게", "피티이", "피티이. 엘티디",
+    "가부시키가이샤", "가부시끼가이샤", "카부시키가이샤", "카부시키카이샤",
+    "유겐가이샤", "유겐카이샤",
+    "주식회사", "유한회사", "유한공사", "고분유한공사"])
 
 _NUMERIC_ONLY_RE = re.compile(r"^[+-]?\d+(\.\d+)?$")
 
@@ -16646,7 +16677,7 @@ def compute_quality_report(df, settings):
 
 
 # 검증 리포트용 빌드 정보 (tools/build_backend.py 가 실측 집계)
-_QR_BUILD_INFO = {'built_at': '2026-09-03 04:19', 'modules': 46, 'test_functions': 276, 'test_files': 15, 'source': 'build'}
+_QR_BUILD_INFO = {'built_at': '2026-09-03 07:27', 'modules': 46, 'test_functions': 277, 'test_files': 15, 'source': 'build'}
 
 
 
