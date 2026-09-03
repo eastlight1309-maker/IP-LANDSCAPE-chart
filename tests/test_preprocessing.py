@@ -141,3 +141,41 @@ def test_apply_filters(prepared):
     # 존재하지 않는 컬럼 필터는 무시 (graceful)
     df_min = prepared.drop(columns=["country"])
     assert len(apply_filters(df_min, {"countries": ["KR"]})) == len(df_min)
+
+
+def test_ipc_fallback_tech_classification():
+    """기술 대/중/소분류 미매핑 시 IPC/CPC 로 분류 체계 자동 생성.
+
+    대분류=섹션, 중분류=클래스, 소분류=서브클래스 — 라벨에 코드 병기.
+    기술분류 컬럼이 있으면 폴백이 개입하지 않는다.
+    """
+    import pandas as pd
+    from src.preprocessing import build_tech_lists
+    df = pd.DataFrame({"ipc": ["H01L 23/28; H01L 25/065; G06F 3/041",
+                               "Y02E 10/50", ""]})
+    df = build_tech_lists(df)
+    assert df["_tech_l1_list"].tolist()[0] == ["H 전기", "G 물리학"]
+    assert df["_tech_l2_list"].tolist()[0][0].startswith("H01 ")
+    l3 = df["_tech_list"].tolist()[0]
+    assert "H01L 반도체 장치" in l3          # 중복 서브클래스는 1회
+    assert len([x for x in l3 if x.startswith("H01L")]) == 1
+    assert df["_tech_list"].tolist()[1] == ["Y02E 온실가스 감축 — 에너지 생산·전송·배전"]
+    assert df["_tech_list"].tolist()[2] == []
+    # 기술분류 컬럼이 있으면 그 값을 사용 (폴백 미개입)
+    df2 = pd.DataFrame({"ipc": ["H01L 23/28"], "tech_l1": ["패키징"]})
+    df2 = build_tech_lists(df2)
+    assert df2["_tech_list"].tolist() == [["패키징"]]
+
+
+def test_availability_with_ipc_only():
+    """기술분류 컬럼 없이 IPC 만 매핑돼도 기술 기반 분석이 활성화된다."""
+    from src.column_mapping import analysis_availability
+    m = {"ipc": "Current IPC All", "app_date": "출원일", "applicant": "출원인",
+         "cites_forward": "피인용 문헌 수(F1)"}
+    av = analysis_availability(m)
+    for a in ("overview", "lifecycle", "tech-tree", "tech-year-bubble",
+              "technology-network", "combo-upset", "citation-diffusion",
+              "executive-summary", "classification-quality"):
+        assert av[a]["available"], "%s 비활성: %s" % (a, av[a]["missing"])
+    # B·C축이 필요한 문제-해결 매트릭스는 여전히 비활성 (IPC 로 대체 불가)
+    assert not av["problem-solution"]["available"]

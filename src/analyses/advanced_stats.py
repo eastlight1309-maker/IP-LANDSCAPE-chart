@@ -32,7 +32,8 @@ import pandas as pd
 
 from src.analyses.common import explode_applicants
 from src.config import get_threshold, get_limit
-from src.preprocessing import parse_multiclass_cell, auto_standardize_name
+from src.preprocessing import parse_multiclass_cell, auto_standardize_name, \
+    IPC_SECTION_KO, IPC_SUBCLASS_KO
 from src.insights import build_insight, fmt_num, fmt_pct, period_label, check_small_sample
 from src.viz_payload import ok_result, empty_result, bar_chart, line_chart, \
     cytoscape_network, base_layout
@@ -228,45 +229,6 @@ def _coapplicant_section(df, settings):
     return {"network": cytoscape_network(nodes, edges),
             "n_pairs": len(pair_counts),
             "top_pair": {"a": top_pair[0][0], "b": top_pair[0][1], "n": top_pair[1]}}, None
-
-
-# IPC/CPC 섹션(1자리) 표준 명칭 — 국제특허분류 공식 섹션 구분
-IPC_SECTION_KO = {
-    "A": "생활필수품", "B": "처리조작; 운수", "C": "화학; 야금",
-    "D": "섬유; 지류", "E": "고정구조물(건설)",
-    "F": "기계공학; 조명; 가열; 무기; 폭파", "G": "물리학", "H": "전기",
-    "Y": "CPC 전용 태그(신기술·범분야 — 기후변화 대응 등)",
-}
-
-# 자주 나오는 서브클래스(4자리) 한글 설명 — 사전에 없는 코드는 섹션 설명만 표시
-# (표준 분류표 전체를 내장하지 않고, 확실한 대표 코드만 수록해 임의 설명을 만들지 않음)
-IPC_SUBCLASS_KO = {
-    "H01L": "반도체 장치", "H01M": "전지(배터리·연료전지)", "H01R": "전기 접속(커넥터)",
-    "H01S": "레이저", "H01F": "자석·변압기·인덕터", "H01B": "케이블·도체·절연체",
-    "H01G": "커패시터", "H01J": "전자관·방전 장치", "H01Q": "안테나",
-    "H02J": "전력 급전·배전 시스템", "H02M": "전력 변환(인버터·컨버터)",
-    "H02K": "전동기·발전기", "H03K": "펄스 회로", "H03M": "부호화·복호화",
-    "H04L": "디지털 정보의 전송(네트워크 통신)", "H04W": "무선통신 네트워크",
-    "H04N": "화상 통신(영상·카메라)", "H04B": "전송 일반", "H04R": "스피커·마이크",
-    "H05K": "인쇄회로(PCB)·전자기기 조립", "H10K": "유기 전자 소자(OLED 등)",
-    "G01N": "재료의 분석·시험", "G01R": "전기량 측정", "G02B": "광학 요소·시스템",
-    "G02F": "광 제어 장치(액정 등)", "G03F": "포토리소그래피(패턴 노광)",
-    "G05B": "제어·조절 시스템 일반", "G06F": "전기적 디지털 데이터 처리(컴퓨팅)",
-    "G06N": "AI·기계학습 등 특정 계산 모델", "G06Q": "관리·상거래용 데이터 처리",
-    "G06T": "이미지 데이터 처리·생성", "G06V": "이미지·비디오 인식",
-    "G09G": "표시장치 구동·제어", "G11C": "메모리(정적 기억장치)",
-    "G16H": "헬스케어 정보학",
-    "A61B": "진단·수술(의료기기)", "A61K": "의약용 제제", "A61P": "의약의 치료 활성",
-    "C01B": "비금속 원소·화합물", "C07D": "복소환 화합물", "C07K": "펩티드",
-    "C08J": "고분자 가공·후처리", "C08L": "고분자 조성물", "C09D": "코팅 조성물(도료)",
-    "C09J": "접착제", "C12N": "미생물·효소(유전공학)", "C23C": "금속 피복(코팅·증착)",
-    "B01D": "분리(여과·증류)", "B01J": "촉매·화학 반응 장치", "B23K": "납땜·용접·절단",
-    "B29C": "플라스틱 성형·접합", "B32B": "적층체(라미네이트)",
-    "B60L": "전기 추진 차량", "B60W": "차량 통합 제어(하이브리드·주행)",
-    "B65D": "포장 용기", "B81B": "마이크로구조 장치(MEMS)", "B82Y": "나노기술 응용",
-    "Y02E": "온실가스 감축 — 에너지 생산·전송·배전", "Y02T": "온실가스 감축 — 운송",
-    "Y02P": "온실가스 감축 — 생산·가공", "Y04S": "스마트그리드 정보통신",
-}
 
 
 def _ipc_desc(code):

@@ -543,12 +543,17 @@ def test_auth_login_and_ownership_scoping(client):
         assert client.get("/api/auth/users", headers=hB).status_code == 403
         users = client.get("/api/auth/users", headers=hA).get_json()["users"]
         assert {u["name"] for u in users} == {"IP팀/홍길동", "특허팀/김철수"}
-        # 스냅샷 소유권
+        # 스냅샷은 팀 공유: 다른 사용자 것도 목록에 보이고 불러올 수 있다
+        # (삭제만 소유자/관리자 제한)
         client.post("/api/project/save", headers=hA,
                     json={"name": "A의 분석", "filters": {}})
         lstB = client.post("/api/project/load", headers=hB,
                            json={}).get_json()["projects"]
-        assert all(p["name"] != "A의 분석" for p in lstB)
+        entryB = next(p for p in lstB if p["name"] == "A의 분석")
+        assert entryB["owner"] == "IP팀/홍길동"     # 누구 작업인지 표시
+        got = client.post("/api/project/load", headers=hB,
+                          json={"name": "A의 분석"}).get_json()
+        assert got["status"] == "ok" and got["name"] == "A의 분석"
         lstA = client.post("/api/project/load", headers=hA,
                            json={}).get_json()["projects"]
         assert any(p["name"] == "A의 분석" for p in lstA)

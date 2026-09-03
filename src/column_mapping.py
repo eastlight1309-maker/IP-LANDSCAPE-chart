@@ -503,7 +503,9 @@ CONCEPT_KEYS = list(CONCEPTS.keys())
 # 기술분류는 tech_l1/l2/l3/tech_multi 중 하나라도 있으면 되는 경우
 # "any:" 그룹으로 표기한다.
 # ---------------------------------------------------------------------------
-ANY_TECH = ["tech_l1", "tech_l2", "tech_l3", "tech_multi"]
+# 기술분류: 전용 분류 컬럼이 없어도 IPC/CPC 가 매핑되면 전처리가 대(섹션)/
+# 중(클래스)/소(서브클래스) 분류를 자동 생성하므로 ipc 도 기술분류 요건을 충족
+ANY_TECH = ["tech_l1", "tech_l2", "tech_l3", "tech_multi", "ipc"]
 ANY_APPLICANT = ["applicant_std", "applicant"]
 ANY_DATE = ["app_date", "priority_date", "pub_date"]
 

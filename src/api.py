@@ -964,19 +964,18 @@ def register_routes(app):
         projects = storage.load_projects()
         name = body.get("name")
         me = _req_user()
+        # 분석 스냅샷은 팀 공유 자산 — 소유자와 무관하게 모두 보고 불러올 수
+        # 있다 (삭제만 소유자/관리자 제한). 목록에 owner 를 담아 누구 작업인지
+        # 표시하고, 프론트의 '내 작업 보기' 필터로 좁혀 볼 수 있다.
         if not name:
             return {"status": "ok",
                     "projects": [{"name": k, "saved_at": v.get("saved_at"),
                                   "note": v.get("note"),
                                   "worker": v.get("worker", ""),
                                   "owner": v.get("owner")}
-                                 for k, v in projects.items()
-                                 if auth_can_see(v.get("owner"), me)]}
+                                 for k, v in projects.items()]}
         if name not in projects:
             raise LookupError("프로젝트를 찾을 수 없습니다: %s" % name)
-        if not auth_can_see(projects[name].get("owner"), me):
-            return _error(403, "'%s' 사용자의 스냅샷입니다 — 본인 것만 볼 수 있습니다."
-                          % projects[name].get("owner"))
         if body.get("delete"):
             if not auth_can_delete(projects[name].get("owner"), me):
                 return _error(403, "본인이 저장한 스냅샷만 삭제할 수 있습니다 (관리자 예외).")
