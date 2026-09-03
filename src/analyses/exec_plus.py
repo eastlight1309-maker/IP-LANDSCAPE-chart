@@ -95,7 +95,8 @@ def _expiry_cliff_section(df, settings, focal):
                        "x": years, "y": [int(cnt.get(y, 0)) for y in years],
                        "marker": {"color": "#BAB0AC"}})
     fig = {"data": traces, "layout": base_layout(
-        "특허 만료 절벽 — 향후 10년 연도별 만료 예정 (기업별 적층, 빨강=자사)",
+        "특허 만료 절벽 — 향후 10년 연도별 만료 예정 (기업별 적층%s)"
+        % (", 빨강=자사" if focal else " · 중립 분석"),
         barmode="stack",
         xaxis={"title": "만료 연도", "dtick": 1, "tickformat": "d"},
         yaxis={"title": "만료 예정 특허 수"})}
@@ -124,10 +125,11 @@ def _expiry_cliff_section(df, settings, focal):
             "drill": {"type": "ids", "ids": ids}})
     by_year = sub.groupby("_exp_y").size()
     peak_y = int(by_year.idxmax())
-    _focal_m = applicant_mask(sub, focal, scope="any")
-    n_focal = int(_focal_m.sum())
+    # 자사 미지정(중립 분석)이면 자사 건수는 계산 대상이 아님
+    n_focal = int(applicant_mask(sub, focal, scope="any").sum()) if focal else None
     comp_top = sub_x.loc[sub_x["applicant_display"] != focal,
-                         "applicant_display"].value_counts()
+                         "applicant_display"].value_counts() if focal \
+        else sub_x["applicant_display"].value_counts()
     return {"fig": fig, "key_rows": key_rows, "basis": basis,
             "key_basis": key_basis,
             "peak_year": peak_y, "peak_n": int(by_year.max()),
@@ -585,12 +587,18 @@ def compute_exec_plus(df, settings, company=None, only_sections=None):
     if not len(df):
         return empty_result()
     focal, focal_basis = _pick_focal(df, settings, company)
-    if focal is None:
+    if focal is None and str(company or "") != "__none__":
         return empty_result("출원인 정보가 없어 자사(focal)를 정할 수 없습니다.")
     wanted = set(only_sections) if only_sections else None
     sections, skipped = {}, []
+    _NEED_FOCAL = {"keyman", "catchup", "threat", "pruning"}
     for key, fn in _EXEC_SECTIONS:
         if wanted is not None and key not in wanted:
+            continue
+        if focal is None and key in _NEED_FOCAL:
+            skipped.append({"section": key,
+                            "reason": "자사 미지정(중립 분석) — 자사 관점 지표라 "
+                                      "자사 기준을 선택하면 계산됩니다"})
             continue
         try:
             result, reason = fn(df, settings, focal)
@@ -608,10 +616,11 @@ def compute_exec_plus(df, settings, company=None, only_sections=None):
     period = period_label(df)
     if "expiry_cliff" in sections:
         ec = sections["expiry_cliff"]
-        sentences.append("%s 기준 만료 절벽의 피크는 %d년(%s건)이며, 경쟁사 중 "
+        sentences.append("%s 기준 만료 절벽의 피크는 %d년(%s건)이며, %s "
                          "'%s'의 만료 예정이 %s건으로 가장 많아 해당 시점 전후가 "
                          "진입 기회 검토 구간입니다."
                          % (period, ec["peak_year"], fmt_num(ec["peak_n"]),
+                            "경쟁사 중" if focal else "기업 중",
                             ec["top_competitor"] or "-",
                             fmt_num(ec["top_competitor_n"])))
         metrics["expiry_peak_year"] = ec["peak_year"]
@@ -667,6 +676,6 @@ def compute_exec_plus(df, settings, company=None, only_sections=None):
         {"sections": sections, "skipped": skipped,
          "focal": focal, "focal_basis": focal_basis},
         insight=insight,
-        meta={"note": "자사(focal)='%s' (%s). 모든 수치는 현재 필터가 적용된 "
+        meta={"note": "자사(focal)=%s (%s). 모든 수치는 현재 필터가 적용된 "
                       "데이터셋 기준의 통계 신호이며 법률·재무 자문이 아닙니다."
-                      % (focal, focal_basis)})
+                      % ("'%s'" % focal if focal else "미지정", focal_basis)})

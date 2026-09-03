@@ -35,8 +35,18 @@ from src.insights import build_insight, fmt_num, fmt_pct, period_label, \
 from src.viz_payload import ok_result, empty_result, base_layout, color_for
 
 
+# 화면에서 "자사 선택 안 함 (중립 분석)"을 고르면 오는 센티널 값 —
+# 자사 자동 선택(최다 출원인 폴백)을 끄고 출원인 간 중립 관점으로 계산한다
+NO_FOCAL = "__none__"
+
+
 def _pick_focal(df, settings, company=None):
-    """자사(focal) 출원인 결정. 반환 (name, basis)."""
+    """자사(focal) 출원인 결정. 반환 (name, basis).
+
+    company == NO_FOCAL 이면 (None, 중립) — 자동 선택하지 않는다.
+    """
+    if str(company or "") == NO_FOCAL:
+        return None, "자사 미지정 (중립 분석)"
     apps = df["applicant_display"].replace("", np.nan).dropna()
     if not len(apps):
         return None, None
@@ -82,6 +92,13 @@ def compute_executive_summary(df, settings, company=None):
                             "확인하세요.")
     focal, focal_basis = _pick_focal(df, settings, company)
     if focal is None:
+        if str(company or "") == NO_FOCAL:
+            return empty_result("자사 미지정(중립 분석) 상태입니다 — 이 대시보드는 "
+                                "순위·상대 점유율·위협 alert 가 모두 자사 관점 "
+                                "지표라 자사 없이 계산하지 않습니다. 상단에서 자사를 "
+                                "선택하거나 '자사 자동 선택'으로 두세요. 중립 비교는 "
+                                "경영 요약의 만료 절벽·R&D 효율, 기업 분석 메뉴를 "
+                                "이용하세요.")
         return empty_result("출원인 정보가 없어 자사 기준 대시보드를 만들 수 없습니다.")
     recent = int(get_threshold(settings, "recent_years"))
     max_year = int(df["_base_year"].dropna().max())

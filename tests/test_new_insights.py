@@ -2405,3 +2405,32 @@ def test_ipc_section_scheme_desc_and_drill(settings):
     df2.attrs = {}
     r2, _ = _ipc_section(df2, settings)
     assert "CPC" in r2["scheme"]
+
+
+def test_exec_plus_no_focal_neutral(settings):
+    """'자사 선택 안 함(중립 분석)': 자사 자동 선택 없이 중립 계산.
+
+    - 만료 절벽·R&D 효율은 자사 강조 없이 계산 (빨간 자사색 없음, 제목에 중립)
+    - 자사 관점 전용 섹션(키맨·추격·위협·다이어트)은 사유와 함께 생략
+    - 자사 기준 대시보드는 안내 메시지로 응답
+    """
+    from src.analyses.exec_plus import compute_exec_plus
+    from src.analyses.executive import compute_executive_summary
+    df = make_prepared(generate_sample(n=300, seed=5))
+    r = compute_exec_plus(df, settings, company="__none__")
+    assert r["status"] == "ok"
+    assert r["focal"] is None and "중립" in r["focal_basis"]
+    assert "expiry_cliff" in r["sections"]
+    ec = r["sections"]["expiry_cliff"]
+    assert "중립 분석" in ec["fig"]["layout"]["title"]["text"]
+    assert all(not row["is_focal"] for row in ec["key_rows"])   # 자사 표시 없음
+    assert ec["n_focal_expiring"] is None
+    skipped = {s["section"]: s["reason"] for s in r["skipped"]}
+    for k in ("keyman", "catchup", "threat", "pruning"):
+        assert k in skipped and "자사 미지정" in skipped[k], (k, skipped)
+    # 자동 선택은 기존 그대로 동작 (회귀)
+    r2 = compute_exec_plus(df, settings)
+    assert r2["focal"]
+    # 전략 대시보드는 자사 없이 계산하지 않음을 안내
+    r3 = compute_executive_summary(df, settings, company="__none__")
+    assert r3["status"] == "empty" and "자사 미지정" in r3["message"]

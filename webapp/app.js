@@ -1856,7 +1856,8 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
         analysis: 'exec-plus', holder: h, title: title, help: help,
         body: { sections: sectionKeys },
         controls: function (c, reload) {
-          var sel = Ui.el('<select><option value="">자사 자동 선택</option></select>');
+          var sel = Ui.el('<select><option value="">자사 자동 선택</option>' +
+            '<option value="__none__">자사 선택 안 함 (중립 분석)</option></select>');
           ((State.filterOptions || {}).applicants || []).slice(0, 300).forEach(function (a) {
             var o = document.createElement('option'); o.value = a; o.textContent = a;
             sel.appendChild(o);
@@ -1874,7 +1875,11 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
     var s = r.sections || {};
     var first = true;
     c.body.appendChild(Ui.el('<div style="font-size:12.5px;color:#46607a;margin-bottom:6px">' +
-      '자사 기준: <b>' + Ui.esc(r.focal || '-') + '</b> (' + Ui.esc(r.focal_basis || '') + ')</div>'));
+      (r.focal
+        ? '자사 기준: <b>' + Ui.esc(r.focal) + '</b> (' + Ui.esc(r.focal_basis || '') + ')'
+        : '⚖️ <b>자사 미지정 — 중립 분석</b>: 자사 강조 없이 출원인들을 동등하게 ' +
+          '비교합니다. 자사 관점 섹션(키맨·추격·위협·다이어트)은 자사 선택 시 계산됩니다.') +
+      '</div>'));
     function addFig(fig, tall) {
       if (!fig) return;
       var holder = Ui.el('<div class="chart-holder"' +
@@ -2158,7 +2163,9 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
         '◇빨간 테두리=자사 — 우상단으로 갈수록 공격적 리더이고, 자사보다 오른쪽·위에 있는 ' +
         '기업이 실질 위협입니다. 버블 클릭 시 근거 특허가 열립니다.',
       controls: function (c, reload) {
-        var sel = Ui.el('<select><option value="">자사 자동 선택</option></select>');
+        var sel = Ui.el('<select><option value="">자사 자동 선택</option>' +
+          '<option value="__none__" title="자사 관점 대시보드 대신 안내가 표시됩니다">' +
+          '자사 선택 안 함 (중립 분석)</option></select>');
         ((State.filterOptions || {}).applicants || []).slice(0, 300).forEach(function (a) {
           var o = document.createElement('option'); o.value = a; o.textContent = a;
           sel.appendChild(o);
@@ -5227,7 +5234,7 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
       '<table class="ipls-table"><thead><tr><th>메뉴</th><th>내용</th></tr></thead><tbody>' +
       '<tr><td>🚀 시작하기</td><td>로그인 → 데이터 준비(작업자·작업명·엑셀 업로드) → 분석 범위 → 분석 목적·분석 시작을 순서대로 안내하는 단계별 화면. 데이터가 설정되지 않은 상태로 접속하면 자동으로 열립니다.</td></tr>' +
       '<tr><td>🎯 목적 맞춤 분석</td><td>분석 목적(기술 동향·경쟁사·R&amp;D 방향·White Space·특허 회피·FTO·포트폴리오·M&amp;A·국가 R&amp;D·라이선스) 선택 → 목적별 추천 차트를 우선순위·이유와 함께 표시, [열기]로 바로 이동. 특허 회피·FTO 목적에는 법률 자문 아님 고지가 함께 표시됩니다.</td></tr>' +
-      '<tr><td>📊 Executive Overview</td><td>경영 요약(KPI·경보·BCG 매트릭스·경쟁 포지션) + 경영 차트 6종: 📅만료 절벽 / 💰R&amp;D 효율 사분면 / 👤키맨 리스크 / ⏱️추격 시계 / 🚨위협 레이더 / ✂️포트폴리오 다이어트 (탭마다 자사 기준 선택 가능)</td></tr>' +
+      '<tr><td>📊 Executive Overview</td><td>경영 요약(KPI·경보·BCG 매트릭스·경쟁 포지션) + 경영 차트 6종: 📅만료 절벽 / 💰R&amp;D 효율 사분면 / 👤키맨 리스크 / ⏱️추격 시계 / 🚨위협 레이더 / ✂️포트폴리오 다이어트. 탭마다 자사 기준을 선택할 수 있고(미선택 시 최다 출원인 자동), <b>"자사 선택 안 함 (중립 분석)"</b>을 고르면 자사 강조 없이 출원인들을 동등하게 비교합니다 — 이때 자사 관점 전용 섹션(키맨·추격·위협·다이어트, 전략 대시보드)은 사유와 함께 생략됩니다.</td></tr>' +
       '<tr><td>📈 전체 동향</td><td>포트폴리오 전체의 기본 현황: 연도별 출원 동향(출원인 선택 가능), 국가별 분포·출원인 순위·활동 매트릭스, 심화 분석(심사기간·만료 타임라인·청구항·공동출원 협력 네트워크·IPC/CPC 분포). 협력 네트워크는 선(두 회사) 또는 노드(기업) 클릭으로 공동출원 특허 목록(출원번호·출원인 전원·명칭·대표청구항)을 열 수 있고, IPC/CPC 차트는 분류 체계·매핑 컬럼과 코드별 한글 설명을 함께 표시합니다.</td></tr>' +
       '<tr><td colspan="2" style="background:#f4f8fb;font-weight:700">🔬 기술 분석 — "어떤 기술이 어디로 가는가"</td></tr>' +
       '<tr><td>🔬 기술 분석</td><td>기술분류 동향(출원인 선택 가능), 기술분류 트리맵(대·중·소 계층, 면적=문헌 수), 기술×연도 버블(대·중·소 선택 + 최대 3사 비교), 기술 생애주기 Phase Map, 전이 Sankey, Emerging Radar, 조합 네트워크, 분류축 교차(A·B·C), 신흥 기술 탐지(임베딩 — 출원인·기간 선택 가능)</td></tr>' +
