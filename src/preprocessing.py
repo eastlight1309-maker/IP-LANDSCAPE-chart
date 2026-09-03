@@ -370,7 +370,7 @@ _CORP_SUFFIXES = [
     "co., ltd.", "co.,ltd.", "co., ltd", "co.,ltd", "co. ltd", "co ltd", "company limited",
     "corporation", "incorporated", "corp.", "corp", "inc.", "inc", "ltd.", "ltd", "llc",
     "l.l.c.", "gmbh & co. kg", "gmbh", "ag", "s.a.", "sa", "s.p.a.", "spa", "b.v.", "bv",
-    "n.v.", "nv", "k.k.", "kk", "kabushiki kaisha", "co", "limited", "plc",
+    "n.v.", "nv", "k.k.", "kk", "kabushiki kaisha", "co", "company", "limited", "plc",
     "주식회사", "(주)", "㈜", "유한회사", "유한책임회사", "합자회사", "재단법인", "사단법인", "학교법인",
     "국립대학법인", "주)", "유한공사", "고분유한공사",
 ]
@@ -414,6 +414,9 @@ def auto_standardize_name(name):
     changed = True
     while changed and s:
         changed = False
+        # 'Co., Ltd.,' 처럼 꼬리 쉼표가 붙으면 접미사 매칭이 빗나가므로
+        # 매 회전마다 양끝 구두점을 정리한 뒤 비교한다
+        s = s.strip(" ,.;·-") or s
         low = s.lower()
         for suf in _CORP_SUFFIXES:
             # 영문(ASCII) 접미사는 단어 경계 필수 — 경계 없이 자르면
@@ -465,7 +468,9 @@ def split_names(value):
     if ", " in s:
         parts = [p.strip() for p in s.split(", ") if p.strip()]
         if len(parts) > 1 and all(len(p) > 1 for p in parts):
-            lows = {p.lower().strip(" .").strip() for p in parts}
+            # 'Ltd.,' 처럼 꼬리 쉼표·마침표가 붙어도 토큰이 인식되도록
+            # 구두점을 양끝에서 제거하고 비교한다
+            lows = {p.lower().strip(" .,;·-").strip() for p in parts}
             if not (lows & _COMMA_CORP_TOKENS):
                 return parts
     return [s]

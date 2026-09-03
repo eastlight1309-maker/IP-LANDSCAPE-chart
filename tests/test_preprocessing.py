@@ -213,3 +213,26 @@ def test_korean_transliterated_corp_suffix_not_split():
     assert df["applicant_display"].tolist() == ["마이크론 테크놀로지", "삼성전자"]
     assert df["_co_applicants_display"].tolist() == \
         [["마이크론 테크놀로지"], ["삼성전자", "마이크론 테크놀로지"]]
+
+
+def test_trailing_comma_corp_suffix_not_split():
+    """'Taiwan Semiconductor Manufacturing Co., Ltd.,' 처럼 꼬리 쉼표가 붙은
+    법인명이 'Ltd.,' 유령 출원인으로 쪼개지지 않는다. (사용자 보고 버그)"""
+    import pandas as pd
+    from src.preprocessing import split_names, auto_standardize_name, \
+        standardize_applicants
+    s = "Taiwan Semiconductor Manufacturing Co., Ltd.,"
+    assert split_names(s) == [s]
+    assert split_names("Micron Technology, Inc.,") == ["Micron Technology, Inc.,"]
+    assert split_names("마이크론 테크놀로지, 인크,") == ["마이크론 테크놀로지, 인크,"]
+    # 세미콜론 복수 출원인 + 꼬리 쉼표 조합도 정확히 분리
+    assert split_names("Samsung Electronics; " + s) == ["Samsung Electronics", s]
+    # 표준화: 꼬리 쉼표가 있어도 접미사 제거
+    assert auto_standardize_name(s) == "TAIWAN SEMICONDUCTOR MANUFACTURING"
+    assert auto_standardize_name("Micron Technology, Inc.,") == "MICRON TECHNOLOGY"
+    assert auto_standardize_name("3M Innovative Properties Company") == \
+        "3M INNOVATIVE PROPERTIES"
+    df = pd.DataFrame({"applicant": [s], "app_number": ["1"]})
+    df = standardize_applicants(df, None)
+    assert df["applicant_display"].tolist() == ["TAIWAN SEMICONDUCTOR MANUFACTURING"]
+    assert df["_co_applicants_display"].tolist() == [["TAIWAN SEMICONDUCTOR MANUFACTURING"]]
