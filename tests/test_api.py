@@ -622,3 +622,81 @@ def test_settings_analysis_purpose(client):
     assert d2["meta"]["cache_hit"] is True
     d3 = _post(client, "/api/settings", {"analysis_purpose": None}).get_json()
     assert d3["settings"]["analysis_purpose"] is None
+
+
+def test_per_user_dataset_selection(client, raw_df):
+    """전역 Dataset 이 다른 사용자의 업로드여도 일반 사용자가 오류 벽에
+    갇히지 않는다 (사용자 보고 버그).
+
+    - config: 접근 불가 전역 선택은 dataset=None + blocked_owner 로 안내
+    - 분석 요청: 차단 사유 + 해결 방법이 담긴 안내 메시지
+    - 사용자별 Dataset 선택: B 가 자기 작업을 고르면 B 만 바뀌고 A 는 유지
+    """
+    from src import storage as _st
+    from src.data_access import inject_dataset
+    _st.save_store("users", {"items": []})
+    _st.save_store("user_datasets", {})
+    prev_settings = _st.load_settings() or {}
+    prev_uploads = _st.load_uploads()
+    try:
+        # 첫 사용자(관리자) + 일반 사용자 A(문보라)·B(김철수)
+        tokAdm = _post(client, "/api/auth/login",
+                       {"name": "관리자", "emp_no": "10000000"}).get_json()["token"]
+        tokA = _post(client, "/api/auth/login",
+                     {"name": "IP전략팀/문보라", "emp_no": "20240001"}).get_json()["token"]
+        tokB = _post(client, "/api/auth/login",
+                     {"name": "특허팀/김철수", "emp_no": "20240002"}).get_json()["token"]
+        hAdm = {"X-IPLS-Auth": tokAdm}
+        hA, hB = {"X-IPLS-Auth": tokA}, {"X-IPLS-Auth": tokB}
+        # A·B 소유의 업로드 dataset 등록 (전역 선택 = A 의 작업)
+        inject_dataset("upload__a", raw_df)
+        inject_dataset("upload__b", raw_df)
+        _st.save_uploads({"items": [
+            {"id": "ua", "dataset": "upload__a", "owner": "IP전략팀/문보라",
+             "worker": "문보라", "job": "A작업", "file_exists": True},
+            {"id": "ub", "dataset": "upload__b", "owner": "특허팀/김철수",
+             "worker": "김철수", "job": "B작업", "file_exists": True}]})
+        s = _st.load_settings() or {}
+        s["demo_mode"] = False
+        _st.save_settings(s)
+        # A 가 자기 작업을 선택 (실제 흐름: 업로드 → 저장하고 분석 시작)
+        # → 전역 선택 = A 의 작업 + A 의 개인 선택 기록
+        assert client.post("/api/settings", headers=hA,
+                           json={"dataset": "upload__a"}).get_json()["status"] == "ok"
+
+        # ① B 의 config: 전역이 A 소유 → dataset None + 안내
+        cfgB = client.get("/api/config", headers=hB).get_json()
+        assert cfgB["settings"]["dataset"] is None
+        assert cfgB["settings"]["dataset_blocked_owner"] == "IP전략팀/문보라"
+        # A 본인·관리자는 그대로 접근
+        assert client.get("/api/config", headers=hA).get_json()["settings"]["dataset"] == "upload__a"
+        assert client.get("/api/config", headers=hAdm).get_json()["settings"]["dataset"] == "upload__a"
+
+        # ② B 의 분석 요청: 오류지만 해결 방법이 담긴 안내 메시지
+        rB = client.post("/api/basic-stats", headers=hB, json={"filters": {}})
+        msg = (rB.get_json() or {}).get("message", "")
+        assert "IP전략팀/문보라" in msg and "시작하기" in msg, msg
+
+        # ③ B 가 자기 작업 선택 → B 는 분석 가능, A·전역 선택은 그대로 유지
+        rSet = client.post("/api/settings", headers=hB, json={"dataset": "upload__b"})
+        assert rSet.get_json()["status"] == "ok"
+        okB = client.post("/api/basic-stats", headers=hB, json={"filters": {}}).get_json()
+        assert okB["status"] == "ok"
+        assert client.get("/api/config", headers=hB).get_json()["settings"]["dataset"] == "upload__b"
+        # A 는 개인 선택 기록 덕에 B 가 전역을 바꿔도 자기 작업 유지
+        cfgA = client.get("/api/config", headers=hA).get_json()
+        assert cfgA["settings"]["dataset"] == "upload__a", cfgA["settings"]["dataset"]
+        okA = client.post("/api/basic-stats", headers=hA, json={"filters": {}}).get_json()
+        assert okA["status"] == "ok"
+
+        # ④ 명시적으로 남의 dataset 을 요청하면 기존 차단 메시지 유지
+        rX = client.post("/api/basic-stats", headers=hB,
+                         json={"dataset": "upload__a", "filters": {}})
+        assert "본인 계정으로" in (rX.get_json() or {}).get("message", "")
+    finally:
+        _st.save_store("users", {"items": []})
+        _st.save_store("user_datasets", {})
+        _st.save_uploads(prev_uploads)
+        _st.save_settings(prev_settings)
+        from src.cache import clear_all_caches
+        clear_all_caches()

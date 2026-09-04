@@ -191,26 +191,49 @@ def _req_user():
         return None
 
 
-def _guard_dataset_owner(name):
-    """업로드 dataset 이 다른 사용자 소유면 접근 차단 (관리자 예외)."""
+def _dataset_owner(name):
+    """업로드 dataset 의 소유자 이름 (업로드가 아니거나 미지정이면 None)."""
     for up in (storage.load_uploads().get("items") or []):
         if str(up.get("dataset")) == str(name):
-            owner = up.get("owner")
-            if owner and not auth_can_see(owner, _req_user()):
-                raise LookupError("이 작업은 '%s' 사용자의 데이터입니다. 본인 계정으로 "
-                                  "로그인했는지 확인하세요 (관리자는 전체 열람 가능)."
-                                  % owner)
-            return
+            return up.get("owner") or None
+    return None
+
+
+def _guard_dataset_owner(name, explicit=True):
+    """업로드 dataset 이 다른 사용자 소유면 접근 차단 (관리자 예외).
+
+    explicit=False(요청이 아니라 전역/저장된 선택에서 온 경우)는 '왜 이 화면이
+    막혔는지 + 어떻게 풀면 되는지'를 안내하는 메시지를 쓴다 — 다른 사용자가
+    마지막으로 파일을 올려 전역 선택이 그 사람 작업으로 바뀐 상황이 대표적.
+    """
+    owner = _dataset_owner(name)
+    if owner and not auth_can_see(owner, _req_user()):
+        if explicit:
+            raise LookupError("이 작업은 '%s' 사용자의 데이터입니다. 본인 계정으로 "
+                              "로그인했는지 확인하세요 (관리자는 전체 열람 가능)."
+                              % owner)
+        raise LookupError("현재 앱에 선택된 작업은 '%s' 사용자의 업로드입니다 — "
+                          "다른 사용자가 마지막으로 파일을 올리면 전역 선택이 그 "
+                          "작업으로 바뀝니다. 🚀 시작하기에서 본인 엑셀을 업로드하거나 "
+                          "저장된 본인 작업을 불러오면 내 계정 전용 선택으로 전환되며, "
+                          "다른 사용자 화면에는 영향을 주지 않습니다." % owner)
 
 
 def _resolve_dataset(body):
     """요청/설정에서 dataset 결정. demo_mode 면 데모 데이터 주입.
 
+    우선순위: 요청 body → 로그인 사용자의 개인 선택(user_datasets) → 전역 설정.
+    개인 선택 덕분에 다른 사용자가 파일을 올려도 내 분석 대상은 바뀌지 않는다.
     업로드 dataset(upload__…)이 Backend 재시작으로 내려간 경우 저장 파일에서
     자동 재적재한다.
     """
     settings = _settings()
-    name = (body or {}).get("dataset") or settings.get("dataset")
+    me = _req_user()
+    body_name = (body or {}).get("dataset")
+    per_name = None
+    if not body_name and me:
+        per_name = (storage.load_user_datasets() or {}).get(me)
+    name = body_name or per_name or settings.get("dataset")
     if settings.get("demo_mode"):
         if DEMO_DATASET_NAME not in list_datasets():
             inject_dataset(DEMO_DATASET_NAME, _make_demo_dataframe())
@@ -221,9 +244,16 @@ def _resolve_dataset(body):
     if validate_dataset_name(name) is None:
         uploads_ensure_loaded(name)
     valid = validate_dataset_name(name)
+    if valid is None and per_name and name == per_name and settings.get("dataset"):
+        # 개인 선택이 가리키던 작업이 사라진 경우(삭제 등) 전역 선택으로 폴백
+        per_name = None
+        name = settings.get("dataset")
+        if validate_dataset_name(name) is None:
+            uploads_ensure_loaded(name)
+        valid = validate_dataset_name(name)
     if valid is None:
         raise LookupError("허용되지 않은 Dataset 입니다: %s" % name)
-    _guard_dataset_owner(valid)
+    _guard_dataset_owner(valid, explicit=bool(body_name))
     return valid, settings
 
 
@@ -352,7 +382,17 @@ def register_routes(app):
                "filter_state","disclaimer"}
         """
         settings = _settings()
-        dataset = settings.get("dataset")
+        me = _req_user()
+        per = (storage.load_user_datasets() or {}).get(me) if me else None
+        dataset = per or settings.get("dataset")
+        # 전역 선택이 다른 사용자의 업로드라면 이 사용자에게는 '미선택'으로
+        # 안내 — 화면이 접근 차단 오류로 도배되는 대신 🚀 시작하기로 유도
+        blocked_owner = None
+        if dataset and not settings.get("demo_mode"):
+            owner = _dataset_owner(dataset)
+            if owner and not auth_can_see(owner, me):
+                blocked_owner = owner
+                dataset = None
         availability, mapping = {}, {}
         if settings.get("demo_mode") and not dataset:
             dataset = DEMO_DATASET_NAME
@@ -367,6 +407,10 @@ def register_routes(app):
             except Exception as e:
                 logger.warning("config availability failed: %s", e)
         public_settings = {k: v for k, v in settings.items() if k != "llm_id"}
+        # 이 사용자 기준의 유효 Dataset (개인 선택 우선, 접근 불가면 None)
+        public_settings["dataset"] = dataset
+        if blocked_owner:
+            public_settings["dataset_blocked_owner"] = blocked_owner
         llm_labels = [label for label, _id in ALLOWED_LLM_CANDIDATES]
         current_label = next((label for label, _id in ALLOWED_LLM_CANDIDATES
                               if _id == settings.get("llm_id")), llm_labels[0])
@@ -873,6 +917,14 @@ def register_routes(app):
                     return _error(400, "허용되지 않은 Dataset: %s" % v)
             current[k] = v
         storage.save_settings(current)
+        # Dataset 선택은 사용자별로도 기억 — 다른 사용자가 나중에 파일을 올려
+        # 전역 선택이 바뀌어도 내 분석 대상은 유지된다 (분석은 개인 선택 우선)
+        if "dataset" in body:
+            me = _req_user()
+            if me:
+                um = storage.load_user_datasets()
+                um[me] = current.get("dataset")
+                storage.save_user_datasets(um)
         # 분석 목적은 계산에 영향이 없으므로 목적만 바뀐 요청은 캐시 유지
         touched = {k for k in body if k in allowed_keys}
         if touched - {"analysis_purpose"}:

@@ -1592,6 +1592,13 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
 
     // ── STEP 2. 데이터 준비: 작업자·작업명 + 엑셀 업로드 ─────────
     var c2 = stepCard(2, '데이터 준비 — 작업자·작업명 입력 후 엑셀 업로드', hasDataset);
+    if (!hasDataset && s.dataset_blocked_owner) {
+      c2.body.appendChild(Ui.el('<div class="disclaimer" style="margin:0 0 8px">' +
+        "현재 앱의 전역 선택은 '" + Ui.esc(s.dataset_blocked_owner) + "' 사용자의 " +
+        '작업이라 내 계정에서는 열 수 없습니다. 아래에서 본인 파일을 업로드하거나 ' +
+        '저장된 본인 작업을 불러오면 <b>내 계정 전용 선택</b>으로 전환됩니다 ' +
+        '(그 사용자의 화면에는 영향을 주지 않습니다).</div>'));
+    }
     if (hasDataset) {
       c2.body.appendChild(Ui.el('<div style="font-size:12.5px;color:#46607a;margin-bottom:8px">' +
         '현재 분석 Dataset: <b>' + Ui.esc(s.dataset || '데모 데이터') + '</b> — 다른 파일로 ' +
@@ -5283,7 +5290,7 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
     section('🔐 로그인·권한',
       '<ul style="padding-left:18px;line-height:1.9">' +
       '<li><b>로그인</b>: ID=팀명/이름, 비밀번호=사원번호. 처음 로그인하면 자동 등록되고, <b>첫 번째 등록 사용자가 관리자</b>가 됩니다. 사원번호는 해시로만 저장됩니다.</li>' +
-      '<li><b>권한</b>: 일반 사용자는 <b>본인이 올린 업로드 작업·인사이트만</b> 보이고 삭제할 수 있습니다. <b>분석 스냅샷은 팀 공유</b> — 누구나 다른 사람의 스냅샷을 보고 불러올 수 있으며 삭제만 본인/관리자 제한입니다 ("내 작업 보기"로 내 것만 좁혀 보기 가능). 관리자는 전체를 보고 Settings 의 "사용자 관리"에서 관리자 지정/해제·사용자 삭제를 할 수 있습니다. 로그인 도입 전에 만들어진(소유자 없는) 항목은 모두에게 보입니다.</li>' +
+      '<li><b>권한</b>: 일반 사용자는 <b>본인이 올린 업로드 작업·인사이트만</b> 보이고 삭제할 수 있습니다. <b>분석 스냅샷은 팀 공유</b> — 누구나 다른 사람의 스냅샷을 보고 불러올 수 있으며 삭제만 본인/관리자 제한입니다 ("내 작업 보기"로 내 것만 좁혀 보기 가능). 관리자는 전체를 보고 Settings 의 "사용자 관리"에서 관리자 지정/해제·사용자 삭제를 할 수 있습니다. 로그인 도입 전에 만들어진(소유자 없는) 항목은 모두에게 보입니다. <b>분석 Dataset 선택은 사용자별로 기억</b>되어, 다른 사용자가 나중에 파일을 올려도 내 분석 대상은 바뀌지 않습니다 — 다른 사용자의 작업이 전역으로 선택된 상태로 로그인하면 🚀 시작하기로 안내되며 본인 파일 업로드/불러오기로 내 선택을 만들면 됩니다.</li>' +
       '<li><b>보안 성격</b>: 이 로그인은 작업 구분용 편의 접근 관리입니다 — 사원번호는 추측 가능성이 있는 약한 비밀번호이며, 강한 접근 통제가 필요하면 Dataiku 프로젝트 권한을 사용하세요.</li></ul>');
     section('❓ 자주 묻는 문제',
       '<table class="ipls-table"><thead><tr><th>증상</th><th>확인 사항</th></tr></thead><tbody>' +
@@ -6190,7 +6197,11 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
       injectStartMenu();
       var hasDataset = cfg.settings.dataset || cfg.settings.demo_mode;
       if (!hasDataset) {
-        Ui.toast('먼저 🚀 시작하기에서 작업자·작업명을 입력하고 엑셀을 업로드하세요.', 'warn');
+        Ui.toast(cfg.settings.dataset_blocked_owner
+          ? "현재 앱의 전역 선택은 '" + cfg.settings.dataset_blocked_owner +
+            "' 사용자의 작업입니다 — 🚀 시작하기에서 본인 엑셀을 업로드하거나 " +
+            '본인 작업을 불러오세요 (다른 사용자 화면에는 영향 없음).'
+          : '먼저 🚀 시작하기에서 작업자·작업명을 입력하고 엑셀을 업로드하세요.', 'warn');
         Views.render('start');
         refreshProjects();
         return;

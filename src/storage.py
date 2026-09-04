@@ -126,6 +126,21 @@ def save_applicant_rules(rules):
     return save_store("applicant_rules", rules)
 
 
+def load_user_datasets():
+    """사용자별 활성 Dataset 선택 {사용자명: dataset}.
+
+    Dataset 선택(settings.dataset)은 앱 전역값이라 한 사용자가 파일을 올리면
+    다른 사용자의 화면까지 바뀌고, 남의 업로드가 전역으로 선택된 상태에서는
+    일반 사용자가 접근 차단 오류만 보게 된다 — 사용자별 선택을 따로 기억해
+    각자 자기 작업으로 분석하게 한다.
+    """
+    return load_store("user_datasets") or {}
+
+
+def save_user_datasets(mapping):
+    return save_store("user_datasets", mapping or {})
+
+
 def load_projects():
     return load_store("projects")
 
