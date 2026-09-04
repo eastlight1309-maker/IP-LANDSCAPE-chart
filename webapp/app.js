@@ -4968,7 +4968,10 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
 
   function renderApplicantManager(h, readOnly) {
     var c = card('출원인·권리자 표준화 ' + (readOnly ? '상태' : '관리'),
-      '자동 표준화(대소문자·법인 접미사·괄호 정리)는 확정값이 아닌 검토·승인 대상입니다. 그룹(자회사→모회사) 및 합병·사명변경 이력 관리, JSON Export/Import 지원.');
+      '자동 표준화(대소문자·법인 접미사·괄호 정리)는 확정값이 아닌 검토·승인 대상입니다. ' +
+      '목록은 공동출원인을 포함한 전체 출원인 원본명 기준이며(건수=등장 문헌 수), ' +
+      '공동출원인으로만 등장하는 이름은 [공동] 배지로 표시됩니다. ' +
+      '그룹(자회사→모회사) 및 합병·사명변경 이력 관리, JSON Export/Import 지원.');
     h.appendChild(c.root);
     Api.get('/api/applicant-rules').then(function (data) {
       c.body.innerHTML = '';
@@ -4981,7 +4984,9 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
       var tbl = Ui.el(simpleTable(['원본명', '건수', '자동 표준명(후보)', '현재 표준명', '상태', ''], []));
       names.slice(0, 200).forEach(function (n) {
         var tr = document.createElement('tr');
-        tr.innerHTML = '<td>' + Ui.esc(n.raw) + '</td><td class="num">' + n.count + '</td><td>' +
+        tr.innerHTML = '<td>' + Ui.esc(n.raw) +
+          (n.co_only ? ' <span class="badge" title="공동출원인으로만 등장하는 이름 — 규칙을 만들면 협력 네트워크 등 공동출원 분석에 반영됩니다">공동</span>' : '') +
+          '</td><td class="num">' + n.count + '</td><td>' +
           Ui.esc(n.auto) + '</td>';
         var tdCur = document.createElement('td');
         var input = Ui.el('<input type="text" style="width:160px" value="' + Ui.esc(n.current) + '"' +

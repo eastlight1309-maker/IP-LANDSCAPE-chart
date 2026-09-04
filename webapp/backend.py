@@ -16695,7 +16695,7 @@ def compute_quality_report(df, settings):
 
 
 # 검증 리포트용 빌드 정보 (tools/build_backend.py 가 실측 집계)
-_QR_BUILD_INFO = {'built_at': '2026-09-04 05:47', 'modules': 46, 'test_functions': 279, 'test_files': 15, 'source': 'build'}
+_QR_BUILD_INFO = {'built_at': '2026-09-04 07:55', 'modules': 46, 'test_functions': 280, 'test_files': 15, 'source': 'build'}
 
 
 
@@ -17598,6 +17598,12 @@ def register_routes(app):
         GET ?dataset= → 원본명/자동표준명/현재표준명 목록 + 저장 규칙 (검토·승인 UI 용).
         POST {"mapping":{원본:표준}, "groups":{표준:그룹}, "history_entry"?,
               "import"?:{...}} → 저장. "reset":[원본명...] → 해당 매핑 제거(원복).
+
+        목록은 대표(첫) 출원인만이 아니라 공동출원인까지 포함한 전체 출원인
+        원본명 기준이다 — 공동출원인으로만 등장하는 이름(예: 한글 음역 표기)도
+        여기서 규칙을 만들 수 있어야 협력 네트워크 등 공동출원 분석에 반영된다.
+        count 는 그 이름이 출원인으로 등장하는 문헌 수, co_only 는 공동출원인
+        으로만 등장(대표 출원인으로는 없음)을 뜻한다.
         """
         if request.method == "GET":
             rules = storage.load_applicant_rules()
@@ -17605,13 +17611,22 @@ def register_routes(app):
             try:
                 df, settings, dataset, mapping, _f = _prepared_for(
                     {"dataset": request.args.get("dataset")})
-                raw_counts = df["applicant_raw"].replace("", np.nan).dropna().value_counts()
+                first_raw = df["applicant_raw"].replace("", np.nan).dropna()
+                if "_co_applicants" in df.columns and \
+                        df["_co_applicants"].map(lambda l: bool(l)).any():
+                    all_raw = pd.Series([str(n).strip() for lst in df["_co_applicants"]
+                                         for n in (lst or []) if str(n).strip()])
+                else:
+                    all_raw = first_raw
+                raw_counts = all_raw.value_counts()
+                first_set = set(first_raw.astype(str))
                 user_map = (rules.get("mapping") or {})
                 for raw, cnt in raw_counts.head(500).items():
                     auto = auto_standardize_name(raw)
                     names.append({"raw": str(raw), "auto": auto,
                                   "current": user_map.get(str(raw), auto),
-                                  "approved": str(raw) in user_map, "count": int(cnt)})
+                                  "approved": str(raw) in user_map, "count": int(cnt),
+                                  "co_only": str(raw) not in first_set})
             except (LookupError, ValueError):
                 pass
             return {"status": "ok", "rules": rules, "names": names,

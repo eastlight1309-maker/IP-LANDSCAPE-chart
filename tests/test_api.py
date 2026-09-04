@@ -170,6 +170,41 @@ def test_applicant_rules(client):
     assert "SAMSUNG ELECTRONICS" not in reset["rules"]["mapping"]
 
 
+def test_applicant_rules_cover_co_applicants(client, raw_df):
+    """공동출원인으로만 등장하는 원본명(예: 한글 음역 표기)도 표준화 관리
+    목록에 나와야 하고(co_only 플래그), 그 이름에 규칙을 만들면 공동출원
+    표시명(_co_applicants_display 경유)에 실제 반영되어야 한다.
+
+    회귀: 과거 목록이 applicant_raw(대표 출원인)만 집계해 공동출원인 전용
+    이름은 규칙을 만들 방법 자체가 없었다."""
+    ds = "coapp_rules_ds"
+    df = raw_df.head(30).copy()
+    # 패밀리 dedup 으로 한 행이 탈락해도 남도록 같은 패밀리 두 행 모두 지정
+    df.loc[df.index[:2], "출원인"] = "AMD Inc.; 에이티아이 테크놀로지스"
+    inject_dataset(ds, df)
+    clear_all_caches()
+    got = client.get("/api/applicant-rules?dataset=%s" % ds).get_json()
+    by_raw = {n["raw"]: n for n in got["names"]}
+    assert "에이티아이 테크놀로지스" in by_raw, "공동출원인 전용 이름이 목록에 없음"
+    assert by_raw["에이티아이 테크놀로지스"]["co_only"] is True
+    assert by_raw["에이티아이 테크놀로지스"]["count"] == 1
+    assert by_raw["AMD Inc."]["co_only"] is False  # 대표 출원인으로 등장
+    # 규칙 저장 → 공동출원 표시명(협력 네트워크·특허 목록의 출원인란)에 반영
+    _post(client, "/api/applicant-rules",
+          {"mapping": {"에이티아이 테크놀로지스": "ATI"}})
+    try:
+        got2 = client.get("/api/applicant-rules?dataset=%s" % ds).get_json()
+        row = [n for n in got2["names"] if n["raw"] == "에이티아이 테크놀로지스"][0]
+        assert row["current"] == "ATI" and row["approved"] is True
+        recs = _post(client, "/api/patents",
+                     {"dataset": ds, "page": 1, "page_size": 200}).get_json()
+        joined = [r.get("출원인", "") for r in recs["records"]]
+        assert any("ATI" in a and "에이티아이" not in a for a in joined), \
+            "공동출원 표시명에 사용자 규칙 미반영: %r" % joined[:5]
+    finally:
+        _post(client, "/api/applicant-rules", {"reset": ["에이티아이 테크놀로지스"]})
+
+
 def test_project_save_load(client):
     _post(client, "/api/project/save",
           {"name": "테스트 프로젝트", "filters": {"year_from": 2018}})
