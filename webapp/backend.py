@@ -3029,17 +3029,15 @@ def insight_image_dir():
         logger.warning("insight image dir create failed: %s", e)
     return base
 
-# (병합 shim) src.storage 모듈 네임스페이스
+# (병합 shim) src.storage 모듈 네임스페이스 — 빌드 시 자동 추출
 import types as _types
 storage = _types.SimpleNamespace(
-    load_store=load_store, save_store=save_store,
-    load_settings=load_settings, save_settings=save_settings,
-    load_mapping_for=load_mapping_for, save_mapping_for=save_mapping_for,
-    load_applicant_rules=load_applicant_rules, save_applicant_rules=save_applicant_rules,
-    load_projects=load_projects, save_projects=save_projects,
-    load_filter_state=load_filter_state, save_filter_state=save_filter_state,
-    load_uploads=load_uploads, save_uploads=save_uploads, upload_dir=upload_dir,
-    insight_image_dir=insight_image_dir)
+    load_store=load_store, save_store=save_store, load_settings=load_settings,
+    save_settings=save_settings, load_mapping_for=load_mapping_for, save_mapping_for=save_mapping_for,
+    load_applicant_rules=load_applicant_rules, save_applicant_rules=save_applicant_rules, load_user_datasets=load_user_datasets,
+    save_user_datasets=save_user_datasets, load_projects=load_projects, save_projects=save_projects,
+    load_filter_state=load_filter_state, save_filter_state=save_filter_state, load_uploads=load_uploads,
+    save_uploads=save_uploads, upload_dir=upload_dir, insight_image_dir=insight_image_dir)
 
 
 
@@ -16697,7 +16695,7 @@ def compute_quality_report(df, settings):
 
 
 # 검증 리포트용 빌드 정보 (tools/build_backend.py 가 실측 집계)
-_QR_BUILD_INFO = {'built_at': '2026-09-04 04:30', 'modules': 46, 'test_functions': 279, 'test_files': 15, 'source': 'build'}
+_QR_BUILD_INFO = {'built_at': '2026-09-04 05:47', 'modules': 46, 'test_functions': 279, 'test_files': 15, 'source': 'build'}
 
 
 

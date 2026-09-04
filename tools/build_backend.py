@@ -67,19 +67,33 @@ MODULE_ORDER = [
     "src/api.py",
 ]
 
-STORAGE_SHIM = """\
-# (병합 shim) src.storage 모듈 네임스페이스
-import types as _types
-storage = _types.SimpleNamespace(
-    load_store=load_store, save_store=save_store,
-    load_settings=load_settings, save_settings=save_settings,
-    load_mapping_for=load_mapping_for, save_mapping_for=save_mapping_for,
-    load_applicant_rules=load_applicant_rules, save_applicant_rules=save_applicant_rules,
-    load_projects=load_projects, save_projects=save_projects,
-    load_filter_state=load_filter_state, save_filter_state=save_filter_state,
-    load_uploads=load_uploads, save_uploads=save_uploads, upload_dir=upload_dir,
-    insight_image_dir=insight_image_dir)
-"""
+def _storage_shim():
+    """src/storage.py 의 공개 함수를 전부 담은 SimpleNamespace 심 생성.
+
+    과거에 속성을 수동 열거하다 storage 에 새 함수를 추가하고 심 갱신을
+    빠뜨려, 병합 배포본에서만 'SimpleNamespace has no attribute …' 오류가
+    나는 사고가 있었다 (load_user_datasets). 소스에서 자동 추출해 재발을
+    막는다.
+    """
+    with io.open(os.path.join(ROOT, "src", "storage.py"), encoding="utf-8") as fh:
+        names = re.findall(r"^def ([A-Za-z]\w*)\(", fh.read(), re.M)
+    assert names, "src/storage.py 공개 함수 추출 실패"
+    lines = []
+    row = []
+    for n in names:
+        row.append("%s=%s" % (n, n))
+        if len(row) == 3:
+            lines.append(", ".join(row))
+            row = []
+    if row:
+        lines.append(", ".join(row))
+    body = ",\n    ".join(lines)
+    return ("# (병합 shim) src.storage 모듈 네임스페이스 — 빌드 시 자동 추출\n"
+            "import types as _types\n"
+            "storage = _types.SimpleNamespace(\n    %s)\n" % body)
+
+
+STORAGE_SHIM = _storage_shim()
 
 HEADER = '''# -*- coding: utf-8 -*-
 """

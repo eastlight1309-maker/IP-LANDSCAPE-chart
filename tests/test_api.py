@@ -223,6 +223,14 @@ def test_merged_backend_builds_and_serves(raw_df, tmp_path):
     mod.storage.save_settings({"dataset": DATASET})
     mod.clear_all_caches()
     mod.app.testing = True
+    # storage 심 커버리지: 병합 소스가 참조하는 storage.X 가 심에 전부 존재
+    # (수동 열거 심 갱신 누락으로 배포본에서만 터지던 사고의 재발 방지)
+    import re as _re
+    with open(backend_path, encoding="utf-8") as fh:
+        merged_src = fh.read()
+    used = set(_re.findall(r"\bstorage\.([A-Za-z]\w*)\(", merged_src))
+    missing = {n for n in used if not hasattr(mod.storage, n)}
+    assert not missing, "storage 심 누락: %s" % sorted(missing)
     with mod.app.test_client() as c:
         cfg = c.get("/api/config").get_json()
         assert cfg["app"]
@@ -233,6 +241,25 @@ def test_merged_backend_builds_and_serves(raw_df, tmp_path):
                        content_type="application/json").get_json()
             assert r["status"] in ("ok", "empty", "disabled"), \
                 "%s → %s" % (path, r)
+        # 로그인 사용자 경로(사용자별 dataset 선택 등)도 병합본에서 동작해야 함
+        mod.storage.save_store("users", {"items": []})
+        try:
+            tok = c.post("/api/auth/login",
+                         data=json.dumps({"name": "빌드검증", "emp_no": "00000000"}),
+                         content_type="application/json").get_json()["token"]
+            h = {"X-IPLS-Auth": tok}
+            cfg2 = c.get("/api/config", headers=h).get_json()
+            assert cfg2["app"] and "dataset" in cfg2["settings"]
+            r2 = c.post("/api/settings", headers=h,
+                        data=json.dumps({"dataset": DATASET}),
+                        content_type="application/json").get_json()
+            assert r2["status"] == "ok"
+            r3 = c.post("/api/basic-stats", headers=h, data=json.dumps({}),
+                        content_type="application/json").get_json()
+            assert r3["status"] in ("ok", "empty"), r3
+        finally:
+            mod.storage.save_store("users", {"items": []})
+            mod.storage.save_user_datasets({})
 
 
 def test_dataiku_column_stream_fallback(monkeypatch):
