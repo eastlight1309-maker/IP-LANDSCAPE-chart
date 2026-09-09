@@ -127,7 +127,8 @@ def test_wintelips_full_header_mapping():
         "applicant": "출원인", "applicant_std": "출원인 대표명화 국문명[KR]",
         "assignee": "현재권리자 대표명화 국문명[KR]", "inventors": "발명자",
         "app_date": "출원일", "pub_date": "공개일", "reg_date": "등록일",
-        "priority_date": "우선권 주장일",
+        # 복수 우선권 시 여러 날짜가 들어가는 '우선권 주장일' 대신 단일 날짜 컬럼
+        "priority_date": "최우선출원일",
         "expiry_date": "존속기간(예상)만료일[KR,JP,US,EP,CN,CA,AU]",
         "country": "국가코드", "legal_status": "상태정보[KR,JP,US,EP,CN,CA,AU]",
         "cites_backward": "인용 문헌 수(B1)", "cites_forward": "피인용 문헌 수(F1)",
@@ -138,6 +139,7 @@ def test_wintelips_full_header_mapping():
         "family_country_count": "WIPS패밀리 국가 수(출원기준)",
         "problem": "해결과제 요약[KR,US,JP,CN,EP,PCT,TW]",
         "solution": "해결수단 요약[KR,US,JP,CN,EP,PCT,TW]",
+        "effect": "효과 요약[KR,US,JP,CN,EP,PCT,TW]",
         "ipc": "Current IPC All",
         "agent": "대리인", "expedited_exam": "우선심사청구 여부[KR]",
         "license_flag": "실시권 설정 유무[KR]", "licensee_count": "실시권자 수[KR]",

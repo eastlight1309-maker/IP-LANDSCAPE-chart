@@ -124,8 +124,12 @@ CONCEPTS = {
     },
     "priority_date": {
         "label": "우선일", "dtype": "날짜 (최우선일)",
-        "variants": ["우선일", "우선권주장일", "최우선일", "priority date", "earliest priority",
-                     "earliest priority date", "우선권 주장일", "최우선일자"],
+        # 윈텔립스 '우선권 주장일'은 복수 우선권 시 여러 날짜가 들어갈 수 있어
+        # 단일 날짜가 보장되는 '최우선출원일'을 기본 매핑으로 우선한다.
+        "preferred": ["최우선출원일"],
+        "variants": ["최우선출원일", "우선일", "우선권주장일", "최우선일", "priority date",
+                     "earliest priority", "earliest priority date", "우선권 주장일",
+                     "최우선일자"],
     },
     "expiry_date": {
         "label": "만료예정일", "dtype": "날짜 (존속기간 만료 예정일)",
@@ -270,8 +274,10 @@ CONCEPTS = {
     },
     "solution": {
         "label": "해결수단", "dtype": "문자열",
-        "variants": ["해결수단", "해결 수단", "수단", "과제 해결 수단", "solution",
-                     "solution means", "technical solution", "과제해결수단"],
+        "preferred": ["해결수단 요약"],  # 기본 매핑 (윈텔립스 AI 요약 필드)
+        "variants": ["해결수단 요약", "해결수단요약", "해결수단", "해결 수단", "수단",
+                     "과제 해결 수단", "solution", "solution means", "technical solution",
+                     "과제해결수단"],
     },
     "product": {
         "label": "제품", "dtype": "문자열 (적용 제품)",
@@ -292,7 +298,9 @@ CONCEPTS = {
     },
     "effect": {
         "label": "효과", "dtype": "문자열",
-        "variants": ["효과", "발명의 효과", "effect", "effects", "기대효과", "기술적 효과"],
+        "preferred": ["효과 요약"],  # 기본 매핑 (윈텔립스 AI 요약 필드)
+        "variants": ["효과 요약", "효과요약", "효과", "발명의 효과", "effect", "effects",
+                     "기대효과", "기술적 효과"],
     },
     "claims_count": {
         "label": "청구항 수", "dtype": "정수 (전체 청구항 개수)",
