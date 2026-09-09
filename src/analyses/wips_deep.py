@@ -570,23 +570,138 @@ def _expedited_section(df, settings):
 
 
 # ---------------------------------------------------------------------------
+# ⑤-b 심사청구율 — 권리화 의지 vs 방어·보류 출원
+# ---------------------------------------------------------------------------
+def _exam_request_section(df, settings):
+    """심사청구 여부(KR/JP 등 심사청구제 국가)로 포트폴리오의 '진정성'을 잰다.
+
+    심사청구는 비용이 드는 능동 행위 — 청구율이 낮은 기업·연도는 방어 출원이나
+    옵션 보류 성향, 높은 쪽은 권리화 의지가 강한 포트폴리오로 해석한다.
+    값이 해석되는 문헌만 분모로 쓴다 (해당 없음 국가는 제외).
+    """
+    if "exam_request_flag" not in df.columns:
+        return None, "심사청구 여부 컬럼 필요 (KR/JP/EP/CA — 컬럼 매핑에서 '심사청구 여부')"
+    req = df["exam_request_flag"].map(parse_bool)
+    valued = req.notna()
+    if valued.sum() < 10:
+        return None, "심사청구 여부 값이 해석되는 문헌 부족 (10건 미만)"
+    sub = df[valued].copy()
+    sub["_req"] = req[valued]
+    overall = float(pd.Series([v is True for v in sub["_req"]]).mean())
+    # 기업별 청구율 (공동출원은 설정에 따라 각 출원인에게 계상)
+    sub_x = explode_applicants(sub, settings)
+    sub_x = sub_x[sub_x["applicant_display"].astype(str) != ""]
+    comp_rows = []
+    for comp, g in sub_x.groupby("applicant_display"):
+        if len(g) < 5:
+            continue
+        n_req = int(sum(v is True for v in g["_req"]))
+        comp_rows.append({"company": str(comp), "n_req": n_req, "n": int(len(g)),
+                          "rate": round(n_req / float(len(g)), 4)})
+    fig = None
+    if comp_rows:
+        comp_rows.sort(key=lambda r: r["rate"])
+        show = comp_rows[-14:] if len(comp_rows) > 14 else comp_rows
+        fig = bar_chart(
+            [r["company"] for r in show], [r["rate"] for r in show],
+            title="기업별 심사청구율 — 높을수록 권리화 의지, 낮을수록 방어·보류 출원 "
+                  "(막대 클릭 → 그 회사의 심사청구 특허)",
+            orientation="h", x_title="심사청구율",
+            hovertext=["%s — 심사청구 %d건 / 판정 가능 %d건 (%s)"
+                       % (r["company"], r["n_req"], r["n"], fmt_pct(r["rate"]))
+                       for r in show],
+            customdata=[{"drill": {"applicant": r["company"],
+                                   "applicant_scope": "any",
+                                   "exam_requested": True}} for r in show])
+        fig["layout"]["xaxis"]["tickformat"] = ".0%"
+    # 연도별 청구율 추이
+    fig_year = None
+    yr = sub[sub["_base_year"].notna()].copy()
+    if len(yr) >= 10:
+        yr["_y"] = yr["_base_year"].astype(int)
+        rows = [(int(y), float(pd.Series([v is True for v in g["_req"]]).mean()),
+                 int(len(g)))
+                for y, g in yr.groupby("_y") if len(g) >= 3]
+        if len(rows) >= 3:
+            fig_year = {"data": [{
+                "type": "scatter", "mode": "lines+markers",
+                "x": [r[0] for r in rows], "y": [round(r[1], 4) for r in rows],
+                "hovertext": ["%d년: 심사청구율 %s (표본 %d건)"
+                              % (r[0], fmt_pct(r[1]), r[2]) for r in rows],
+                "hoverinfo": "text", "line": {"color": "#4E79A7"}}],
+                "layout": base_layout(
+                    "연도별 심사청구율 추이 — 하락하면 방어 출원 비중 확대 신호",
+                    xaxis={"title": "출원연도", "dtick": 1, "tickformat": "d"},
+                    yaxis={"title": "심사청구율", "tickformat": ".0%",
+                           "range": [0, 1.05]})}
+    return {"fig": fig, "fig_year": fig_year, "overall_rate": round(overall, 4),
+            "n_valued": int(valued.sum()), "companies": comp_rows[::-1][:20],
+            "note": ("심사청구 여부는 KR·JP 등 심사청구제 국가에서만 기록됩니다 — "
+                     "값이 해석되는 문헌만 분모로 사용했습니다. 미청구 출원도 출원일로"
+                     "부터 청구 기한(KR 3년) 내에는 청구될 수 있습니다.")}, None
+
+
+# ---------------------------------------------------------------------------
 # ⑥ 분할·계속출원 타이밍
 # ---------------------------------------------------------------------------
 def _divisional_section(df, settings):
-    if "parent_app_number" not in df.columns:
-        return None, "원출원번호 컬럼 필요 (분할·계속출원 식별)"
-    isdiv = df["parent_app_number"].astype(str).str.strip() \
-        .map(lambda v: v not in ("", "nan", "None"))
+    """분할출원 식별: '분할출원 여부' 플래그(있으면) ∪ 원출원번호 보유."""
+    has_flag = "divisional_flag" in df.columns
+    has_parent = "parent_app_number" in df.columns
+    if not (has_flag or has_parent):
+        return None, "분할출원 여부 또는 원출원번호 컬럼 필요 (분할·계속출원 식별)"
+    isdiv = pd.Series(False, index=df.index)
+    if has_flag:
+        isdiv |= df["divisional_flag"].map(parse_bool) == True  # noqa: E712
+    if has_parent:
+        isdiv |= df["parent_app_number"].astype(str).str.strip() \
+            .map(lambda v: v not in ("", "nan", "None"))
+    # 기업별 분할출원 비율 — 분할·계속을 붙이는 특허는 출원인이 중요하게 여기는
+    # 핵심특허일 가능성이 높다 (비율 높은 기업=핵심특허 다중 방어 전략)
+    fig_ratio = None
+    div_all = df[isdiv]
+    if len(div_all) >= 3:
+        totals = applicant_counts(df, settings)
+        div_counts = applicant_counts(div_all, settings)
+        ratio_rows = []
+        for comp, n_tot in totals.items():
+            if n_tot < 8:
+                continue
+            n_div = int(div_counts.get(comp, 0))
+            ratio_rows.append((str(comp), n_div, int(n_tot),
+                               n_div / float(n_tot)))
+        ratio_rows = [r for r in ratio_rows if r[1] > 0]
+        if ratio_rows:
+            ratio_rows.sort(key=lambda r: r[3])
+            ratio_rows = ratio_rows[-14:]
+            fig_ratio = bar_chart(
+                [r[0] for r in ratio_rows], [round(r[3], 4) for r in ratio_rows],
+                title="기업별 분할·계속출원 비율 — 높을수록 핵심특허 다중 방어 전략 "
+                      "(막대 클릭 → 그 회사의 분할출원)",
+                orientation="h", x_title="분할출원 비율",
+                hovertext=["%s — 분할출원 %d건 / 전체 %d건 (%s)"
+                           % (r[0], r[1], r[2], fmt_pct(r[3])) for r in ratio_rows],
+                customdata=[{"drill": {"applicant": r[0], "applicant_scope": "any",
+                                       "divisional": True}} for r in ratio_rows])
+            fig_ratio["layout"]["xaxis"]["tickformat"] = ".0%"
     sub = df[isdiv & df["app_date"].notna()
              & (df["applicant_display"].astype(str) != "")].copy()
     if len(sub) < 5:
-        return None, "분할·계속출원(원출원번호 보유) 문헌 부족 (5건 미만)"
+        if fig_ratio is not None:
+            return {"fig": None, "fig_ratio": fig_ratio, "bursts": [],
+                    "n_divisionals": int(isdiv.sum()),
+                    "note": "타임라인은 분할출원(출원일 보유) 5건 이상일 때 표시됩니다."}, None
+        return None, "분할·계속출원(분할 여부/원출원번호 보유) 문헌 부족 (5건 미만)"
     ids = _ids_of(sub)
     # 공동출원 분할건은 각 출원인 레인에 모두 표시 (coapplicant_mode 따름)
     sub_x = explode_applicants(sub, settings)
     comp_counts = sub_x["applicant_display"].value_counts()
     top_comps = [c for c in comp_counts.index if comp_counts[c] >= 2][:8]
     if not top_comps:
+        if fig_ratio is not None:
+            return {"fig": None, "fig_ratio": fig_ratio, "bursts": [],
+                    "n_divisionals": int(len(sub)),
+                    "note": "타임라인은 분할출원 2건 이상 기업이 있을 때 표시됩니다."}, None
         return None, "분할출원 2건 이상 기업 없음"
     color_reg = {}
     traces = []
@@ -598,8 +713,11 @@ def _divisional_section(df, settings):
             "type": "scatter", "mode": "markers", "name": str(comp),
             "x": xs, "y": [lane] * len(g),
             "hovertext": ["%s %s 분할출원 (원출원 %s)"
-                          % (comp, x, str(p)[:20])
-                          for x, p in zip(xs, g["parent_app_number"])],
+                          % (comp, x, str(p)[:20] if str(p).strip() not in
+                             ("", "nan", "None") else "번호 미기재")
+                          for x, p in zip(xs, (g["parent_app_number"]
+                                               if "parent_app_number" in g.columns
+                                               else [""] * len(g)))],
             "hoverinfo": "text",
             "customdata": [{"drill": {"type": "ids", "ids": [str(i)]}}
                            for i in _ids_of(g)],
@@ -631,7 +749,8 @@ def _divisional_section(df, settings):
                "range": [-0.6, len(top_comps) - 0.4]},
         height=max(360, 120 + 40 * len(top_comps)), showlegend=False)}
     bursts.sort(key=lambda b: -b["n"])
-    return {"fig": fig, "bursts": bursts[:10], "n_divisionals": int(len(sub)),
+    return {"fig": fig, "fig_ratio": fig_ratio, "bursts": bursts[:10],
+            "n_divisionals": int(len(sub)),
             "note": ("산업 이벤트(경쟁사 발표·소송) 데이터가 없어 이벤트 정렬은 "
                      "제공하지 않습니다 — 단기 집중(버스트) 구간은 방어적 청구항 "
                      "조정 가능성이 있는 '관찰된 군집'입니다.")}, None
@@ -1007,7 +1126,8 @@ def _gov_program_section(df, settings):
 # ---------------------------------------------------------------------------
 _SECTIONS = (("survival", _survival_section), ("market_entry", _market_entry_section),
              ("agent", _agent_section), ("examiner_eye", _examiner_eye_section),
-             ("expedited", _expedited_section), ("divisional", _divisional_section),
+             ("expedited", _expedited_section), ("exam_request", _exam_request_section),
+             ("divisional", _divisional_section),
              ("anomaly", _anomaly_section), ("disclosure", _disclosure_section),
              ("trial", _trial_section), ("gov_program", _gov_program_section))
 
@@ -1042,7 +1162,8 @@ def compute_wips_deep(df, settings, only_sections=None, company=None):
     if not sections:
         labels = {"survival": "연차료 생존곡선", "market_entry": "지정국 진입 시차",
                   "agent": "대리인 전환", "examiner_eye": "심사관의 눈",
-                  "expedited": "우선심사", "divisional": "분할출원",
+                  "expedited": "우선심사", "exam_request": "심사청구율",
+                  "divisional": "분할출원",
                   "anomaly": "심사기간 이상탐지", "disclosure": "개시 충실도",
                   "trial": "심판·소송", "gov_program": "국가연구 과제"}
         details = " · ".join("%s: %s" % (labels.get(s["section"], s["section"]),
@@ -1086,6 +1207,20 @@ def compute_wips_deep(df, settings, only_sections=None, company=None):
                              "1~2년 내 제품화 가능성이 높은 영역입니다."
                              % (s0["tech"], fmt_pct(s0["prior_ratio"]),
                                 fmt_pct(s0["recent_ratio"])))
+    if "exam_request" in sections:
+        er = sections["exam_request"]
+        low = [c for c in er["companies"] if c["rate"] < max(0.0, er["overall_rate"] - 0.15)]
+        sent = ("전체 심사청구율은 %s(판정 가능 %s건 기준)입니다."
+                % (fmt_pct(er["overall_rate"]), fmt_num(er["n_valued"])))
+        if low:
+            sent += (" '%s'는 청구율 %s로 평균보다 크게 낮아 방어·보류 출원 비중이 "
+                     "높은 포트폴리오입니다." % (low[0]["company"], fmt_pct(low[0]["rate"])))
+        sentences.append(sent)
+    if "divisional" in sections and sections["divisional"].get("fig_ratio"):
+        sentences.append("분할·계속출원 비율이 높은 기업은 핵심특허를 여러 권리로 나눠 "
+                         "방어하는 전략을 쓰고 있습니다 — 그 분할출원 대상이 곧 그 회사가 "
+                         "스스로 중요하다고 판단한 기술입니다 (분할출원 %s건)."
+                         % fmt_num(sections["divisional"]["n_divisionals"]))
     if "trial" in sections and sections["trial"]["top_target"]:
         sentences.append("심판 청구가 '%s'로 수렴합니다 — 병목(핵심) 특허 보유자일 "
                          "가능성이 있습니다." % sections["trial"]["top_target"])

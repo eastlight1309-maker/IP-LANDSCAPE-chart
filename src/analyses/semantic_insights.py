@@ -47,7 +47,21 @@ from src.viz_payload import YLGNBU, ok_result, empty_result, base_layout, color_
 # 공통: 코퍼스 임베딩
 # ---------------------------------------------------------------------------
 def _corpus_texts(df):
-    """문헌 대표 텍스트 시리즈 + 출처 설명. 우선순위: 요약+명칭 → 독립청구항 → 명칭."""
+    """문헌 대표 텍스트 시리즈 + 출처 설명.
+
+    우선순위: AI 요약(+특징 요약) → 요약+명칭 → 독립청구항 → 명칭.
+    윈텔립스 AI 요약은 원문 요약보다 정제된 서술이라 임베딩 품질이 좋다 —
+    커버리지가 충분할 때만 사용하고, 아니면 기존 소스로 폴백한다.
+    """
+    if "ai_summary" in df.columns and df["ai_summary"].astype(str).str.len().ge(30).sum() \
+            >= max(20, len(df) * 0.3):
+        s = df["ai_summary"].astype(str)
+        label = "AI 요약"
+        if "feature_summary" in df.columns and \
+                df["feature_summary"].astype(str).str.len().ge(10).any():
+            s = s + " " + df["feature_summary"].astype(str)
+            label = "AI 요약+특징 요약"
+        return s.str.replace(r"\s+", " ", regex=True).str.strip(), label
     if "abstract" in df.columns and df["abstract"].astype(str).str.len().ge(30).sum() \
             >= max(20, len(df) * 0.3):
         t = df["title"].astype(str) + ". " if "title" in df.columns else ""

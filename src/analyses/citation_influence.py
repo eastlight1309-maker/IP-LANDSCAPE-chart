@@ -26,15 +26,228 @@ analyses/citation_influence.py — 4.10 핵심특허 영향력 전파 (3단계).
 그래프: Influence Top-N 막대 + Citation Diffusion Sankey.
 Drill-down: {"type":"ids"}.
 자동 인사이트: 최고 영향력 특허·만료 임박 핵심특허 경고.
+
+확장 섹션 (해당 컬럼 매핑 시에만 계산 — graceful degradation):
+  self_other     자기 vs 타인 피인용 분리 — WIPS '자기/타인 피인용 문헌번호(F1)'
+                 로 자기인용을 제외한 "타인이 인정한 영향력"을 기업별로 비교.
+                 자기인용 비율이 높은 기업=기술 내재화형, 타인 피인용이 높은
+                 기업=산업 파급형.
+  inset_network  세트 내 인용 네트워크 — '인용 문헌번호(B1)' 목록을 분석 대상
+                 문헌번호(공개/출원/등록, 하이픈·공백 제거 정규화)와 매칭해
+                 "누가 누구를 인용하는가" 기업 간 기술 흐름을 실제 인용쌍으로
+                 구성. 세트 밖 인용은 집계에서 제외되며 매칭 커버리지를 함께
+                 표시한다 (근사 아님 — 매칭된 쌍만 사용).
 """
+import re
+
 import numpy as np
 import pandas as pd
 
 from src.config import get_threshold, get_limit, get_weights
 from src.metrics import normalize_series
-from src.insights import build_insight, fmt_num, check_small_sample
+from src.insights import build_insight, fmt_num, fmt_pct, check_small_sample
 from src.viz_payload import ok_result, empty_result, disabled_result, bar_chart, \
-    sankey, color_for
+    sankey, color_for, base_layout, cytoscape_network
+
+
+def _ids_series(df):
+    col = "pub_number" if "pub_number" in df.columns else \
+        ("app_number" if "app_number" in df.columns else None)
+    return df[col].astype(str) if col else df.index.astype(str).to_series(index=df.index)
+
+
+def _self_other_section(df, settings):
+    """자기 vs 타인 피인용 분리 — 자기인용을 뺀 '타인이 인정한 영향력'."""
+    from src.analyses.wips_deep import _count_like
+    from src.analyses.common import explode_applicants
+    has_self = "cites_forward_self" in df.columns
+    has_other = "cites_forward_other" in df.columns
+    if not (has_self or has_other):
+        return None, ("자기/타인 피인용 컬럼 필요 — 컬럼 매핑에서 '자기 피인용 "
+                      "문헌번호'와 '타인 피인용 문헌번호'(WIPS F1)를 매핑하세요.")
+    zero = pd.Series(0.0, index=df.index)
+    self_c = _count_like(df["cites_forward_self"]).fillna(0) if has_self else zero
+    other_c = _count_like(df["cites_forward_other"]).fillna(0) if has_other else zero
+    if not ((self_c + other_c) > 0).any():
+        return None, "자기/타인 피인용 값이 해석되지 않습니다 (건수 또는 문헌번호 목록 지원)."
+    work = df.copy()
+    work["_cf_self"] = self_c
+    work["_cf_other"] = other_c
+    # 기업별 합산 — 공동출원은 설정(coapplicant_mode)에 따라 각 출원인에게 계상
+    wx = explode_applicants(work, settings)
+    grp = wx[wx["applicant_display"].astype(str) != ""] \
+        .groupby("applicant_display")[["_cf_self", "_cf_other"]].sum()
+    grp = grp[grp.sum(axis=1) > 0]
+    if not len(grp):
+        return None, "자기/타인 피인용 보유 출원인이 없습니다."
+    top = grp.assign(_tot=grp["_cf_self"] + grp["_cf_other"]) \
+        .sort_values("_tot", ascending=False).head(12)
+    comps = [str(c) for c in top.index][::-1]
+    selfs = [float(v) for v in top["_cf_self"]][::-1]
+    others = [float(v) for v in top["_cf_other"]][::-1]
+    custom = [{"drill": {"type": "applicant", "applicant": c,
+                         "applicant_scope": "any"}} for c in comps]
+    hover_o = ["%s — 타인 피인용 %s건 (자기인용 제외 순수 영향력)"
+               % (c, fmt_num(v)) for c, v in zip(comps, others)]
+    hover_s = ["%s — 자기 피인용 %s건 / 전체 %s건 (자기인용률 %s)"
+               % (c, fmt_num(s), fmt_num(s + o),
+                  fmt_pct(s / (s + o) if (s + o) else 0.0))
+               for c, s, o in zip(comps, selfs, others)]
+    fig = {"data": [
+        {"type": "bar", "orientation": "h", "name": "타인 피인용",
+         "y": comps, "x": others, "marker": {"color": "#4E79A7"},
+         "hovertext": hover_o, "hoverinfo": "text", "customdata": custom},
+        {"type": "bar", "orientation": "h", "name": "자기 피인용",
+         "y": comps, "x": selfs, "marker": {"color": "#F28E2B"},
+         "hovertext": hover_s, "hoverinfo": "text", "customdata": custom}],
+        "layout": base_layout(
+            "기업별 자기 vs 타인 피인용 — 타인 피인용이 '진짜 영향력'",
+            barmode="stack", xaxis={"title": "피인용 건수"},
+            height=max(360, 90 + 34 * len(comps)))}
+    rows = [{"company": str(c),
+             "n_self": int(top.loc[c, "_cf_self"]),
+             "n_other": int(top.loc[c, "_cf_other"]),
+             "self_rate": round(float(top.loc[c, "_cf_self"] / top.loc[c, "_tot"]), 4),
+             "drill": {"type": "applicant", "applicant": str(c),
+                       "applicant_scope": "any"}}
+            for c in top.index]
+    # 타인 피인용 상위 특허 (자기인용 부풀림 없는 핵심특허 후보)
+    ids = _ids_series(work)
+    top_pat = []
+    for idx, r in work.nlargest(10, "_cf_other").iterrows():
+        if r["_cf_other"] <= 0:
+            break
+        top_pat.append({"id": str(ids.loc[idx]),
+                        "title": str(r.get("title", ""))[:70],
+                        "applicant": str(r.get("applicant_display", "")),
+                        "n_other": int(r["_cf_other"]),
+                        "n_self": int(r["_cf_self"]),
+                        "drill": {"type": "ids", "ids": [str(ids.loc[idx])]}})
+    tot_s, tot_o = float(self_c.sum()), float(other_c.sum())
+    overall = {"n_self": int(tot_s), "n_other": int(tot_o),
+               "self_rate": round(tot_s / (tot_s + tot_o), 4) if (tot_s + tot_o) else None}
+    return {"fig": fig, "rows": rows, "top_patents": top_pat, "overall": overall,
+            "note": ("자기 피인용=출원인(계열 포함, WIPS 기준)이 후속 출원에서 스스로 "
+                     "인용한 건, 타인 피인용=타사가 인용한 건. 자기인용률이 높은 기업은 "
+                     "기술 내재화·연속 개발형, 타인 피인용이 큰 기업은 산업 전체에 "
+                     "영향을 주는 원천 기술형으로 해석합니다.")}, None
+
+
+_NUM_NORM_RE = re.compile(r"[^A-Z0-9]")
+_KIND_CODE_RE = re.compile(r"[A-Z]\d?$")
+
+
+def _norm_doc_no(v):
+    """문헌번호 정규화: 대문자화 + 특수문자 제거 (KR10-2020-0001234A → KR1020200001234A)."""
+    return _NUM_NORM_RE.sub("", str(v).upper())
+
+
+def _inset_network_section(df, settings):
+    """세트 내 인용 네트워크 — 인용 문헌번호를 세트 문헌과 매칭한 실제 인용쌍."""
+    from src.preprocessing import parse_multiclass_cell
+    if "cites_backward_nums" not in df.columns:
+        return None, ("인용 문헌번호 목록 컬럼 필요 — 컬럼 매핑에서 '인용 문헌번호 "
+                      "목록'(WIPS '인용 문헌번호(B1)')을 매핑하세요.")
+    # 세트 문헌번호 색인 (공개/출원/등록번호, 원형 + 말미 종별코드 제거형)
+    key_to_idx = {}
+    for id_col in ("pub_number", "app_number", "reg_number"):
+        if id_col not in df.columns:
+            continue
+        for idx, v in df[id_col].items():
+            k = _norm_doc_no(v)
+            if len(k) >= 6:
+                key_to_idx.setdefault(k, idx)
+                key_to_idx.setdefault(_KIND_CODE_RE.sub("", k), idx)
+    if not key_to_idx:
+        return None, "문헌번호(공개/출원/등록번호) 컬럼이 없어 매칭할 수 없습니다."
+    ids = _ids_series(df)
+    apps = df["applicant_display"].astype(str)
+    total_refs, matched = 0, 0
+    pair_docs = {}       # (citing_idx, cited_idx)
+    for idx, cell in df["cites_backward_nums"].items():
+        for num in parse_multiclass_cell(cell):
+            total_refs += 1
+            k = _norm_doc_no(num)
+            j = key_to_idx.get(k)
+            if j is None:
+                j = key_to_idx.get(_KIND_CODE_RE.sub("", k))
+            if j is None or j == idx:
+                continue
+            matched += 1
+            pair_docs[(idx, j)] = True
+    if not pair_docs:
+        return None, ("인용 문헌번호 %s건 중 분석 대상 세트 내 문헌과 매칭된 인용쌍이 "
+                      "없습니다 — 세트 밖(외부) 문헌만 인용하고 있습니다."
+                      % fmt_num(total_refs))
+    # 기업 간 집계 (citing 기업 → cited 기업)
+    comp_edges = {}
+    self_company = 0
+    inset_cited = {}     # cited_idx → citing idx 목록
+    for (ci, cj) in pair_docs:
+        inset_cited.setdefault(cj, []).append(ci)
+        a, b = apps.loc[ci].strip(), apps.loc[cj].strip()
+        if not a or not b:
+            continue
+        if a == b:
+            self_company += 1
+            continue
+        rec = comp_edges.setdefault((a, b), {"n": 0, "citing_ids": []})
+        rec["n"] += 1
+        rec["citing_ids"].append(str(ids.loc[ci]))
+    network = None
+    top_pairs = []
+    if comp_edges:
+        deg = {}
+        for (a, b), rec in comp_edges.items():
+            deg[a] = deg.get(a, 0) + rec["n"]
+            deg[b] = deg.get(b, 0) + rec["n"]
+        keep = set(sorted(deg, key=deg.get, reverse=True)[:20])
+        edges_kept = {k: v for k, v in comp_edges.items()
+                      if k[0] in keep and k[1] in keep}
+        in_deg = {}
+        for (a, b), rec in edges_kept.items():
+            in_deg[b] = in_deg.get(b, 0) + rec["n"]
+        nmax = max(in_deg.values()) if in_deg else 1
+        names = sorted({n for k in edges_kept for n in k})
+        nodes = [{"id": n, "label": n,
+                  "size": float(16 + 24 * np.sqrt(in_deg.get(n, 0) / float(nmax))
+                                if nmax else 16),
+                  "color": "#E15759" if in_deg.get(n, 0) == nmax and nmax > 0
+                  else "#4E79A7",
+                  "cited_in_set": int(in_deg.get(n, 0)),
+                  "drill": {"type": "applicant", "applicant": n,
+                            "applicant_scope": "any"}}
+                 for n in names]
+        emax = max(rec["n"] for rec in edges_kept.values())
+        max_links = int(get_limit(settings, "sankey_max_links"))
+        edge_items = sorted(edges_kept.items(), key=lambda kv: -kv[1]["n"])[:max_links]
+        edges = [{"source": a, "target": b, "weight": rec["n"], "arrow": True,
+                  "width": float(1.5 + 5 * rec["n"] / emax),
+                  "label": "%d건" % rec["n"],
+                  "drill": {"type": "ids", "ids": rec["citing_ids"][:200]}}
+                 for (a, b), rec in edge_items]
+        network = cytoscape_network(nodes, edges)
+        top_pairs = [{"citing": a, "cited": b, "n": rec["n"],
+                      "drill": {"type": "ids", "ids": rec["citing_ids"][:200]}}
+                     for (a, b), rec in edge_items[:10]]
+    # 세트 내에서 가장 많이 인용받은 특허 (실측 인용쌍 기준)
+    top_cited = []
+    for cj, citing in sorted(inset_cited.items(), key=lambda kv: -len(kv[1]))[:10]:
+        top_cited.append({
+            "id": str(ids.loc[cj]),
+            "title": str(df.loc[cj].get("title", ""))[:70],
+            "applicant": str(apps.loc[cj]),
+            "n_inset": len(citing),
+            "drill": {"type": "ids",
+                      "ids": [str(ids.loc[ci]) for ci in citing][:200]}})
+    return {"network": network, "top_pairs": top_pairs, "top_cited": top_cited,
+            "n_pairs": int(len(pair_docs)), "n_refs": int(total_refs),
+            "matched_ratio": round(matched / float(total_refs), 4) if total_refs else 0.0,
+            "n_self_company": int(self_company),
+            "note": ("매칭 기준: 인용 문헌번호와 세트 내 공개/출원/등록번호를 "
+                     "정규화(하이픈·공백 제거, 말미 종별코드 허용)해 일치시킨 실제 "
+                     "인용쌍만 사용합니다. 세트 밖 문헌 인용은 제외되므로 전체 인용 "
+                     "관계의 부분집합입니다.")}, None
 
 
 def compute_citation_influence(df, settings, top_n=None, company=None):
@@ -184,12 +397,48 @@ def compute_citation_influence(df, settings, top_n=None, company=None):
                                 for (s, t), v in link_list],
                         title="Citation Diffusion (핵심특허 → 기술분류 → 주요 출원인)")
 
+    # 확장 섹션: 자기/타인 피인용 분리 · 세트 내 인용 네트워크 (컬럼 매핑 시에만)
+    extras, extras_skipped = {}, []
+    for ex_key, ex_fn in (("self_other", _self_other_section),
+                          ("inset_network", _inset_network_section)):
+        try:
+            ex_res, ex_reason = ex_fn(df, settings)
+        except Exception as e:  # 확장 섹션 오류가 본 분석을 막지 않도록
+            ex_res, ex_reason = None, "계산 오류: %s" % e
+        if ex_res is not None:
+            extras[ex_key] = ex_res
+        else:
+            extras_skipped.append({"section": ex_key, "reason": ex_reason})
+
     sentences = []
     if top_records:
         t0 = top_records[0]
         sentences.append("영향력 1위 특허는 %s('%s', %s, Influence %s, 피인용 %s건)입니다."
                          % (t0["id"], t0["title"][:40], t0["applicant"], t0["score"],
                             fmt_num(t0["cites"])))
+    if "self_other" in extras and extras["self_other"]["overall"]["self_rate"] is not None:
+        so = extras["self_other"]
+        r0 = max(so["rows"], key=lambda r: r["n_other"])
+        sentences.append("전체 피인용 중 자기인용 비율은 %s이며, 자기인용을 제외한 "
+                         "타인 피인용 1위 기업은 '%s'(%s건)입니다 — 타인 피인용이 "
+                         "자기인용 부풀림 없는 실제 영향력입니다."
+                         % (fmt_pct(so["overall"]["self_rate"]), r0["company"],
+                            fmt_num(r0["n_other"])))
+    if "inset_network" in extras:
+        net = extras["inset_network"]
+        if net["top_cited"]:
+            c0 = net["top_cited"][0]
+            sentences.append("세트 내 실제 인용쌍 %s건이 매칭되었고(전체 인용의 %s), "
+                             "세트 안에서 가장 많이 인용받은 특허는 %s('%s', %s건)"
+                             "입니다 — 이 세트의 기술 흐름이 수렴하는 문헌입니다."
+                             % (fmt_num(net["n_pairs"]), fmt_pct(net["matched_ratio"]),
+                                c0["id"], c0["applicant"], fmt_num(c0["n_inset"])))
+        if net["top_pairs"]:
+            p0 = net["top_pairs"][0]
+            sentences.append("기업 간 인용 흐름 최대 경로는 '%s' → '%s'(%s건 인용)로, "
+                             "'%s'가 '%s'의 기술을 토대로 후속 개발 중임을 시사합니다."
+                             % (p0["citing"], p0["cited"], fmt_num(p0["n"]),
+                                p0["citing"], p0["cited"]))
         expiring = [r for r in top_records if r["expiry"] and
                     pd.Timestamp(r["expiry"]) <= now + pd.DateOffset(years=3)]
         if expiring:
@@ -202,7 +451,11 @@ def compute_citation_influence(df, settings, top_n=None, company=None):
                          "계산되어 다른 회사와 비교 가능합니다." % company)
     insight = build_insight(sentences, {"weights": weights},
                             small_sample=check_small_sample(len(work), settings))
-    return ok_result({"figure": fig_bar, "sankey": fig_sankey, "top_patents": top_records},
+    return ok_result({"figure": fig_bar, "sankey": fig_sankey, "top_patents": top_records,
+                      "self_other": extras.get("self_other"),
+                      "inset_network": extras.get("inset_network"),
+                      "extras_skipped": extras_skipped},
                      insight=insight,
-                     meta={"note": ("간접 피인용·타 기업 확산은 인용쌍 데이터가 없어 "
-                                    "피인용 수 기반 근사값입니다.")})
+                     meta={"note": ("간접 피인용·타 기업 확산은 피인용 수 기반 근사값"
+                                    "입니다. '세트 내 인용 네트워크' 섹션은 인용 "
+                                    "문헌번호가 매핑된 경우 실제 인용쌍으로 계산됩니다.")})

@@ -306,6 +306,24 @@ def select_patents(df, drill):
     if drill.get("inventor") and "_inventor_list" in df.columns:
         inv = str(drill["inventor"])
         mask &= df["_inventor_list"].map(lambda lst: inv in (lst or []))
+    if drill.get("first_country") and "first_filing_country" in df.columns:
+        # 최우선출원국(원천국) drill — 국가 흐름 히트맵 셀과 정확히 일치
+        mask &= df["first_filing_country"].astype(str).str.strip().str.upper() == \
+            str(drill["first_country"]).strip().upper()
+    if drill.get("exam_requested") is not None and "exam_request_flag" in df.columns:
+        from src.preprocessing import parse_bool as _pb2
+        req = df["exam_request_flag"].map(_pb2)
+        mask &= (req == True) if drill["exam_requested"] else (req == False)  # noqa: E712
+    if drill.get("divisional") is not None:
+        # 분할출원 drill: 분할출원 여부 플래그 또는 원출원번호 보유 (섹션 집계와 동일 기준)
+        from src.preprocessing import parse_bool as _pb3
+        div = pd.Series(False, index=df.index)
+        if "divisional_flag" in df.columns:
+            div |= df["divisional_flag"].map(_pb3) == True  # noqa: E712
+        if "parent_app_number" in df.columns:
+            div |= df["parent_app_number"].astype(str).str.strip() \
+                .map(lambda v: v not in ("", "nan", "None"))
+        mask &= div if drill["divisional"] else ~div
     if dtype == "ids" and drill.get("ids"):
         wanted = set(map(str, drill["ids"]))
         id_col = "pub_number" if "pub_number" in df.columns else \

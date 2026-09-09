@@ -497,6 +497,69 @@ CONCEPTS = {
                      "정부과제명", "정부 과제명", "국책과제명", "국가연구개발 과제명",
                      "national r&d program", "government program"],
     },
+    # ---- 윈텔립스 확장 필드 (인용 상세·원천국·심사청구·분할·EPC·연차료·AI 요약) ----
+    "cites_backward_nums": {
+        "label": "인용 문헌번호 목록", "dtype": "문자열 (선행 인용 문헌번호 목록: KR...; US...)",
+        "preferred": ["인용 문헌번호(B1)"],  # 기본 매핑 (윈텔립스)
+        "variants": ["인용 문헌번호(B1)", "인용 문헌번호", "인용문헌번호", "인용 문헌 번호",
+                     "backward citation numbers", "cited documents", "references cited numbers"],
+    },
+    "cites_forward_self": {
+        "label": "자기 피인용 문헌번호", "dtype": "숫자 또는 문헌번호 목록 (자기 피인용 — 건수로 자동 집계)",
+        "preferred": ["자기 피인용 문헌번호(F1)"],  # 기본 매핑 (윈텔립스)
+        "variants": ["자기 피인용 문헌번호(F1)", "자기 피인용 문헌번호", "자기피인용 문헌번호",
+                     "자기 피인용 수", "자기피인용수", "self forward citations"],
+    },
+    "cites_forward_other": {
+        "label": "타인 피인용 문헌번호", "dtype": "숫자 또는 문헌번호 목록 (타인 피인용 — 건수로 자동 집계)",
+        "preferred": ["타인 피인용 문헌번호(F1)"],  # 기본 매핑 (윈텔립스)
+        "variants": ["타인 피인용 문헌번호(F1)", "타인 피인용 문헌번호", "타인피인용 문헌번호",
+                     "타인 피인용 수", "타인피인용수", "other forward citations"],
+    },
+    "first_filing_country": {
+        "label": "최우선출원국가", "dtype": "문자열 (원천 출원 국가코드: KR/US/...)",
+        "preferred": ["최우선출원국가"],  # 기본 매핑 (윈텔립스)
+        "variants": ["최우선출원국가", "최우선출원 국가", "최초출원국", "원천출원국",
+                     "earliest filing country", "origin country"],
+    },
+    "exam_request_flag": {
+        "label": "심사청구 여부", "dtype": "불리언/문자열 (Y/N, 유/무)",
+        "preferred": ["심사청구 여부"],  # 기본 매핑 (윈텔립스 — KR/JP/EP/CA)
+        "variants": ["심사청구 여부", "심사청구여부", "심사 청구 여부",
+                     "examination requested", "request for examination yn"],
+    },
+    "divisional_flag": {
+        "label": "분할출원 여부", "dtype": "불리언/문자열 (Y/N, 유/무)",
+        "preferred": ["분할출원 여부"],  # 기본 매핑 (윈텔립스)
+        "variants": ["분할출원 여부", "분할출원여부", "분할 출원 여부", "divisional yn",
+                     "is divisional"],
+    },
+    "epc_valid_states": {
+        "label": "EPC 유효국", "dtype": "문자열 (유효 검증국 코드 목록: DE; FR; GB)",
+        "preferred": ["EPC유효국"],  # 기본 매핑 (윈텔립스 — EP)
+        "variants": ["EPC유효국", "epc 유효국", "epc validated states", "validated states"],
+    },
+    "epc_lapsed_states": {
+        "label": "EPC 소멸국", "dtype": "문자열 (권리 소멸 검증국 코드 목록)",
+        "preferred": ["EPC소멸국"],  # 기본 매핑 (윈텔립스 — EP)
+        "variants": ["EPC소멸국", "epc 소멸국", "epc lapsed states", "lapsed states"],
+    },
+    "annuity_date": {
+        "label": "최근 연차료일", "dtype": "날짜 (마지막 연차료 납부 기록일)",
+        "preferred": ["최근 연차료일"],  # 기본 매핑 (윈텔립스 — KR/US/EP)
+        "variants": ["최근 연차료일", "최근연차료일", "연차료일", "연차료 납부일",
+                     "last annuity date", "annuity date"],
+    },
+    "ai_summary": {
+        "label": "AI 요약", "dtype": "문자열 (윈텔립스 AI 생성 요약 — 시맨틱 분석 텍스트 소스)",
+        "preferred": ["AI 요약"],  # 기본 매핑 (윈텔립스)
+        "variants": ["AI 요약", "ai요약", "ai 요약문", "ai summary"],
+    },
+    "feature_summary": {
+        "label": "특징 요약", "dtype": "문자열 (윈텔립스 AI 특징 요약)",
+        "preferred": ["특징 요약"],  # 기본 매핑 (윈텔립스)
+        "variants": ["특징 요약", "특징요약", "특징 요약문", "feature summary"],
+    },
 }
 # 기존 assignee 개념에 변형 표기 보강 (최종권리자·등록권리자 등)
 CONCEPTS["assignee"]["variants"] += ["최종권리자", "최종 권리자", "등록권리자",
@@ -529,25 +592,25 @@ ANALYSIS_REQUIREMENTS = {
     "company-dna":           {"required": [{"any": ANY_TECH}, {"any": ANY_DATE}, {"any": ANY_APPLICANT}], "optional": ["family_size", "family_country_count", "cites_forward", "legal_status", "inventors", "family_id"]},
     "lead-lag":              {"required": [{"any": ANY_TECH}, {"any": ANY_DATE}, {"any": ANY_APPLICANT}], "optional": []},
     "claim-density":         {"required": ["indep_claim", {"any": ANY_TECH}], "optional": ["embedding", "legal_status", "expiry_date", "family_id", "cites_forward"] + ANY_APPLICANT},
-    "citation-diffusion":    {"required": ["cites_forward", {"any": ANY_TECH}], "optional": ["cites_backward", "family_size", "family_country_count", "legal_status", "expiry_date"] + ANY_APPLICANT},
+    "citation-diffusion":    {"required": ["cites_forward", {"any": ANY_TECH}], "optional": ["cites_backward", "family_size", "family_country_count", "legal_status", "expiry_date", "cites_forward_self", "cites_forward_other", "cites_backward_nums", "pub_number"] + ANY_APPLICANT},
     "inventor-mobility":     {"required": ["inventors", {"any": ANY_APPLICANT}, {"any": ANY_DATE}], "optional": [{"any": ANY_TECH}, "country"]},
     "classification-quality": {"required": [{"any": ANY_TECH}], "optional": ["embedding", "class_confidence", "title", "abstract", {"any": ANY_DATE}]},
-    "basic-stats":           {"required": [{"any": ANY_DATE}], "optional": ANY_APPLICANT + ["country", "is_granted", "is_active", "legal_status", {"any": ANY_TECH}]},
+    "basic-stats":           {"required": [{"any": ANY_DATE}], "optional": ANY_APPLICANT + ["country", "is_granted", "is_active", "legal_status", "first_filing_country", {"any": ANY_TECH}]},
     "advanced-stats":        {"required": [{"any": ANY_APPLICANT}], "optional": ["app_date", "reg_date", "expiry_date", "claims_count", "indep_claims_count", "ipc", "cites_forward", "is_active", "legal_status"]},
     "portfolio-index":       {"required": [{"any": ANY_APPLICANT}, "cites_forward"], "optional": ["family_countries", "family_country_count", "family_size", "is_active", "legal_status", {"any": ANY_DATE}, {"any": ANY_TECH}]},
     "scope-entropy":         {"required": [{"any": ANY_TECH}, {"any": ANY_APPLICANT}], "optional": ["indep_claim", "ipc", "family_countries", "country", "title", "abstract", "embedding", "is_granted", {"any": ANY_DATE}]},
     "combo-upset":           {"required": [{"any": ANY_TECH}], "optional": [{"any": ANY_DATE}] + ANY_APPLICANT + ["is_active", "legal_status"]},
-    "emerging-clusters":     {"required": [{"any": ["abstract", "indep_claim", "title"]}, {"any": ANY_DATE}], "optional": ANY_APPLICANT + ["embedding"]},
-    "semantic-influence":    {"required": [{"any": ["abstract", "indep_claim", "title"]}, {"any": ANY_DATE}], "optional": ANY_APPLICANT + ["embedding", "cites_forward"]},
-    "similarity-network":    {"required": [{"any": ["abstract", "indep_claim", "title"]}], "optional": ANY_APPLICANT + ["embedding", "is_active", "legal_status"]},
-    "wips-deep":             {"required": [{"any": ANY_DATE}], "optional": ANY_APPLICANT + ["reg_date", "lapse_date", "agent", "expedited_exam", "exam_request_date", "oa_count", "examiner_citations", "applicant_citations", "parent_app_number", "drawings_count", "spec_length", "trial_info", "trial_claimant", "trial_count", "lawsuit_count", "court_type", "gov_program", "family_id", "country", "claims_count"]},
+    "emerging-clusters":     {"required": [{"any": ["ai_summary", "abstract", "indep_claim", "title"]}, {"any": ANY_DATE}], "optional": ANY_APPLICANT + ["embedding", "feature_summary"]},
+    "semantic-influence":    {"required": [{"any": ["ai_summary", "abstract", "indep_claim", "title"]}, {"any": ANY_DATE}], "optional": ANY_APPLICANT + ["embedding", "cites_forward", "feature_summary"]},
+    "similarity-network":    {"required": [{"any": ["ai_summary", "abstract", "indep_claim", "title"]}], "optional": ANY_APPLICANT + ["embedding", "is_active", "legal_status", "feature_summary"]},
+    "wips-deep":             {"required": [{"any": ANY_DATE}], "optional": ANY_APPLICANT + ["reg_date", "lapse_date", "agent", "expedited_exam", "exam_request_date", "exam_request_flag", "oa_count", "examiner_citations", "applicant_citations", "parent_app_number", "divisional_flag", "drawings_count", "spec_length", "trial_info", "trial_claimant", "trial_count", "lawsuit_count", "court_type", "gov_program", "family_id", "country", "claims_count"]},
     "exec-plus":             {"required": [{"any": ANY_DATE}, {"any": ANY_APPLICANT}], "optional": [{"any": ANY_TECH}, "cites_forward", "family_size", "family_country_count", "expiry_date", "reg_date", "inventors", "is_active", "legal_status", "pub_number", "title"]},
     "executive-summary":     {"required": [{"any": ANY_TECH}, {"any": ANY_DATE}, {"any": ANY_APPLICANT}], "optional": ["cites_forward", "is_active", "legal_status", "expiry_date", "is_own"]},
     "axis-cross":            {"required": [{"any": ANY_TECH}], "optional": ["tech_b_l1", "tech_b_l2", "tech_b_l3", "tech_c_l1", "tech_c_l2", "tech_c_l3", {"any": ANY_DATE}] + ANY_APPLICANT},
     "tech-year-bubble":      {"required": [{"any": ANY_TECH}, {"any": ANY_DATE}], "optional": ANY_APPLICANT},
     "company-focus":         {"required": [{"any": ANY_TECH}, {"any": ANY_DATE}, {"any": ANY_APPLICANT}], "optional": []},
     "tech-tree":             {"required": [{"any": ANY_TECH}], "optional": ANY_APPLICANT},
-    "deep-plus":             {"required": [{"any": ANY_APPLICANT + ["pub_number", "app_number"]}], "optional": ["license_flag", "licensee_count", "sep_org", "sep_number", "sep_date", "rejection_reason", "rejection_flag", "reexam_flag", "npl_count", "recent_assignee", "recent_assignor", "assign_date", "assign_type", "examiner", "oa_count", "cites_forward", "is_granted", "legal_status", {"any": ANY_TECH}, {"any": ANY_DATE}]},
+    "deep-plus":             {"required": [{"any": ANY_APPLICANT + ["pub_number", "app_number"]}], "optional": ["license_flag", "licensee_count", "sep_org", "sep_number", "sep_date", "rejection_reason", "rejection_flag", "reexam_flag", "npl_count", "recent_assignee", "recent_assignor", "assign_date", "assign_type", "examiner", "oa_count", "cites_forward", "is_granted", "legal_status", "epc_valid_states", "epc_lapsed_states", "annuity_date", {"any": ANY_TECH}, {"any": ANY_DATE}]},
     "ownership":             {"required": [{"any": ANY_APPLICANT}, "assignee"], "optional": [{"any": ANY_TECH}, {"any": ANY_DATE}, "cites_forward", "is_active", "legal_status", "reg_date"]},
 }
 
@@ -574,6 +637,10 @@ CONCEPT_KINDS = {
     "license_flag": "bool", "licensee_count": "number",
     "sep_date": "date", "rejection_flag": "bool", "reexam_flag": "bool",
     "npl_count": "number", "assign_date": "date",
+    "cites_forward_self": "count_or_list", "cites_forward_other": "count_or_list",
+    "first_filing_country": "country",
+    "exam_request_flag": "bool", "divisional_flag": "bool",
+    "annuity_date": "date",
 }
 
 
@@ -681,7 +748,9 @@ def suggest_mapping(actual_columns, cutoff=None):
             # ('출원인 수' 같은 인원수 컬럼이 퍼지 매칭으로 잘못 잡히는 것 방지)
             if best and best[1] != "exact" and concept in (
                     "cites_backward", "cites_forward",
-                    "examiner_citations", "applicant_citations"):
+                    "examiner_citations", "applicant_citations",
+                    "cites_backward_nums", "cites_forward_self",
+                    "cites_forward_other"):
                 form_all = (nalt or "") + ncol
                 if not any(kw in form_all for kw in
                            ("인용", "citation", "cited", "citing", "reference")):

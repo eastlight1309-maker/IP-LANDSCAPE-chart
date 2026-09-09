@@ -535,7 +535,7 @@ def test_deep_plus_six_sections(settings):
     assert r["status"] == "ok"
     s = r["sections"]
     assert set(s.keys()) == {"license", "sep", "rejection", "science",
-                             "assignment", "examiner"}
+                             "assignment", "examiner", "epc"}
     # ① 실시권: 라이선스율 % 축 + licensed 드릴이 실시권 특허만 선택
     lc = s["license"]
     assert lc["n_licensed"] > 0 and 0 < lc["ratio"] < 1

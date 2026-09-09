@@ -111,6 +111,7 @@ def generate_sample(n=600, seed=42, sep="; ", multiclass_format="sep",
         co_applicant = rng.random() < 0.12
         applicant_field = comp if not co_applicant else \
             "%s; %s" % (comp, COMPANIES[int(rng.integers(0, len(COMPANIES)))])
+        country = ["KR", "US", "JP", "CN", "EP"][i % 5]
         inv_pool_base = (COMPANIES.index(comp)) * 12
         invs = ["발명자%02d" % (inv_pool_base + int(rng.integers(0, 18)))
                 for _ in range(int(rng.integers(1, 4)))]
@@ -135,7 +136,7 @@ def generate_sample(n=600, seed=42, sep="; ", multiclass_format="sep",
             "등록일": ("%d-%02d-20" % (year + 2, month)) if granted else "",
             "우선일": "%d-%02d-01" % (year, month),
             "만료예정일": "%d-%02d-14" % (year + 20, month),
-            "국가": ["KR", "US", "JP", "CN", "EP"][i % 5],
+            "국가": country,
             "법적상태": ("등록" if active else
                      ("존속기간만료" if granted else
                       ["공개", "심사중", "거절", "취하"][i % 4])),
@@ -189,6 +190,12 @@ def generate_sample(n=600, seed=42, sep="; ", multiclass_format="sep",
                 for k in range(int(rng.poisson(2)))),
             "원출원번호": ("KR10-%d-%07d" % (max(year_min, year - 1), max(0, i - 5)))
                      if rng.random() < 0.08 else "",
+            "AI 요약": ("%s 분야에서 %s 문제를 해결하기 위한 발명으로, %s 을(를) "
+                     "핵심 수단으로 적용하여 %s 제품의 성능을 개선한다."
+                     % (l1, PROBLEMS[i % len(PROBLEMS)],
+                        SOLUTIONS[i % len(SOLUTIONS)], PRODUCTS[i % len(PRODUCTS)])),
+            "특징 요약": "%s 구조에 %s 공정을 결합한 점이 특징이다."
+                     % (l2, PROCESSES[i % len(PROCESSES)]),
             "도면 수": int(rng.integers(2, 12)) + (COMPANIES.index(comp) % 3) * 6,
             "명세서 페이지 수": int(rng.integers(8, 60)),
             # 현재권리자: 대부분 출원인과 동일, 일부 양도 (삼성전자=순매수 성향,
@@ -232,7 +239,66 @@ def generate_sample(n=600, seed=42, sep="; ", multiclass_format="sep",
                         if rng.random() < 0.07 else ""),
             "심사관": ("심사관%02d" % (i % 12) if rng.random() < 0.6 else ""),
         })
-    return pd.DataFrame(rows)
+    df = pd.DataFrame(rows)
+    # ---- 윈텔립스 확장 필드 (후처리 생성) ----
+    # ⚠ 기존 컬럼의 난수 스트림을 바꾸지 않도록 별도 rng 사용 — 기존 시드 기반
+    # 테스트 기대값(출원인 분포·양도 건수 등)이 그대로 유지된다.
+    rng2 = np.random.default_rng(seed + 777)
+    pubs = list(df["공개번호"])
+    firsts = [str(a).split(";")[0].strip() for a in df["출원인"]]
+    grants = [str(r).strip() != "" for r in df["등록번호"]]
+    years = [int(str(d)[:4]) for d in df["출원일"]]
+    months = [str(d)[5:7] for d in df["출원일"]]
+    countries = list(df["국가"])
+    # 인용 문헌번호(B1): 절반가량은 세트 내 앞선 문헌의 공개번호를 실제 인용
+    # (세트 내 인용 네트워크 케이스), 나머지는 세트 밖 외부 문헌번호.
+    cited_lists = []
+    for i in range(len(df)):
+        refs = []
+        for k in range(int(rng2.poisson(2))):
+            if i > 10 and rng2.random() < 0.5:
+                refs.append(pubs[int(rng2.integers(0, i))])
+            else:
+                refs.append("EP%07dA1" % (1000000 + i * 11 + k))
+        cited_lists.append("; ".join(refs))
+    df["인용 문헌번호(B1)"] = cited_lists
+    # 자기/타인 피인용 분리 (목록 길이 합 == 피인용 수 계약)
+    self_lists, other_lists = [], []
+    for i, cf in enumerate(df["피인용 수"]):
+        n_self = min(int(cf), int(rng2.poisson(0.8)))
+        self_lists.append("; ".join(
+            "KR10%07dA" % (3000000 + i * 3 + k) for k in range(n_self)))
+        other_lists.append("; ".join(
+            "US%08dB2" % (10000000 + i * 3 + k) for k in range(int(cf) - n_self)))
+    df["자기 피인용 문헌번호(F1)"] = self_lists
+    df["타인 피인용 문헌번호(F1)"] = other_lists
+    # 분할출원 여부 (원출원번호 보유 ∪ 소수 플래그 단독)
+    df["분할출원 여부"] = ["Y" if (str(p).strip() or rng2.random() < 0.03) else "N"
+                      for p in df["원출원번호"]]
+    # 심사청구 여부 — 심사청구제 국가만 값 보유, 기업별 성향 차등
+    df["심사청구 여부"] = [
+        "" if c not in ("KR", "JP", "EP") else
+        ("Y" if rng2.random() < (0.45 + 0.05 * (COMPANIES.index(f)
+                                                if f in COMPANIES else 0)) else "N")
+        for c, f in zip(countries, firsts)]
+    # 최우선출원국가 — 기업 본국 우세 + 10% 노이즈
+    home = {"삼성전자": "KR", "SK하이닉스": "KR", "TSMC": "TW", "Intel": "US",
+            "ASE": "TW", "Amkor": "US", "네패스": "KR", "LB세미콘": "KR",
+            "JCET": "CN", "무라타제작소": "JP"}
+    df["최우선출원국가"] = [home.get(f, c) if rng2.random() < 0.9 else c
+                      for f, c in zip(firsts, countries)]
+    # EPC 유효국/소멸국 (EP 등록건만) · 최근 연차료일 (등록건만)
+    df["EPC유효국"] = ["; ".join(["DE", "FR", "GB", "IT", "NL"]
+                              [:1 + int(rng2.integers(0, 5))])
+                    if (c == "EP" and g) else ""
+                    for c, g in zip(countries, grants)]
+    df["EPC소멸국"] = ["; ".join(["ES", "SE", "CH"][:int(rng2.integers(0, 3))])
+                    if (c == "EP" and g) else ""
+                    for c, g in zip(countries, grants)]
+    df["최근 연차료일"] = ["%d-%s-01" % (min(y + 3 + int(rng2.integers(0, 6)),
+                                        year_max + 1), m) if g else ""
+                     for y, m, g in zip(years, months, grants)]
+    return df
 
 
 # ---------------- 테스트 케이스 변형 ----------------

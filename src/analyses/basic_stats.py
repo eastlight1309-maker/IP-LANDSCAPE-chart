@@ -112,6 +112,57 @@ def compute_basic_stats(df, settings, company=None):
                 customdata=[{"drill": _drill_scope({"country": str(c)})}
                             for c in counts.index])
 
+    # ②-b 원천국(최우선출원국) → 출원국 흐름 매트릭스 — 기술이 어디서 시작해
+    # 어느 시장으로 전개되는지 (최우선출원국가 컬럼 매핑 시에만)
+    fig_country_flow = None
+    flow_stats = None
+    if "first_filing_country" in df.columns and "country" in df.columns:
+        origin = df["first_filing_country"].astype(str).str.strip().str.upper() \
+            .replace("NAN", "").replace("NONE", "")
+        filing = df["country"].astype(str).str.strip().str.upper() \
+            .replace("NAN", "").replace("NONE", "")
+        ok_rows = (origin != "") & (filing != "")
+        if ok_rows.sum() >= 5:
+            flow = pd.crosstab(origin[ok_rows], filing[ok_rows])
+            top_orig = flow.sum(axis=1).sort_values(ascending=False).head(10).index
+            top_fil = flow.sum(axis=0).sort_values(ascending=False).head(10).index
+            flow = flow.loc[top_orig, top_fil]
+            z, hover, custom = [], [], []
+            for o in flow.index:
+                row_z, row_h, row_c = [], [], []
+                for f in flow.columns:
+                    v = int(flow.loc[o, f])
+                    row_z.append(v)
+                    row_h.append("원천국 %s → 출원국 %s: %s건%s"
+                                 % (o, f, fmt_num(v),
+                                    " (자국 출원)" if o == f else ""))
+                    row_c.append({"drill": _drill_scope(
+                        {"first_country": str(o), "country": str(f)})})
+                z.append(row_z)
+                hover.append(row_h)
+                custom.append(row_c)
+            fig_country_flow = heatmap(
+                z, [str(c) for c in flow.columns], [str(o) for o in flow.index],
+                title="원천국(최우선출원국) → 출원국 흐름 — 기술이 시작된 곳과 "
+                      "확보한 시장", colorscale=BLUES, hovertext=hover,
+                colorbar_title="건수")
+            for tr in fig_country_flow["data"]:
+                tr["customdata"] = custom
+            same = int(sum(flow.loc[o, o] for o in flow.index if o in flow.columns))
+            total_flow = int(flow.values.sum())
+            off = flow.copy()
+            for o in off.index:
+                if o in off.columns:
+                    off.loc[o, o] = 0
+            best = None
+            if off.values.max() > 0:
+                oi, fi = np.unravel_index(off.values.argmax(), off.values.shape)
+                best = (str(off.index[oi]), str(off.columns[fi]),
+                        int(off.values[oi, fi]))
+            flow_stats = {"domestic_ratio": round(same / float(total_flow), 4)
+                          if total_flow else None,
+                          "top_cross": best, "n": total_flow}
+
     # ③ 출원인 순위 + ④ 출원인×연도 매트릭스
     # 공동출원 처리: co_mode="all"이면 공동출원 1건을 각 공동출원인에게 1건씩 집계
     fig_applicants, fig_app_year = None, None
@@ -278,6 +329,19 @@ def compute_basic_stats(df, settings, company=None):
             "권리 확보가 집중된 시장입니다."
             % (c_counts.index[0], fmt_num(c_counts.iloc[0]),
                fmt_pct(c_counts.iloc[0] / float(c_counts.sum())), fmt_pct(c_top3))]
+    if fig_country_flow is not None and flow_stats:
+        fs_sents = []
+        if flow_stats["domestic_ratio"] is not None:
+            fs_sents.append("원천국(최우선출원국)과 출원국이 같은 자국 출원이 %s이며, "
+                            "나머지가 해외 시장 전개 출원입니다."
+                            % fmt_pct(flow_stats["domestic_ratio"]))
+        if flow_stats["top_cross"]:
+            o, f, v = flow_stats["top_cross"]
+            fs_sents.append("가장 큰 국가 간 흐름은 %s에서 시작해 %s에 출원한 %s건 — "
+                            "%s 원천 기술이 %s 시장을 겨냥하고 있습니다."
+                            % (o, f, fmt_num(v), o, f))
+        if fs_sents:
+            chart_insights["country_flow"] = fs_sents
     if len(app_counts):
         cr3 = float(app_counts.head(3).sum()) / float(len(df))
         chart_insights["applicants"] = [
@@ -339,6 +403,7 @@ def compute_basic_stats(df, settings, company=None):
 
     return ok_result({
         "kpi": kpi, "annual": fig_annual, "country": fig_country,
+        "country_flow": fig_country_flow,
         "applicants": fig_applicants, "applicant_year": fig_app_year,
         "applicant_year_bubble": fig_app_bubble,
         "tech": fig_tech, "tech_year": fig_tech_year,

@@ -3067,6 +3067,39 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
           }));
         note(sc.note);
       }
+      if (s.epc) {
+        var ep = s.epc;
+        head('🌍 권리 유지 신호 — EPC 검증국 · 연차료 최신성');
+        if (ep.n_epc) {
+          c.body.appendChild(Ui.el('<div style="color:#46607a;font-size:12.5px;margin-bottom:6px">' +
+            'EPC 검증국 정보 보유 <b>' + Ui.num(ep.n_epc, 0) + '건</b> · 평균 유효국 <b>' +
+            Ui.num(ep.avg_valid_all, 1) + '개국</b></div>'));
+        }
+        addFig(ep.fig_epc,
+          'X축=평균 EPC 유효(검증)국 수, Y축=기업. 읽는 법: 유럽특허는 국가별로 연차료를 따로 ' +
+          '내므로 유효국이 많을수록 출원인이 비용을 들여 스스로 높게 평가한 권리입니다. ' +
+          '평균이 높은 기업=유럽 시장을 넓게 방어하는 전략입니다.');
+        addTable(['특허', '명칭', '출원인', '유효국 수', '소멸국 수', '유효국'],
+          (ep.epc_rows || []).map(function (x) {
+            return idRow(x, '<td>' + Ui.esc(x.title) + '</td><td>' + Ui.esc(x.applicant) +
+              '</td><td class="num">' + x.n_valid + '</td><td class="num">' + x.n_lapsed +
+              '</td><td>' + Ui.esc(x.states) + '</td>');
+          }));
+        addFig(ep.fig_annuity,
+          'X축=최근 연차료 납부 연도, Y축=건수. 읽는 법: 왼쪽(오래된 연도)에 몰린 유효특허는 ' +
+          '연차료 납부 기록이 갱신되지 않은 권리 — 포기 예정이거나 데이터 추출 시점 차이일 수 ' +
+          '있어 재확인 후보입니다.');
+        if ((ep.stale_rows || []).length) {
+          c.body.appendChild(Ui.el('<div style="font-weight:700;font-size:12.5px;margin:8px 0 4px">' +
+            '⏳ 연차료 기록이 3년 이상 지난 유효특허 (' + Ui.num(ep.n_stale, 0) + '건 중 상위)</div>'));
+          addTable(['특허', '명칭', '출원인', '최근 연차료일'],
+            ep.stale_rows.map(function (x) {
+              return idRow(x, '<td>' + Ui.esc(x.title) + '</td><td>' + Ui.esc(x.applicant) +
+                '</td><td>' + Ui.esc(x.last_annuity) + '</td>');
+            }));
+        }
+        note(ep.note);
+      }
       if (s.examiner) {
         var ex = s.examiner;
         head('🧑‍⚖️ 심사관 인텔리전스 (내부 참고용)');
@@ -3209,8 +3242,29 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
                   return tr;
                 }));
             }
+            if (s.exam_request) {
+              head('⑤-b 심사청구율 — 권리화 의지 vs 방어·보류 출원');
+              c.body.appendChild(Ui.el('<div style="color:#46607a;font-size:12.5px;margin-bottom:6px">' +
+                '전체 심사청구율 <b>' + Ui.pct(s.exam_request.overall_rate) + '</b> (판정 가능 ' +
+                Ui.num(s.exam_request.n_valued, 0) + '건 기준)</div>'));
+              addFig(s.exam_request.fig,
+                'X축=심사청구율, Y축=기업. 읽는 법: 심사청구는 비용이 드는 능동 행위입니다 — ' +
+                '청구율이 낮은 기업은 방어 출원·옵션 보류 성향, 높은 기업은 권리화 의지가 강한 ' +
+                '포트폴리오입니다. 막대 클릭 시 그 회사의 심사청구 특허가 열립니다.');
+              addFig(s.exam_request.fig_year,
+                'X축=출원연도, Y축=심사청구율. 읽는 법: 추이가 하락하면 방어 출원 비중이 커지고 ' +
+                '있다는 신호입니다. 최근 연도는 청구 기한(KR 3년)이 남아 낮게 보일 수 있습니다.');
+              if (s.exam_request.note) {
+                c.body.appendChild(Ui.el('<div class="disclaimer">' + Ui.esc(s.exam_request.note) + '</div>'));
+              }
+            }
             if (s.divisional) {
-              head('⑥ 분할·계속출원 타이밍');
+              head('⑥ 분할·계속출원 타이밍·전략');
+              addFig(s.divisional.fig_ratio,
+                'X축=분할·계속출원 비율, Y축=기업. 읽는 법: 분할출원에는 추가 비용이 들므로 ' +
+                '비율이 높은 기업은 핵심특허를 여러 권리로 나눠 방어하는 전략입니다 — 그 대상이 ' +
+                '곧 그 회사가 스스로 중요하다고 판단한 기술입니다. 막대 클릭 시 그 회사의 ' +
+                '분할출원 목록이 열립니다.');
               addFig(s.divisional.fig,
                 'X축=분할출원일, 레인=기업, ◇=분할출원 1건. 읽는 법: 분할출원이 단기간에 몰린 ' +
                 '구간(아래 버스트 표)은 방어적 청구항 조정이 있었을 가능성이 있는 시기입니다. ' +
@@ -3344,8 +3398,8 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
           'X축=연도(출원일 기준), Y축=특허 건수. 세 선의 간격이 정보입니다: 전체와 등록의 차이=미등록(심사중·거절·포기), 등록과 유효의 차이=소멸된 권리. 읽는 법: 우상향이면 투자 확대 국면이고, 최근 1~2년은 아직 공개되지 않은 출원 때문에 실제보다 낮게 보일 수 있으므로 하락으로 단정하지 마세요. 출원인을 선택하면 공동출원 건을 포함한 그 회사 기준 추이입니다.', true) },
       { label: '국가·출원인', render: statsTab('국가별 분포 · 출원인 순위 · 연도별 버블 · 활동 매트릭스',
           '국가별 출원 분포, 출원인 순위 Top, 출원인×출원연도 버블(크기=출원건수), 출원인×연도 활동 매트릭스(진할수록 활발)입니다. 막대·버블을 클릭하면 해당 국가/출원인(해당 연도)의 특허 목록이 열립니다. 공동출원 특허는 Settings → 분석 설정의 "공동출원 집계" 방식(기본: 각 공동출원인에게 1건씩)을 따라 집계됩니다.',
-          ['country', 'applicants', 'applicant_year_bubble', 'applicant_year'],
-          '국가별 분포: X축=국가, Y축=건수 — 어느 시장에 권리를 확보했는지 보여줍니다. 출원인 순위: X축=건수, Y축=출원인 — 이 분야의 주요 플레이어 순위입니다. 출원인×출원연도 버블: X축=출원연도(1년=1칸), Y축=출원인(위가 누적 1위), 버블 크기·색=그 해 출원건수 — 큰 버블이 이어지는 줄=꾸준한 투자 기업, 최근에만 큰 버블이 생긴 기업=신규 집중 투자, 버블이 사라진 기업=투자 축소 신호이며 버블 클릭 시 그 기업·연도 특허가 열립니다. 활동 매트릭스: 같은 데이터의 히트맵 보기입니다.') },
+          ['country', 'country_flow', 'applicants', 'applicant_year_bubble', 'applicant_year'],
+          '국가별 분포: X축=국가, Y축=건수 — 어느 시장에 권리를 확보했는지 보여줍니다. 원천국→출원국 흐름(최우선출원국가 컬럼 매핑 시): 행=기술이 처음 출원된 원천국, 열=권리를 확보한 출원국, 색=건수 — 대각선(자국 출원) 밖의 진한 셀이 국경을 넘는 시장 전개이며 셀 클릭 시 해당 흐름의 특허 목록이 열립니다. 출원인 순위: X축=건수, Y축=출원인 — 이 분야의 주요 플레이어 순위입니다. 출원인×출원연도 버블: X축=출원연도(1년=1칸), Y축=출원인(위가 누적 1위), 버블 크기·색=그 해 출원건수 — 큰 버블이 이어지는 줄=꾸준한 투자 기업, 최근에만 큰 버블이 생긴 기업=신규 집중 투자, 버블이 사라진 기업=투자 축소 신호이며 버블 클릭 시 그 기업·연도 특허가 열립니다. 활동 매트릭스: 같은 데이터의 히트맵 보기입니다.') },
       { label: '심화 분석', render: function (h) {
         analysisCard({
           analysis: 'advanced-stats', holder: h,
@@ -3465,10 +3519,11 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
         '심층 시그널 — 연차료 생존곡선 · 지정국 진입 순서',
         '연차료 소멸 기록으로 "기업 스스로 매긴 특허 가치"(생존곡선)를, 패밀리 지정국 진입 ' +
         '시차로 시장 베팅 순서를 읽습니다.'),
-      deepTab('시그널: 심사 이력', ['examiner_eye', 'expedited', 'anomaly'],
-        '심층 시그널 — 심사관 인용 · 우선심사 · 심사기간 이상탐지',
+      deepTab('시그널: 심사 이력', ['examiner_eye', 'expedited', 'exam_request', 'anomaly'],
+        '심층 시그널 — 심사관 인용 · 우선심사 · 심사청구율 · 심사기간 이상탐지',
         '심사관(OA) 인용 vs 출원인측 인용 격차로 무효 리스크 후보 영역을, 우선심사 비율 급등으로 ' +
-        '사업화 임박 신호를, 심사 소요기간 이상치로 강한 권리 후보를 찾습니다.'),
+        '사업화 임박 신호를, 심사청구율로 권리화 의지 vs 방어 출원 성향을, 심사 소요기간 ' +
+        '이상치로 강한 권리 후보를 찾습니다.'),
       deepTab('시그널: 출원 행태', ['agent', 'divisional', 'disclosure'],
         '심층 시그널 — 대리인 전환 · 분할출원 · 개시 충실도',
         '대리인 교체 시점(상관 신호), 분할출원 집중 구간(방어적 청구항 조정 가능성), ' +
@@ -3485,7 +3540,12 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
       deepPlusTab('시그널: 거절·과학·심사관', ['rejection', 'science', 'examiner'],
         '특수 신호 — 거절 사유 · 과학 연계성 · 심사관',
         '거절 사유 유형 분포와 기업별 거절결정률(출원 전략 개선 지점), 비특허문헌(논문) 인용 기반 ' +
-        '과학 연계성(기초연구 근접도), 심사관별 처리 현황(개인 실명 — 내부 참고용)을 봅니다.')
+        '과학 연계성(기초연구 근접도), 심사관별 처리 현황(개인 실명 — 내부 참고용)을 봅니다.'),
+      deepPlusTab('시그널: 권리 유지', ['epc'],
+        '특수 신호 — EPC 검증국 유지 · 연차료 최신성',
+        'EPC 유효국 수(기업이 국가별 연차료를 내며 유지하는 유럽 시장의 폭)와 최근 연차료일로 ' +
+        '특허별 가치의 자기 평가 신호를 봅니다. 유효국이 많은 특허·연차료가 갱신되는 특허가 ' +
+        '출원인 스스로 높게 평가한 권리입니다.')
     ]);
   };
 
@@ -4574,6 +4634,123 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
           }
         });
       } },
+      { label: '자기 vs 타인 피인용', render: function (h) {
+        analysisCard({
+          analysis: 'citation-diffusion', holder: h,
+          title: '자기 vs 타인 피인용 — 자기인용 부풀림 없는 실제 영향력',
+          help: 'WIPS의 자기/타인 피인용 문헌번호(F1)로 피인용을 분리합니다. 자기인용률이 ' +
+            '높은 기업=기술 내재화·연속 개발형, 타인 피인용이 큰 기업=산업 전체에 영향을 주는 ' +
+            '원천 기술형입니다. 막대 클릭 시 그 회사 특허(공동출원 포함) 목록이 열립니다.',
+          renderOk: function (r, c, setTarget) {
+            var so = r.self_other;
+            if (!so) {
+              var why = ((r.extras_skipped || []).filter(function (x) {
+                return x.section === 'self_other';
+              })[0] || {}).reason || '자기/타인 피인용 컬럼이 매핑되지 않았습니다.';
+              c.body.innerHTML = '<div class="status-empty">' + Ui.esc(why) + '</div>';
+              return;
+            }
+            if (so.overall && so.overall.self_rate !== null && so.overall.self_rate !== undefined) {
+              c.body.appendChild(Ui.el('<div style="color:#46607a;font-size:12.5px;margin-bottom:6px">' +
+                '전체 피인용: 타인 <b>' + Ui.num(so.overall.n_other, 0) + '건</b> · 자기 <b>' +
+                Ui.num(so.overall.n_self, 0) + '건</b> (자기인용률 <b>' +
+                Ui.pct(so.overall.self_rate) + '</b>)</div>'));
+            }
+            var holder = Ui.el('<div class="chart-holder"></div>');
+            c.body.appendChild(holder);
+            Render.plotly(holder, so.fig, plotlyDrill);
+            setTarget({ kind: 'plotly', el: holder });
+            c.body.appendChild(chartCap('X축=피인용 건수(누적), 파랑=타인 피인용, 주황=자기 피인용. ' +
+              '읽는 법: 파랑 막대가 긴 기업이 자기인용을 뺀 진짜 영향력이 큰 기업입니다. ' +
+              '전체 피인용 순위와 이 순위가 다르면 자기인용이 순위를 부풀리고 있었다는 뜻입니다.'));
+            var rows = (so.top_patents || []).map(function (x) {
+              var tr = document.createElement('tr');
+              var td0 = document.createElement('td');
+              td0.appendChild(drillCell(x.id, x.drill));
+              tr.appendChild(td0);
+              tr.insertAdjacentHTML('beforeend', '<td>' + Ui.esc(x.title) + '</td><td>' +
+                Ui.esc(x.applicant) + '</td><td class="num">' + x.n_other +
+                '</td><td class="num">' + x.n_self + '</td>');
+              return tr;
+            });
+            if (rows.length) {
+              c.body.appendChild(Ui.el('<div style="font-weight:700;font-size:12.5px;margin:8px 0 4px">' +
+                '타인 피인용 상위 특허 — 자기인용 없는 핵심특허 후보</div>'));
+              var tbl = Ui.el(simpleTable(['특허', '명칭', '출원인', '타인 피인용', '자기 피인용'], []));
+              rows.forEach(function (tr) { tbl.querySelector('tbody').appendChild(tr); });
+              c.body.appendChild(tbl);
+            }
+            if (so.note) c.body.appendChild(Ui.el('<div class="disclaimer">' + Ui.esc(so.note) + '</div>'));
+          }
+        });
+      } },
+      { label: '기업 간 인용 흐름', render: function (h) {
+        analysisCard({
+          analysis: 'citation-diffusion', holder: h,
+          title: '세트 내 인용 네트워크 — 누가 누구의 기술을 토대로 개발하는가',
+          help: 'WIPS 인용 문헌번호(B1) 목록을 분석 대상 문헌번호와 정규화 매칭해 실제 인용쌍으로 ' +
+            '만든 기업 간 기술 흐름입니다 (근사 아님). 화살표 방향=인용한 기업→인용받은 기업, ' +
+            '선 클릭 시 그 방향으로 인용한 특허 목록이 열립니다. 세트 밖 문헌 인용은 제외됩니다.',
+          renderOk: function (r, c, setTarget) {
+            var net = r.inset_network;
+            if (!net) {
+              var why2 = ((r.extras_skipped || []).filter(function (x) {
+                return x.section === 'inset_network';
+              })[0] || {}).reason || '인용 문헌번호 컬럼이 매핑되지 않았습니다.';
+              c.body.innerHTML = '<div class="status-empty">' + Ui.esc(why2) + '</div>';
+              return;
+            }
+            c.body.appendChild(Ui.el('<div style="color:#46607a;font-size:12.5px;margin-bottom:6px">' +
+              '세트 내 인용쌍 <b>' + Ui.num(net.n_pairs, 0) + '건</b> 매칭 (전체 인용 ' +
+              Ui.num(net.n_refs, 0) + '건 중 <b>' + Ui.pct(net.matched_ratio) + '</b>) · ' +
+              '동일 기업 내 인용 ' + Ui.num(net.n_self_company, 0) + '건은 화살표에서 제외</div>'));
+            if (net.network) {
+              var cyH = Ui.el('<div class="cy-holder"></div>');
+              c.body.appendChild(cyH);
+              var cy = Render.cytoscape(cyH, net.network, {});
+              setTarget({ kind: 'cytoscape', el: cyH, cy: cy });
+              c.body.appendChild(chartCap('노드=기업(크기=세트 내에서 인용받은 건수, 빨강=최다 피인용 기업), ' +
+                '화살표=인용 방향(인용한 기업→인용받은 기업), 두께=인용쌍 수. 읽는 법: 화살표가 ' +
+                '한 기업으로 수렴하면 그 기업 기술이 이 세트의 뿌리입니다. 선 클릭=그 방향으로 ' +
+                '인용한 특허 목록, 노드 클릭=그 기업 특허 목록.'));
+            }
+            var prs = (net.top_pairs || []).map(function (x) {
+              var tr = document.createElement('tr');
+              tr.insertAdjacentHTML('beforeend', '<td>' + Ui.esc(x.citing) + ' → ' +
+                Ui.esc(x.cited) + '</td><td class="num">' + x.n + '</td>');
+              var td = document.createElement('td');
+              td.appendChild(drillCell('인용한 특허 보기', x.drill));
+              tr.appendChild(td);
+              return tr;
+            });
+            if (prs.length) {
+              c.body.appendChild(Ui.el('<div style="font-weight:700;font-size:12.5px;margin:8px 0 4px">' +
+                '기업 간 인용 경로 상위</div>'));
+              var t1 = Ui.el(simpleTable(['인용 방향', '인용쌍', ''], []));
+              prs.forEach(function (tr) { t1.querySelector('tbody').appendChild(tr); });
+              c.body.appendChild(t1);
+            }
+            var cds = (net.top_cited || []).map(function (x) {
+              var tr = document.createElement('tr');
+              var td0 = document.createElement('td');
+              td0.appendChild(drillCell(x.id, x.drill));
+              tr.appendChild(td0);
+              tr.insertAdjacentHTML('beforeend', '<td>' + Ui.esc(x.title) + '</td><td>' +
+                Ui.esc(x.applicant) + '</td><td class="num">' + x.n_inset + '</td>');
+              return tr;
+            });
+            if (cds.length) {
+              c.body.appendChild(Ui.el('<div style="font-weight:700;font-size:12.5px;margin:8px 0 4px">' +
+                '세트 안에서 가장 많이 인용받은 특허 — 이 분야 기술 흐름의 뿌리 ' +
+                '(특허번호 클릭 시 이 특허를 인용한 세트 내 특허 목록)</div>'));
+              var t2 = Ui.el(simpleTable(['특허', '명칭', '출원인', '세트 내 피인용'], []));
+              cds.forEach(function (tr) { t2.querySelector('tbody').appendChild(tr); });
+              c.body.appendChild(t2);
+            }
+            if (net.note) c.body.appendChild(Ui.el('<div class="disclaimer">' + Ui.esc(net.note) + '</div>'));
+          }
+        });
+      } },
       { label: '청구항 밀집도', render: function (h) {
         analysisCard({
           analysis: 'claim-density', holder: h, title: '권리장벽 지형도 (Claim Density Contour)',
@@ -5247,15 +5424,15 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
       '<tr><td>🚀 시작하기</td><td>로그인 → 데이터 준비(작업자·작업명·엑셀 업로드) → 분석 범위 → 분석 목적·분석 시작을 순서대로 안내하는 단계별 화면. 데이터가 설정되지 않은 상태로 접속하면 자동으로 열립니다.</td></tr>' +
       '<tr><td>🎯 목적 맞춤 분석</td><td>분석 목적(기술 동향·경쟁사·R&amp;D 방향·White Space·특허 회피·FTO·포트폴리오·M&amp;A·국가 R&amp;D·라이선스) 선택 → 목적별 추천 차트를 우선순위·이유와 함께 표시, [열기]로 바로 이동. 특허 회피·FTO 목적에는 법률 자문 아님 고지가 함께 표시됩니다.</td></tr>' +
       '<tr><td>📊 Executive Overview</td><td>경영 요약(KPI·경보·BCG 매트릭스·경쟁 포지션) + 경영 차트 6종: 📅만료 절벽 / 💰R&amp;D 효율 사분면 / 👤키맨 리스크 / ⏱️추격 시계 / 🚨위협 레이더 / ✂️포트폴리오 다이어트. 탭마다 자사 기준을 선택할 수 있고(미선택 시 최다 출원인 자동), <b>"자사 선택 안 함 (중립 분석)"</b>을 고르면 자사 강조 없이 출원인들을 동등하게 비교합니다 — 이때 자사 관점 전용 섹션(키맨·추격·위협·다이어트, 전략 대시보드)은 사유와 함께 생략됩니다.</td></tr>' +
-      '<tr><td>📈 전체 동향</td><td>포트폴리오 전체의 기본 현황: 연도별 출원 동향(출원인 선택 가능), 국가별 분포·출원인 순위·활동 매트릭스, 심화 분석(심사기간·만료 타임라인·청구항·공동출원 협력 네트워크·IPC/CPC 분포). 협력 네트워크는 선(두 회사) 또는 노드(기업) 클릭으로 공동출원 특허 목록(출원번호·출원인 전원·명칭·대표청구항)을 열 수 있고, IPC/CPC 차트는 분류 체계·매핑 컬럼과 코드별 한글 설명을 함께 표시합니다.</td></tr>' +
+      '<tr><td>📈 전체 동향</td><td>포트폴리오 전체의 기본 현황: 연도별 출원 동향(출원인 선택 가능), 국가별 분포·<b>원천국(최우선출원국)→출원국 흐름</b>(기술이 어디서 시작해 어느 시장으로 전개되는지 — 셀 클릭 드릴다운)·출원인 순위·활동 매트릭스, 심화 분석(심사기간·만료 타임라인·청구항·공동출원 협력 네트워크·IPC/CPC 분포). 협력 네트워크는 선(두 회사) 또는 노드(기업) 클릭으로 공동출원 특허 목록(출원번호·출원인 전원·명칭·대표청구항)을 열 수 있고, IPC/CPC 차트는 분류 체계·매핑 컬럼과 코드별 한글 설명을 함께 표시합니다.</td></tr>' +
       '<tr><td colspan="2" style="background:#f4f8fb;font-weight:700">🔬 기술 분석 — "어떤 기술이 어디로 가는가"</td></tr>' +
       '<tr><td>🔬 기술 분석</td><td>기술분류 동향(출원인 선택 가능), 기술분류 트리맵(대·중·소 계층, 면적=문헌 수), 기술×연도 버블(대·중·소 선택 + 최대 3사 비교), 기술 생애주기 Phase Map, 전이 Sankey, Emerging Radar, 조합 네트워크, 분류축 교차(A·B·C), 신흥 기술 탐지(임베딩 — 출원인·기간 선택 가능)</td></tr>' +
       '<tr><td>🎯 White Space &amp; R&amp;D</td><td>Opportunity Matrix(자사=출원인 선택 가능, ◇=자사 역량 보유, 상위 기회 주석 표시), 미점유 조합 UpSet, 문제–해결수단 매트릭스(C축=해결과제 × B축=해결수단 — 두 축 매핑 시 활성), 추천 R&amp;D 테마</td></tr>' +
       '<tr><td colspan="2" style="background:#f4f8fb;font-weight:700">🏢 기업(출원인) 분석 — "이 회사는 무엇을 하는가"</td></tr>' +
       '<tr><td>🏢 기업 분석</td><td>출원인 포커스(집중 기술 + 🆕 신규 진입 기술(최근 N년 내 첫 출원) + ★ 급부상 아이템), 기술 DNA(12지표 계산식 정의표 포함), 기술 궤적, 선도–추종, 권리범위 엔트로피, 출원인·권리자 관계(양도 네트워크), 유사도·중첩도, Patent Asset Index(공식 방법론 TR·MC·CI·PAI), Portfolio 종합</td></tr>' +
-      '<tr><td>⚖️ Patent Power</td><td>특허 한 건 단위의 힘: 핵심특허 영향력(출원인 선택 가능 — 점수는 전체 기준 유지), 인용 확산, 청구항 밀집도, 발명자 이동, 의미 기반 영향력(임베딩), 권리 중첩 네트워크(임베딩)</td></tr>' +
+      '<tr><td>⚖️ Patent Power</td><td>특허 한 건 단위의 힘: 핵심특허 영향력(출원인 선택 가능 — 점수는 전체 기준 유지), 인용 확산, <b>자기 vs 타인 피인용</b>(자기인용을 뺀 진짜 영향력 — 자기/타인 피인용 문헌번호 매핑 시), <b>기업 간 인용 흐름</b>(인용 문헌번호를 세트 내 문헌과 매칭한 실제 인용쌍 네트워크 — 누가 누구의 기술을 토대로 개발하는지), 청구항 밀집도, 발명자 이동, 의미 기반 영향력(임베딩), 권리 중첩 네트워크(임베딩)</td></tr>' +
       '<tr><td colspan="2" style="background:#f4f8fb;font-weight:700">🔎 심층·품질</td></tr>' +
-      '<tr><td>🔎 심층 시그널</td><td>잘 안 쓰는 WIPS 필드 기반 신호 6개 탭(모두 출원인 선택 가능): 수명·시장(생존곡선·진입 시차) / 심사 이력(심사관 인용·우선심사·이상탐지) / 출원 행태(대리인·분할·개시 충실도) / 분쟁·국가과제 / 라이선스·표준·양도 / 거절·과학·심사관</td></tr>' +
+      '<tr><td>🔎 심층 시그널</td><td>잘 안 쓰는 WIPS 필드 기반 신호 7개 탭(모두 출원인 선택 가능): 수명·시장(생존곡선·진입 시차) / 심사 이력(심사관 인용·우선심사·<b>심사청구율</b>(권리화 의지 vs 방어 출원)·이상탐지) / 출원 행태(대리인·분할(분할출원 여부 플래그 지원 + <b>기업별 분할 비율</b>)·개시 충실도) / 분쟁·국가과제 / 라이선스·표준·양도 / 거절·과학·심사관 / <b>권리 유지</b>(EPC 검증국 수·연차료 최신성 — 출원인 스스로 매긴 가치 신호)</td></tr>' +
       '<tr><td>🧪 Data Quality</td><td><b>검증 리포트</b>(엔진 검증 정보·데이터 정합성 셀프 체크·검증 레지스트리), 분류 품질 진단(Confusion Map·응집도), 출원인 표준화 검토</td></tr>' +
       '<tr><td colspan="2" style="background:#f4f8fb;font-weight:700">🗂️ 보관·설정</td></tr>' +
       '<tr><td>🗂️ 인사이트 보관함</td><td>생성한 LLM 인사이트가 차트 이미지와 함께 작업별로 자동 저장되는 곳 — 항목을 골라 임원 보고용 PPT 로 내려받습니다.</td></tr>' +

@@ -445,16 +445,119 @@ def _examiner_section(df, settings):
 
 
 # ---------------------------------------------------------------------------
+# ⑦ 권리 유지 신호 — EPC 검증국 유지 + 연차료 납부 최신성
+# ---------------------------------------------------------------------------
+def _epc_maintenance_section(df, settings):
+    """EPC 유효국 수·유지율(기업이 돈을 내며 유지하는 시장 수)과 최근 연차료일.
+
+    유럽특허는 등록 후 국가별 검증(validation)·연차료를 따로 내므로, 유효국을
+    많이 유지하는 특허일수록 출원인이 스스로 높게 평가한 권리다. 최근 연차료일은
+    권리 유지 의지의 최신 기록이다. 관찰 신호이며 데이터 추출 시점에 따라
+    달라질 수 있다.
+    """
+    from src.preprocessing import parse_multiclass_cell
+    has_valid = "epc_valid_states" in df.columns and _dp_nonempty(df["epc_valid_states"]).any()
+    has_annuity = "annuity_date" in df.columns and df["annuity_date"].notna().any()
+    if not (has_valid or has_annuity):
+        return None, "EPC유효국 또는 최근 연차료일 컬럼 필요"
+    out = {}
+    if has_valid:
+        sub = df[_dp_nonempty(df["epc_valid_states"])].copy()
+        sub["_n_valid"] = sub["epc_valid_states"].map(
+            lambda v: len(parse_multiclass_cell(v)))
+        if "epc_lapsed_states" in sub.columns:
+            sub["_n_lapsed"] = sub["epc_lapsed_states"].map(
+                lambda v: len(parse_multiclass_cell(v)))
+        else:
+            sub["_n_lapsed"] = 0
+        if len(sub) >= _DP_MIN_N:
+            # 기업별 평균 유효국 수 (공동출원은 설정에 따라 각 출원인에게 계상)
+            sub_x = explode_applicants(sub, settings)
+            sub_x = sub_x[sub_x["applicant_display"].astype(str) != ""]
+            rows_c = []
+            for comp, g in sub_x.groupby("applicant_display"):
+                if len(g) < 3:
+                    continue
+                keep = float(g["_n_valid"].sum()) / \
+                    float(g["_n_valid"].sum() + g["_n_lapsed"].sum() or 1)
+                rows_c.append({"company": str(comp), "n": int(len(g)),
+                               "avg_valid": round(float(g["_n_valid"].mean()), 2),
+                               "keep_rate": round(keep, 4)})
+            fig_comp = None
+            if rows_c:
+                rows_c.sort(key=lambda r: r["avg_valid"])
+                show = rows_c[-14:]
+                fig_comp = bar_chart(
+                    [r["company"] for r in show],
+                    [r["avg_valid"] for r in show],
+                    title="기업별 평균 EPC 유효(검증)국 수 — 돈을 내며 유지하는 "
+                          "유럽 시장의 폭", orientation="h",
+                    x_title="평균 유효국 수",
+                    hovertext=["%s — 평균 유효국 %.1f개국, 유지율 %s (EP 특허 %d건)"
+                               % (r["company"], r["avg_valid"],
+                                  fmt_pct(r["keep_rate"]), r["n"]) for r in show])
+            # 유효국을 가장 넓게 유지하는 특허 (고가치 후보)
+            top_pat = []
+            for idx, r in sub.nlargest(10, "_n_valid").iterrows():
+                pid = _dp_ids_of(sub.loc[[idx]])[0]
+                top_pat.append({
+                    "id": pid, "title": str(r.get("title", ""))[:70],
+                    "applicant": str(r.get("applicant_display", "")),
+                    "n_valid": int(r["_n_valid"]), "n_lapsed": int(r["_n_lapsed"]),
+                    "states": str(r.get("epc_valid_states", ""))[:60],
+                    "drill": {"type": "ids", "ids": [pid]}})
+            out.update({"fig_epc": fig_comp, "epc_rows": top_pat,
+                        "n_epc": int(len(sub)),
+                        "avg_valid_all": round(float(sub["_n_valid"].mean()), 2)})
+    if has_annuity:
+        ann = df[df["annuity_date"].notna()].copy()
+        if len(ann) >= _DP_MIN_N:
+            years = ann["annuity_date"].dt.year.astype(int)
+            counts = years.value_counts().sort_index()
+            fig_ann = bar_chart(
+                [str(y) for y in counts.index], [int(v) for v in counts.values],
+                title="최근 연차료 납부 연도 분포 — 오래된 막대의 유효특허는 유지 "
+                      "여부 재확인 후보", x_title="최근 연차료일 연도", y_title="건수")
+            # 유효 상태인데 연차료 기록이 3년 이상 오래된 특허 (관찰 신호)
+            now_y = pd.Timestamp.now().year
+            stale_mask = (years <= now_y - 3) & \
+                ann["_active_flag"].map(lambda v: v is True)
+            stale = []
+            sub_st = ann[stale_mask]
+            ids_st = _dp_ids_of(sub_st, cap=len(sub_st) or 1)
+            for k, (idx, r) in enumerate(sub_st.head(10).iterrows()):
+                stale.append({
+                    "id": ids_st[k] if k < len(ids_st) else str(idx),
+                    "title": str(r.get("title", ""))[:70],
+                    "applicant": str(r.get("applicant_display", "")),
+                    "last_annuity": str(r["annuity_date"].date()),
+                    "drill": {"type": "ids",
+                              "ids": [ids_st[k] if k < len(ids_st) else str(idx)]}})
+            out.update({"fig_annuity": fig_ann, "stale_rows": stale,
+                        "n_annuity": int(len(ann)),
+                        "n_stale": int(stale_mask.sum())})
+    if not out:
+        return None, "EPC유효국/최근 연차료일 값 보유 문헌 부족 (3건 미만)"
+    out["note"] = ("EPC 검증국 유지·연차료 납부는 출원인이 비용을 들여 표시한 "
+                   "자기 평가 신호입니다. 최근 연차료일은 데이터 추출 시점 기준의 "
+                   "기록이므로 '오래됨'이 곧 포기를 뜻하지는 않습니다 — 재확인 "
+                   "후보로만 해석하세요.")
+    return out, None
+
+
+# ---------------------------------------------------------------------------
 # 통합
 # ---------------------------------------------------------------------------
 _DP_SECTIONS = (("license", _license_section), ("sep", _sep_section),
                 ("rejection", _rejection_section), ("science", _science_section),
                 ("assignment", _assignment_section),
-                ("examiner", _examiner_section))
+                ("examiner", _examiner_section),
+                ("epc", _epc_maintenance_section))
 
 _DP_LABELS = {"license": "실시권(라이선스)", "sep": "표준특허",
               "rejection": "거절 사유", "science": "과학 연계성",
-              "assignment": "권리변동", "examiner": "심사관"}
+              "assignment": "권리변동", "examiner": "심사관",
+              "epc": "권리 유지(EPC·연차료)"}
 
 
 def compute_deep_plus(df, settings, only_sections=None, company=None):
@@ -528,6 +631,17 @@ def compute_deep_plus(df, settings, only_sections=None, company=None):
         ex = sections["examiner"]
         sentences.append("심사관 %s명이 확인됩니다 (개인 실명 정보 — 내부 참고용)."
                          % fmt_num(ex["n_examiners"]))
+    if "epc" in sections:
+        ep = sections["epc"]
+        if ep.get("n_epc"):
+            sentences.append("EPC 검증국 정보 보유 %s건의 평균 유효국은 %s개국입니다 — "
+                             "유효국을 넓게 유지하는 특허는 출원인이 비용을 들여 "
+                             "스스로 높게 평가한 권리입니다."
+                             % (fmt_num(ep["n_epc"]), ep["avg_valid_all"]))
+        if ep.get("n_stale"):
+            sentences.append("유효 상태인데 최근 연차료 기록이 3년 이상 지난 특허가 "
+                             "%s건 있습니다 — 포기 예정이거나 데이터 시점 차이일 수 "
+                             "있어 재확인 후보입니다." % fmt_num(ep["n_stale"]))
     if not sentences:
         sentences.append("%s 기준 특수 신호 %d개 섹션이 계산되었습니다."
                          % (period, len(sections)))

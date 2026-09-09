@@ -54,7 +54,7 @@ def test_availability_matrix(mapping):
 
 def test_concept_catalog_complete():
     cat = concept_catalog()
-    assert len(cat) == len(CONCEPTS) == 80
+    assert len(cat) == len(CONCEPTS) == 91
 
 
 # 윈텔립스(WIPS ON) Excel 실제 다운로드 항목 전체 — 자동 매핑 회귀의 기준 목록
@@ -156,11 +156,23 @@ def test_wintelips_full_header_mapping():
         "trial_info": "심판 종류[KR,JP,US,EP]", "trial_count": "심판 전체 횟수[KR,JP,US,EP]",
         "lawsuit_count": "소송 전체 횟수[US]", "court_type": "관할법원 종류[US]",
         "gov_program": "국가연구 과제명[KR]",
+        # 윈텔립스 확장 필드 (인용 상세·원천국·심사청구·분할·EPC·연차료·AI 요약)
+        "cites_backward_nums": "인용 문헌번호(B1)",
+        "cites_forward_self": "자기 피인용 문헌번호(F1)",
+        "cites_forward_other": "타인 피인용 문헌번호(F1)",
+        "first_filing_country": "최우선출원국가",
+        "exam_request_flag": "심사청구 여부[KR,JP,EP,CA]",
+        "divisional_flag": "분할출원 여부[KR,US,JP,EP,CN,IN,CA,AU]",
+        "epc_valid_states": "EPC유효국[EP]",
+        "epc_lapsed_states": "EPC소멸국[EP]",
+        "annuity_date": "최근 연차료일[KR,US,EP]",
+        "ai_summary": "AI 요약[KR,US,JP,CN,EP,PCT,TW]",
+        "feature_summary": "특징 요약[KR,US,JP,CN,EP,PCT,TW]",
     }
     for concept, col in expect.items():
         assert got.get(concept) == col, \
             "%s: 기대 %r, 실제 %r" % (concept, col, got.get(concept))
     # 오매핑 금지: 인원수·주소·링크류가 개념에 배정되면 안 됨
     banned = {"출원인 수", "발명자 수", "출원인 주소[KR]", "원문(PDF)링크",
-              "상세보기 링크(비로그인)", "최근 연차료일[KR,US,EP]"}
+              "상세보기 링크(비로그인)"}
     assert not banned & set(got.values()), banned & set(got.values())

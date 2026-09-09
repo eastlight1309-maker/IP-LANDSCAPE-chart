@@ -1099,6 +1099,69 @@ CONCEPTS = {
                      "정부과제명", "정부 과제명", "국책과제명", "국가연구개발 과제명",
                      "national r&d program", "government program"],
     },
+    # ---- 윈텔립스 확장 필드 (인용 상세·원천국·심사청구·분할·EPC·연차료·AI 요약) ----
+    "cites_backward_nums": {
+        "label": "인용 문헌번호 목록", "dtype": "문자열 (선행 인용 문헌번호 목록: KR...; US...)",
+        "preferred": ["인용 문헌번호(B1)"],  # 기본 매핑 (윈텔립스)
+        "variants": ["인용 문헌번호(B1)", "인용 문헌번호", "인용문헌번호", "인용 문헌 번호",
+                     "backward citation numbers", "cited documents", "references cited numbers"],
+    },
+    "cites_forward_self": {
+        "label": "자기 피인용 문헌번호", "dtype": "숫자 또는 문헌번호 목록 (자기 피인용 — 건수로 자동 집계)",
+        "preferred": ["자기 피인용 문헌번호(F1)"],  # 기본 매핑 (윈텔립스)
+        "variants": ["자기 피인용 문헌번호(F1)", "자기 피인용 문헌번호", "자기피인용 문헌번호",
+                     "자기 피인용 수", "자기피인용수", "self forward citations"],
+    },
+    "cites_forward_other": {
+        "label": "타인 피인용 문헌번호", "dtype": "숫자 또는 문헌번호 목록 (타인 피인용 — 건수로 자동 집계)",
+        "preferred": ["타인 피인용 문헌번호(F1)"],  # 기본 매핑 (윈텔립스)
+        "variants": ["타인 피인용 문헌번호(F1)", "타인 피인용 문헌번호", "타인피인용 문헌번호",
+                     "타인 피인용 수", "타인피인용수", "other forward citations"],
+    },
+    "first_filing_country": {
+        "label": "최우선출원국가", "dtype": "문자열 (원천 출원 국가코드: KR/US/...)",
+        "preferred": ["최우선출원국가"],  # 기본 매핑 (윈텔립스)
+        "variants": ["최우선출원국가", "최우선출원 국가", "최초출원국", "원천출원국",
+                     "earliest filing country", "origin country"],
+    },
+    "exam_request_flag": {
+        "label": "심사청구 여부", "dtype": "불리언/문자열 (Y/N, 유/무)",
+        "preferred": ["심사청구 여부"],  # 기본 매핑 (윈텔립스 — KR/JP/EP/CA)
+        "variants": ["심사청구 여부", "심사청구여부", "심사 청구 여부",
+                     "examination requested", "request for examination yn"],
+    },
+    "divisional_flag": {
+        "label": "분할출원 여부", "dtype": "불리언/문자열 (Y/N, 유/무)",
+        "preferred": ["분할출원 여부"],  # 기본 매핑 (윈텔립스)
+        "variants": ["분할출원 여부", "분할출원여부", "분할 출원 여부", "divisional yn",
+                     "is divisional"],
+    },
+    "epc_valid_states": {
+        "label": "EPC 유효국", "dtype": "문자열 (유효 검증국 코드 목록: DE; FR; GB)",
+        "preferred": ["EPC유효국"],  # 기본 매핑 (윈텔립스 — EP)
+        "variants": ["EPC유효국", "epc 유효국", "epc validated states", "validated states"],
+    },
+    "epc_lapsed_states": {
+        "label": "EPC 소멸국", "dtype": "문자열 (권리 소멸 검증국 코드 목록)",
+        "preferred": ["EPC소멸국"],  # 기본 매핑 (윈텔립스 — EP)
+        "variants": ["EPC소멸국", "epc 소멸국", "epc lapsed states", "lapsed states"],
+    },
+    "annuity_date": {
+        "label": "최근 연차료일", "dtype": "날짜 (마지막 연차료 납부 기록일)",
+        "preferred": ["최근 연차료일"],  # 기본 매핑 (윈텔립스 — KR/US/EP)
+        "variants": ["최근 연차료일", "최근연차료일", "연차료일", "연차료 납부일",
+                     "last annuity date", "annuity date"],
+    },
+    "ai_summary": {
+        "label": "AI 요약", "dtype": "문자열 (윈텔립스 AI 생성 요약 — 시맨틱 분석 텍스트 소스)",
+        "preferred": ["AI 요약"],  # 기본 매핑 (윈텔립스)
+        "variants": ["AI 요약", "ai요약", "ai 요약문", "ai summary"],
+    },
+    "feature_summary": {
+        "label": "특징 요약", "dtype": "문자열 (윈텔립스 AI 특징 요약)",
+        "preferred": ["특징 요약"],  # 기본 매핑 (윈텔립스)
+        "variants": ["특징 요약", "특징요약", "특징 요약문", "feature summary"],
+    },
 }
 # 기존 assignee 개념에 변형 표기 보강 (최종권리자·등록권리자 등)
 CONCEPTS["assignee"]["variants"] += ["최종권리자", "최종 권리자", "등록권리자",
@@ -1131,25 +1194,25 @@ ANALYSIS_REQUIREMENTS = {
     "company-dna":           {"required": [{"any": ANY_TECH}, {"any": ANY_DATE}, {"any": ANY_APPLICANT}], "optional": ["family_size", "family_country_count", "cites_forward", "legal_status", "inventors", "family_id"]},
     "lead-lag":              {"required": [{"any": ANY_TECH}, {"any": ANY_DATE}, {"any": ANY_APPLICANT}], "optional": []},
     "claim-density":         {"required": ["indep_claim", {"any": ANY_TECH}], "optional": ["embedding", "legal_status", "expiry_date", "family_id", "cites_forward"] + ANY_APPLICANT},
-    "citation-diffusion":    {"required": ["cites_forward", {"any": ANY_TECH}], "optional": ["cites_backward", "family_size", "family_country_count", "legal_status", "expiry_date"] + ANY_APPLICANT},
+    "citation-diffusion":    {"required": ["cites_forward", {"any": ANY_TECH}], "optional": ["cites_backward", "family_size", "family_country_count", "legal_status", "expiry_date", "cites_forward_self", "cites_forward_other", "cites_backward_nums", "pub_number"] + ANY_APPLICANT},
     "inventor-mobility":     {"required": ["inventors", {"any": ANY_APPLICANT}, {"any": ANY_DATE}], "optional": [{"any": ANY_TECH}, "country"]},
     "classification-quality": {"required": [{"any": ANY_TECH}], "optional": ["embedding", "class_confidence", "title", "abstract", {"any": ANY_DATE}]},
-    "basic-stats":           {"required": [{"any": ANY_DATE}], "optional": ANY_APPLICANT + ["country", "is_granted", "is_active", "legal_status", {"any": ANY_TECH}]},
+    "basic-stats":           {"required": [{"any": ANY_DATE}], "optional": ANY_APPLICANT + ["country", "is_granted", "is_active", "legal_status", "first_filing_country", {"any": ANY_TECH}]},
     "advanced-stats":        {"required": [{"any": ANY_APPLICANT}], "optional": ["app_date", "reg_date", "expiry_date", "claims_count", "indep_claims_count", "ipc", "cites_forward", "is_active", "legal_status"]},
     "portfolio-index":       {"required": [{"any": ANY_APPLICANT}, "cites_forward"], "optional": ["family_countries", "family_country_count", "family_size", "is_active", "legal_status", {"any": ANY_DATE}, {"any": ANY_TECH}]},
     "scope-entropy":         {"required": [{"any": ANY_TECH}, {"any": ANY_APPLICANT}], "optional": ["indep_claim", "ipc", "family_countries", "country", "title", "abstract", "embedding", "is_granted", {"any": ANY_DATE}]},
     "combo-upset":           {"required": [{"any": ANY_TECH}], "optional": [{"any": ANY_DATE}] + ANY_APPLICANT + ["is_active", "legal_status"]},
-    "emerging-clusters":     {"required": [{"any": ["abstract", "indep_claim", "title"]}, {"any": ANY_DATE}], "optional": ANY_APPLICANT + ["embedding"]},
-    "semantic-influence":    {"required": [{"any": ["abstract", "indep_claim", "title"]}, {"any": ANY_DATE}], "optional": ANY_APPLICANT + ["embedding", "cites_forward"]},
-    "similarity-network":    {"required": [{"any": ["abstract", "indep_claim", "title"]}], "optional": ANY_APPLICANT + ["embedding", "is_active", "legal_status"]},
-    "wips-deep":             {"required": [{"any": ANY_DATE}], "optional": ANY_APPLICANT + ["reg_date", "lapse_date", "agent", "expedited_exam", "exam_request_date", "oa_count", "examiner_citations", "applicant_citations", "parent_app_number", "drawings_count", "spec_length", "trial_info", "trial_claimant", "trial_count", "lawsuit_count", "court_type", "gov_program", "family_id", "country", "claims_count"]},
+    "emerging-clusters":     {"required": [{"any": ["ai_summary", "abstract", "indep_claim", "title"]}, {"any": ANY_DATE}], "optional": ANY_APPLICANT + ["embedding", "feature_summary"]},
+    "semantic-influence":    {"required": [{"any": ["ai_summary", "abstract", "indep_claim", "title"]}, {"any": ANY_DATE}], "optional": ANY_APPLICANT + ["embedding", "cites_forward", "feature_summary"]},
+    "similarity-network":    {"required": [{"any": ["ai_summary", "abstract", "indep_claim", "title"]}], "optional": ANY_APPLICANT + ["embedding", "is_active", "legal_status", "feature_summary"]},
+    "wips-deep":             {"required": [{"any": ANY_DATE}], "optional": ANY_APPLICANT + ["reg_date", "lapse_date", "agent", "expedited_exam", "exam_request_date", "exam_request_flag", "oa_count", "examiner_citations", "applicant_citations", "parent_app_number", "divisional_flag", "drawings_count", "spec_length", "trial_info", "trial_claimant", "trial_count", "lawsuit_count", "court_type", "gov_program", "family_id", "country", "claims_count"]},
     "exec-plus":             {"required": [{"any": ANY_DATE}, {"any": ANY_APPLICANT}], "optional": [{"any": ANY_TECH}, "cites_forward", "family_size", "family_country_count", "expiry_date", "reg_date", "inventors", "is_active", "legal_status", "pub_number", "title"]},
     "executive-summary":     {"required": [{"any": ANY_TECH}, {"any": ANY_DATE}, {"any": ANY_APPLICANT}], "optional": ["cites_forward", "is_active", "legal_status", "expiry_date", "is_own"]},
     "axis-cross":            {"required": [{"any": ANY_TECH}], "optional": ["tech_b_l1", "tech_b_l2", "tech_b_l3", "tech_c_l1", "tech_c_l2", "tech_c_l3", {"any": ANY_DATE}] + ANY_APPLICANT},
     "tech-year-bubble":      {"required": [{"any": ANY_TECH}, {"any": ANY_DATE}], "optional": ANY_APPLICANT},
     "company-focus":         {"required": [{"any": ANY_TECH}, {"any": ANY_DATE}, {"any": ANY_APPLICANT}], "optional": []},
     "tech-tree":             {"required": [{"any": ANY_TECH}], "optional": ANY_APPLICANT},
-    "deep-plus":             {"required": [{"any": ANY_APPLICANT + ["pub_number", "app_number"]}], "optional": ["license_flag", "licensee_count", "sep_org", "sep_number", "sep_date", "rejection_reason", "rejection_flag", "reexam_flag", "npl_count", "recent_assignee", "recent_assignor", "assign_date", "assign_type", "examiner", "oa_count", "cites_forward", "is_granted", "legal_status", {"any": ANY_TECH}, {"any": ANY_DATE}]},
+    "deep-plus":             {"required": [{"any": ANY_APPLICANT + ["pub_number", "app_number"]}], "optional": ["license_flag", "licensee_count", "sep_org", "sep_number", "sep_date", "rejection_reason", "rejection_flag", "reexam_flag", "npl_count", "recent_assignee", "recent_assignor", "assign_date", "assign_type", "examiner", "oa_count", "cites_forward", "is_granted", "legal_status", "epc_valid_states", "epc_lapsed_states", "annuity_date", {"any": ANY_TECH}, {"any": ANY_DATE}]},
     "ownership":             {"required": [{"any": ANY_APPLICANT}, "assignee"], "optional": [{"any": ANY_TECH}, {"any": ANY_DATE}, "cites_forward", "is_active", "legal_status", "reg_date"]},
 }
 
@@ -1176,6 +1239,10 @@ CONCEPT_KINDS = {
     "license_flag": "bool", "licensee_count": "number",
     "sep_date": "date", "rejection_flag": "bool", "reexam_flag": "bool",
     "npl_count": "number", "assign_date": "date",
+    "cites_forward_self": "count_or_list", "cites_forward_other": "count_or_list",
+    "first_filing_country": "country",
+    "exam_request_flag": "bool", "divisional_flag": "bool",
+    "annuity_date": "date",
 }
 
 
@@ -1283,7 +1350,9 @@ def suggest_mapping(actual_columns, cutoff=None):
             # ('출원인 수' 같은 인원수 컬럼이 퍼지 매칭으로 잘못 잡히는 것 방지)
             if best and best[1] != "exact" and concept in (
                     "cites_backward", "cites_forward",
-                    "examiner_citations", "applicant_citations"):
+                    "examiner_citations", "applicant_citations",
+                    "cites_backward_nums", "cites_forward_self",
+                    "cites_forward_other"):
                 form_all = (nalt or "") + ncol
                 if not any(kw in form_all for kw in
                            ("인용", "citation", "cited", "citing", "reference")):
@@ -2183,7 +2252,8 @@ def build_standard_frame(raw_df, mapping, applicant_rules=None):
 
     raw_date_strs = {}
     for date_col in ("app_date", "pub_date", "reg_date", "priority_date", "expiry_date",
-                     "lapse_date", "exam_request_date", "sep_date", "assign_date"):
+                     "lapse_date", "exam_request_date", "sep_date", "assign_date",
+                     "annuity_date"):
         if date_col in df.columns:
             raw_date_strs[date_col] = df[date_col].astype(str)
             df[date_col] = parse_dates(df[date_col])
@@ -6232,6 +6302,24 @@ def select_patents(df, drill):
     if drill.get("inventor") and "_inventor_list" in df.columns:
         inv = str(drill["inventor"])
         mask &= df["_inventor_list"].map(lambda lst: inv in (lst or []))
+    if drill.get("first_country") and "first_filing_country" in df.columns:
+        # 최우선출원국(원천국) drill — 국가 흐름 히트맵 셀과 정확히 일치
+        mask &= df["first_filing_country"].astype(str).str.strip().str.upper() == \
+            str(drill["first_country"]).strip().upper()
+    if drill.get("exam_requested") is not None and "exam_request_flag" in df.columns:
+        _pb2 = parse_bool  # [merged import alias]
+        req = df["exam_request_flag"].map(_pb2)
+        mask &= (req == True) if drill["exam_requested"] else (req == False)  # noqa: E712
+    if drill.get("divisional") is not None:
+        # 분할출원 drill: 분할출원 여부 플래그 또는 원출원번호 보유 (섹션 집계와 동일 기준)
+        _pb3 = parse_bool  # [merged import alias]
+        div = pd.Series(False, index=df.index)
+        if "divisional_flag" in df.columns:
+            div |= df["divisional_flag"].map(_pb3) == True  # noqa: E712
+        if "parent_app_number" in df.columns:
+            div |= df["parent_app_number"].astype(str).str.strip() \
+                .map(lambda v: v not in ("", "nan", "None"))
+        mask &= div if drill["divisional"] else ~div
     if dtype == "ids" and drill.get("ids"):
         wanted = set(map(str, drill["ids"]))
         id_col = "pub_number" if "pub_number" in df.columns else \
@@ -9329,10 +9417,220 @@ analyses/citation_influence.py — 4.10 핵심특허 영향력 전파 (3단계).
 그래프: Influence Top-N 막대 + Citation Diffusion Sankey.
 Drill-down: {"type":"ids"}.
 자동 인사이트: 최고 영향력 특허·만료 임박 핵심특허 경고.
+
+확장 섹션 (해당 컬럼 매핑 시에만 계산 — graceful degradation):
+  self_other     자기 vs 타인 피인용 분리 — WIPS '자기/타인 피인용 문헌번호(F1)'
+                 로 자기인용을 제외한 "타인이 인정한 영향력"을 기업별로 비교.
+                 자기인용 비율이 높은 기업=기술 내재화형, 타인 피인용이 높은
+                 기업=산업 파급형.
+  inset_network  세트 내 인용 네트워크 — '인용 문헌번호(B1)' 목록을 분석 대상
+                 문헌번호(공개/출원/등록, 하이픈·공백 제거 정규화)와 매칭해
+                 "누가 누구를 인용하는가" 기업 간 기술 흐름을 실제 인용쌍으로
+                 구성. 세트 밖 인용은 집계에서 제외되며 매칭 커버리지를 함께
+                 표시한다 (근사 아님 — 매칭된 쌍만 사용).
 """
+import re
+
 import numpy as np
 import pandas as pd
 
+
+
+def _ids_series(df):
+    col = "pub_number" if "pub_number" in df.columns else \
+        ("app_number" if "app_number" in df.columns else None)
+    return df[col].astype(str) if col else df.index.astype(str).to_series(index=df.index)
+
+
+def _self_other_section(df, settings):
+    """자기 vs 타인 피인용 분리 — 자기인용을 뺀 '타인이 인정한 영향력'."""
+    has_self = "cites_forward_self" in df.columns
+    has_other = "cites_forward_other" in df.columns
+    if not (has_self or has_other):
+        return None, ("자기/타인 피인용 컬럼 필요 — 컬럼 매핑에서 '자기 피인용 "
+                      "문헌번호'와 '타인 피인용 문헌번호'(WIPS F1)를 매핑하세요.")
+    zero = pd.Series(0.0, index=df.index)
+    self_c = _count_like(df["cites_forward_self"]).fillna(0) if has_self else zero
+    other_c = _count_like(df["cites_forward_other"]).fillna(0) if has_other else zero
+    if not ((self_c + other_c) > 0).any():
+        return None, "자기/타인 피인용 값이 해석되지 않습니다 (건수 또는 문헌번호 목록 지원)."
+    work = df.copy()
+    work["_cf_self"] = self_c
+    work["_cf_other"] = other_c
+    # 기업별 합산 — 공동출원은 설정(coapplicant_mode)에 따라 각 출원인에게 계상
+    wx = explode_applicants(work, settings)
+    grp = wx[wx["applicant_display"].astype(str) != ""] \
+        .groupby("applicant_display")[["_cf_self", "_cf_other"]].sum()
+    grp = grp[grp.sum(axis=1) > 0]
+    if not len(grp):
+        return None, "자기/타인 피인용 보유 출원인이 없습니다."
+    top = grp.assign(_tot=grp["_cf_self"] + grp["_cf_other"]) \
+        .sort_values("_tot", ascending=False).head(12)
+    comps = [str(c) for c in top.index][::-1]
+    selfs = [float(v) for v in top["_cf_self"]][::-1]
+    others = [float(v) for v in top["_cf_other"]][::-1]
+    custom = [{"drill": {"type": "applicant", "applicant": c,
+                         "applicant_scope": "any"}} for c in comps]
+    hover_o = ["%s — 타인 피인용 %s건 (자기인용 제외 순수 영향력)"
+               % (c, fmt_num(v)) for c, v in zip(comps, others)]
+    hover_s = ["%s — 자기 피인용 %s건 / 전체 %s건 (자기인용률 %s)"
+               % (c, fmt_num(s), fmt_num(s + o),
+                  fmt_pct(s / (s + o) if (s + o) else 0.0))
+               for c, s, o in zip(comps, selfs, others)]
+    fig = {"data": [
+        {"type": "bar", "orientation": "h", "name": "타인 피인용",
+         "y": comps, "x": others, "marker": {"color": "#4E79A7"},
+         "hovertext": hover_o, "hoverinfo": "text", "customdata": custom},
+        {"type": "bar", "orientation": "h", "name": "자기 피인용",
+         "y": comps, "x": selfs, "marker": {"color": "#F28E2B"},
+         "hovertext": hover_s, "hoverinfo": "text", "customdata": custom}],
+        "layout": base_layout(
+            "기업별 자기 vs 타인 피인용 — 타인 피인용이 '진짜 영향력'",
+            barmode="stack", xaxis={"title": "피인용 건수"},
+            height=max(360, 90 + 34 * len(comps)))}
+    rows = [{"company": str(c),
+             "n_self": int(top.loc[c, "_cf_self"]),
+             "n_other": int(top.loc[c, "_cf_other"]),
+             "self_rate": round(float(top.loc[c, "_cf_self"] / top.loc[c, "_tot"]), 4),
+             "drill": {"type": "applicant", "applicant": str(c),
+                       "applicant_scope": "any"}}
+            for c in top.index]
+    # 타인 피인용 상위 특허 (자기인용 부풀림 없는 핵심특허 후보)
+    ids = _ids_series(work)
+    top_pat = []
+    for idx, r in work.nlargest(10, "_cf_other").iterrows():
+        if r["_cf_other"] <= 0:
+            break
+        top_pat.append({"id": str(ids.loc[idx]),
+                        "title": str(r.get("title", ""))[:70],
+                        "applicant": str(r.get("applicant_display", "")),
+                        "n_other": int(r["_cf_other"]),
+                        "n_self": int(r["_cf_self"]),
+                        "drill": {"type": "ids", "ids": [str(ids.loc[idx])]}})
+    tot_s, tot_o = float(self_c.sum()), float(other_c.sum())
+    overall = {"n_self": int(tot_s), "n_other": int(tot_o),
+               "self_rate": round(tot_s / (tot_s + tot_o), 4) if (tot_s + tot_o) else None}
+    return {"fig": fig, "rows": rows, "top_patents": top_pat, "overall": overall,
+            "note": ("자기 피인용=출원인(계열 포함, WIPS 기준)이 후속 출원에서 스스로 "
+                     "인용한 건, 타인 피인용=타사가 인용한 건. 자기인용률이 높은 기업은 "
+                     "기술 내재화·연속 개발형, 타인 피인용이 큰 기업은 산업 전체에 "
+                     "영향을 주는 원천 기술형으로 해석합니다.")}, None
+
+
+_NUM_NORM_RE = re.compile(r"[^A-Z0-9]")
+_KIND_CODE_RE = re.compile(r"[A-Z]\d?$")
+
+
+def _norm_doc_no(v):
+    """문헌번호 정규화: 대문자화 + 특수문자 제거 (KR10-2020-0001234A → KR1020200001234A)."""
+    return _NUM_NORM_RE.sub("", str(v).upper())
+
+
+def _inset_network_section(df, settings):
+    """세트 내 인용 네트워크 — 인용 문헌번호를 세트 문헌과 매칭한 실제 인용쌍."""
+    if "cites_backward_nums" not in df.columns:
+        return None, ("인용 문헌번호 목록 컬럼 필요 — 컬럼 매핑에서 '인용 문헌번호 "
+                      "목록'(WIPS '인용 문헌번호(B1)')을 매핑하세요.")
+    # 세트 문헌번호 색인 (공개/출원/등록번호, 원형 + 말미 종별코드 제거형)
+    key_to_idx = {}
+    for id_col in ("pub_number", "app_number", "reg_number"):
+        if id_col not in df.columns:
+            continue
+        for idx, v in df[id_col].items():
+            k = _norm_doc_no(v)
+            if len(k) >= 6:
+                key_to_idx.setdefault(k, idx)
+                key_to_idx.setdefault(_KIND_CODE_RE.sub("", k), idx)
+    if not key_to_idx:
+        return None, "문헌번호(공개/출원/등록번호) 컬럼이 없어 매칭할 수 없습니다."
+    ids = _ids_series(df)
+    apps = df["applicant_display"].astype(str)
+    total_refs, matched = 0, 0
+    pair_docs = {}       # (citing_idx, cited_idx)
+    for idx, cell in df["cites_backward_nums"].items():
+        for num in parse_multiclass_cell(cell):
+            total_refs += 1
+            k = _norm_doc_no(num)
+            j = key_to_idx.get(k)
+            if j is None:
+                j = key_to_idx.get(_KIND_CODE_RE.sub("", k))
+            if j is None or j == idx:
+                continue
+            matched += 1
+            pair_docs[(idx, j)] = True
+    if not pair_docs:
+        return None, ("인용 문헌번호 %s건 중 분석 대상 세트 내 문헌과 매칭된 인용쌍이 "
+                      "없습니다 — 세트 밖(외부) 문헌만 인용하고 있습니다."
+                      % fmt_num(total_refs))
+    # 기업 간 집계 (citing 기업 → cited 기업)
+    comp_edges = {}
+    self_company = 0
+    inset_cited = {}     # cited_idx → citing idx 목록
+    for (ci, cj) in pair_docs:
+        inset_cited.setdefault(cj, []).append(ci)
+        a, b = apps.loc[ci].strip(), apps.loc[cj].strip()
+        if not a or not b:
+            continue
+        if a == b:
+            self_company += 1
+            continue
+        rec = comp_edges.setdefault((a, b), {"n": 0, "citing_ids": []})
+        rec["n"] += 1
+        rec["citing_ids"].append(str(ids.loc[ci]))
+    network = None
+    top_pairs = []
+    if comp_edges:
+        deg = {}
+        for (a, b), rec in comp_edges.items():
+            deg[a] = deg.get(a, 0) + rec["n"]
+            deg[b] = deg.get(b, 0) + rec["n"]
+        keep = set(sorted(deg, key=deg.get, reverse=True)[:20])
+        edges_kept = {k: v for k, v in comp_edges.items()
+                      if k[0] in keep and k[1] in keep}
+        in_deg = {}
+        for (a, b), rec in edges_kept.items():
+            in_deg[b] = in_deg.get(b, 0) + rec["n"]
+        nmax = max(in_deg.values()) if in_deg else 1
+        names = sorted({n for k in edges_kept for n in k})
+        nodes = [{"id": n, "label": n,
+                  "size": float(16 + 24 * np.sqrt(in_deg.get(n, 0) / float(nmax))
+                                if nmax else 16),
+                  "color": "#E15759" if in_deg.get(n, 0) == nmax and nmax > 0
+                  else "#4E79A7",
+                  "cited_in_set": int(in_deg.get(n, 0)),
+                  "drill": {"type": "applicant", "applicant": n,
+                            "applicant_scope": "any"}}
+                 for n in names]
+        emax = max(rec["n"] for rec in edges_kept.values())
+        max_links = int(get_limit(settings, "sankey_max_links"))
+        edge_items = sorted(edges_kept.items(), key=lambda kv: -kv[1]["n"])[:max_links]
+        edges = [{"source": a, "target": b, "weight": rec["n"], "arrow": True,
+                  "width": float(1.5 + 5 * rec["n"] / emax),
+                  "label": "%d건" % rec["n"],
+                  "drill": {"type": "ids", "ids": rec["citing_ids"][:200]}}
+                 for (a, b), rec in edge_items]
+        network = cytoscape_network(nodes, edges)
+        top_pairs = [{"citing": a, "cited": b, "n": rec["n"],
+                      "drill": {"type": "ids", "ids": rec["citing_ids"][:200]}}
+                     for (a, b), rec in edge_items[:10]]
+    # 세트 내에서 가장 많이 인용받은 특허 (실측 인용쌍 기준)
+    top_cited = []
+    for cj, citing in sorted(inset_cited.items(), key=lambda kv: -len(kv[1]))[:10]:
+        top_cited.append({
+            "id": str(ids.loc[cj]),
+            "title": str(df.loc[cj].get("title", ""))[:70],
+            "applicant": str(apps.loc[cj]),
+            "n_inset": len(citing),
+            "drill": {"type": "ids",
+                      "ids": [str(ids.loc[ci]) for ci in citing][:200]}})
+    return {"network": network, "top_pairs": top_pairs, "top_cited": top_cited,
+            "n_pairs": int(len(pair_docs)), "n_refs": int(total_refs),
+            "matched_ratio": round(matched / float(total_refs), 4) if total_refs else 0.0,
+            "n_self_company": int(self_company),
+            "note": ("매칭 기준: 인용 문헌번호와 세트 내 공개/출원/등록번호를 "
+                     "정규화(하이픈·공백 제거, 말미 종별코드 허용)해 일치시킨 실제 "
+                     "인용쌍만 사용합니다. 세트 밖 문헌 인용은 제외되므로 전체 인용 "
+                     "관계의 부분집합입니다.")}, None
 
 
 def compute_citation_influence(df, settings, top_n=None, company=None):
@@ -9481,12 +9779,48 @@ def compute_citation_influence(df, settings, top_n=None, company=None):
                                 for (s, t), v in link_list],
                         title="Citation Diffusion (핵심특허 → 기술분류 → 주요 출원인)")
 
+    # 확장 섹션: 자기/타인 피인용 분리 · 세트 내 인용 네트워크 (컬럼 매핑 시에만)
+    extras, extras_skipped = {}, []
+    for ex_key, ex_fn in (("self_other", _self_other_section),
+                          ("inset_network", _inset_network_section)):
+        try:
+            ex_res, ex_reason = ex_fn(df, settings)
+        except Exception as e:  # 확장 섹션 오류가 본 분석을 막지 않도록
+            ex_res, ex_reason = None, "계산 오류: %s" % e
+        if ex_res is not None:
+            extras[ex_key] = ex_res
+        else:
+            extras_skipped.append({"section": ex_key, "reason": ex_reason})
+
     sentences = []
     if top_records:
         t0 = top_records[0]
         sentences.append("영향력 1위 특허는 %s('%s', %s, Influence %s, 피인용 %s건)입니다."
                          % (t0["id"], t0["title"][:40], t0["applicant"], t0["score"],
                             fmt_num(t0["cites"])))
+    if "self_other" in extras and extras["self_other"]["overall"]["self_rate"] is not None:
+        so = extras["self_other"]
+        r0 = max(so["rows"], key=lambda r: r["n_other"])
+        sentences.append("전체 피인용 중 자기인용 비율은 %s이며, 자기인용을 제외한 "
+                         "타인 피인용 1위 기업은 '%s'(%s건)입니다 — 타인 피인용이 "
+                         "자기인용 부풀림 없는 실제 영향력입니다."
+                         % (fmt_pct(so["overall"]["self_rate"]), r0["company"],
+                            fmt_num(r0["n_other"])))
+    if "inset_network" in extras:
+        net = extras["inset_network"]
+        if net["top_cited"]:
+            c0 = net["top_cited"][0]
+            sentences.append("세트 내 실제 인용쌍 %s건이 매칭되었고(전체 인용의 %s), "
+                             "세트 안에서 가장 많이 인용받은 특허는 %s('%s', %s건)"
+                             "입니다 — 이 세트의 기술 흐름이 수렴하는 문헌입니다."
+                             % (fmt_num(net["n_pairs"]), fmt_pct(net["matched_ratio"]),
+                                c0["id"], c0["applicant"], fmt_num(c0["n_inset"])))
+        if net["top_pairs"]:
+            p0 = net["top_pairs"][0]
+            sentences.append("기업 간 인용 흐름 최대 경로는 '%s' → '%s'(%s건 인용)로, "
+                             "'%s'가 '%s'의 기술을 토대로 후속 개발 중임을 시사합니다."
+                             % (p0["citing"], p0["cited"], fmt_num(p0["n"]),
+                                p0["citing"], p0["cited"]))
         expiring = [r for r in top_records if r["expiry"] and
                     pd.Timestamp(r["expiry"]) <= now + pd.DateOffset(years=3)]
         if expiring:
@@ -9499,10 +9833,14 @@ def compute_citation_influence(df, settings, top_n=None, company=None):
                          "계산되어 다른 회사와 비교 가능합니다." % company)
     insight = build_insight(sentences, {"weights": weights},
                             small_sample=check_small_sample(len(work), settings))
-    return ok_result({"figure": fig_bar, "sankey": fig_sankey, "top_patents": top_records},
+    return ok_result({"figure": fig_bar, "sankey": fig_sankey, "top_patents": top_records,
+                      "self_other": extras.get("self_other"),
+                      "inset_network": extras.get("inset_network"),
+                      "extras_skipped": extras_skipped},
                      insight=insight,
-                     meta={"note": ("간접 피인용·타 기업 확산은 인용쌍 데이터가 없어 "
-                                    "피인용 수 기반 근사값입니다.")})
+                     meta={"note": ("간접 피인용·타 기업 확산은 피인용 수 기반 근사값"
+                                    "입니다. '세트 내 인용 네트워크' 섹션은 인용 "
+                                    "문헌번호가 매핑된 경우 실제 인용쌍으로 계산됩니다.")})
 
 
 # ===========================================================================
@@ -10105,6 +10443,57 @@ def compute_basic_stats(df, settings, company=None):
                 customdata=[{"drill": _drill_scope({"country": str(c)})}
                             for c in counts.index])
 
+    # ②-b 원천국(최우선출원국) → 출원국 흐름 매트릭스 — 기술이 어디서 시작해
+    # 어느 시장으로 전개되는지 (최우선출원국가 컬럼 매핑 시에만)
+    fig_country_flow = None
+    flow_stats = None
+    if "first_filing_country" in df.columns and "country" in df.columns:
+        origin = df["first_filing_country"].astype(str).str.strip().str.upper() \
+            .replace("NAN", "").replace("NONE", "")
+        filing = df["country"].astype(str).str.strip().str.upper() \
+            .replace("NAN", "").replace("NONE", "")
+        ok_rows = (origin != "") & (filing != "")
+        if ok_rows.sum() >= 5:
+            flow = pd.crosstab(origin[ok_rows], filing[ok_rows])
+            top_orig = flow.sum(axis=1).sort_values(ascending=False).head(10).index
+            top_fil = flow.sum(axis=0).sort_values(ascending=False).head(10).index
+            flow = flow.loc[top_orig, top_fil]
+            z, hover, custom = [], [], []
+            for o in flow.index:
+                row_z, row_h, row_c = [], [], []
+                for f in flow.columns:
+                    v = int(flow.loc[o, f])
+                    row_z.append(v)
+                    row_h.append("원천국 %s → 출원국 %s: %s건%s"
+                                 % (o, f, fmt_num(v),
+                                    " (자국 출원)" if o == f else ""))
+                    row_c.append({"drill": _drill_scope(
+                        {"first_country": str(o), "country": str(f)})})
+                z.append(row_z)
+                hover.append(row_h)
+                custom.append(row_c)
+            fig_country_flow = heatmap(
+                z, [str(c) for c in flow.columns], [str(o) for o in flow.index],
+                title="원천국(최우선출원국) → 출원국 흐름 — 기술이 시작된 곳과 "
+                      "확보한 시장", colorscale=BLUES, hovertext=hover,
+                colorbar_title="건수")
+            for tr in fig_country_flow["data"]:
+                tr["customdata"] = custom
+            same = int(sum(flow.loc[o, o] for o in flow.index if o in flow.columns))
+            total_flow = int(flow.values.sum())
+            off = flow.copy()
+            for o in off.index:
+                if o in off.columns:
+                    off.loc[o, o] = 0
+            best = None
+            if off.values.max() > 0:
+                oi, fi = np.unravel_index(off.values.argmax(), off.values.shape)
+                best = (str(off.index[oi]), str(off.columns[fi]),
+                        int(off.values[oi, fi]))
+            flow_stats = {"domestic_ratio": round(same / float(total_flow), 4)
+                          if total_flow else None,
+                          "top_cross": best, "n": total_flow}
+
     # ③ 출원인 순위 + ④ 출원인×연도 매트릭스
     # 공동출원 처리: co_mode="all"이면 공동출원 1건을 각 공동출원인에게 1건씩 집계
     fig_applicants, fig_app_year = None, None
@@ -10271,6 +10660,19 @@ def compute_basic_stats(df, settings, company=None):
             "권리 확보가 집중된 시장입니다."
             % (c_counts.index[0], fmt_num(c_counts.iloc[0]),
                fmt_pct(c_counts.iloc[0] / float(c_counts.sum())), fmt_pct(c_top3))]
+    if fig_country_flow is not None and flow_stats:
+        fs_sents = []
+        if flow_stats["domestic_ratio"] is not None:
+            fs_sents.append("원천국(최우선출원국)과 출원국이 같은 자국 출원이 %s이며, "
+                            "나머지가 해외 시장 전개 출원입니다."
+                            % fmt_pct(flow_stats["domestic_ratio"]))
+        if flow_stats["top_cross"]:
+            o, f, v = flow_stats["top_cross"]
+            fs_sents.append("가장 큰 국가 간 흐름은 %s에서 시작해 %s에 출원한 %s건 — "
+                            "%s 원천 기술이 %s 시장을 겨냥하고 있습니다."
+                            % (o, f, fmt_num(v), o, f))
+        if fs_sents:
+            chart_insights["country_flow"] = fs_sents
     if len(app_counts):
         cr3 = float(app_counts.head(3).sum()) / float(len(df))
         chart_insights["applicants"] = [
@@ -10332,6 +10734,7 @@ def compute_basic_stats(df, settings, company=None):
 
     return ok_result({
         "kpi": kpi, "annual": fig_annual, "country": fig_country,
+        "country_flow": fig_country_flow,
         "applicants": fig_applicants, "applicant_year": fig_app_year,
         "applicant_year_bubble": fig_app_bubble,
         "tech": fig_tech, "tech_year": fig_tech_year,
@@ -12574,7 +12977,21 @@ import pandas as pd
 # 공통: 코퍼스 임베딩
 # ---------------------------------------------------------------------------
 def _corpus_texts(df):
-    """문헌 대표 텍스트 시리즈 + 출처 설명. 우선순위: 요약+명칭 → 독립청구항 → 명칭."""
+    """문헌 대표 텍스트 시리즈 + 출처 설명.
+
+    우선순위: AI 요약(+특징 요약) → 요약+명칭 → 독립청구항 → 명칭.
+    윈텔립스 AI 요약은 원문 요약보다 정제된 서술이라 임베딩 품질이 좋다 —
+    커버리지가 충분할 때만 사용하고, 아니면 기존 소스로 폴백한다.
+    """
+    if "ai_summary" in df.columns and df["ai_summary"].astype(str).str.len().ge(30).sum() \
+            >= max(20, len(df) * 0.3):
+        s = df["ai_summary"].astype(str)
+        label = "AI 요약"
+        if "feature_summary" in df.columns and \
+                df["feature_summary"].astype(str).str.len().ge(10).any():
+            s = s + " " + df["feature_summary"].astype(str)
+            label = "AI 요약+특징 요약"
+        return s.str.replace(r"\s+", " ", regex=True).str.strip(), label
     if "abstract" in df.columns and df["abstract"].astype(str).str.len().ge(30).sum() \
             >= max(20, len(df) * 0.3):
         t = df["title"].astype(str) + ". " if "title" in df.columns else ""
@@ -13873,23 +14290,138 @@ def _expedited_section(df, settings):
 
 
 # ---------------------------------------------------------------------------
+# ⑤-b 심사청구율 — 권리화 의지 vs 방어·보류 출원
+# ---------------------------------------------------------------------------
+def _exam_request_section(df, settings):
+    """심사청구 여부(KR/JP 등 심사청구제 국가)로 포트폴리오의 '진정성'을 잰다.
+
+    심사청구는 비용이 드는 능동 행위 — 청구율이 낮은 기업·연도는 방어 출원이나
+    옵션 보류 성향, 높은 쪽은 권리화 의지가 강한 포트폴리오로 해석한다.
+    값이 해석되는 문헌만 분모로 쓴다 (해당 없음 국가는 제외).
+    """
+    if "exam_request_flag" not in df.columns:
+        return None, "심사청구 여부 컬럼 필요 (KR/JP/EP/CA — 컬럼 매핑에서 '심사청구 여부')"
+    req = df["exam_request_flag"].map(parse_bool)
+    valued = req.notna()
+    if valued.sum() < 10:
+        return None, "심사청구 여부 값이 해석되는 문헌 부족 (10건 미만)"
+    sub = df[valued].copy()
+    sub["_req"] = req[valued]
+    overall = float(pd.Series([v is True for v in sub["_req"]]).mean())
+    # 기업별 청구율 (공동출원은 설정에 따라 각 출원인에게 계상)
+    sub_x = explode_applicants(sub, settings)
+    sub_x = sub_x[sub_x["applicant_display"].astype(str) != ""]
+    comp_rows = []
+    for comp, g in sub_x.groupby("applicant_display"):
+        if len(g) < 5:
+            continue
+        n_req = int(sum(v is True for v in g["_req"]))
+        comp_rows.append({"company": str(comp), "n_req": n_req, "n": int(len(g)),
+                          "rate": round(n_req / float(len(g)), 4)})
+    fig = None
+    if comp_rows:
+        comp_rows.sort(key=lambda r: r["rate"])
+        show = comp_rows[-14:] if len(comp_rows) > 14 else comp_rows
+        fig = bar_chart(
+            [r["company"] for r in show], [r["rate"] for r in show],
+            title="기업별 심사청구율 — 높을수록 권리화 의지, 낮을수록 방어·보류 출원 "
+                  "(막대 클릭 → 그 회사의 심사청구 특허)",
+            orientation="h", x_title="심사청구율",
+            hovertext=["%s — 심사청구 %d건 / 판정 가능 %d건 (%s)"
+                       % (r["company"], r["n_req"], r["n"], fmt_pct(r["rate"]))
+                       for r in show],
+            customdata=[{"drill": {"applicant": r["company"],
+                                   "applicant_scope": "any",
+                                   "exam_requested": True}} for r in show])
+        fig["layout"]["xaxis"]["tickformat"] = ".0%"
+    # 연도별 청구율 추이
+    fig_year = None
+    yr = sub[sub["_base_year"].notna()].copy()
+    if len(yr) >= 10:
+        yr["_y"] = yr["_base_year"].astype(int)
+        rows = [(int(y), float(pd.Series([v is True for v in g["_req"]]).mean()),
+                 int(len(g)))
+                for y, g in yr.groupby("_y") if len(g) >= 3]
+        if len(rows) >= 3:
+            fig_year = {"data": [{
+                "type": "scatter", "mode": "lines+markers",
+                "x": [r[0] for r in rows], "y": [round(r[1], 4) for r in rows],
+                "hovertext": ["%d년: 심사청구율 %s (표본 %d건)"
+                              % (r[0], fmt_pct(r[1]), r[2]) for r in rows],
+                "hoverinfo": "text", "line": {"color": "#4E79A7"}}],
+                "layout": base_layout(
+                    "연도별 심사청구율 추이 — 하락하면 방어 출원 비중 확대 신호",
+                    xaxis={"title": "출원연도", "dtick": 1, "tickformat": "d"},
+                    yaxis={"title": "심사청구율", "tickformat": ".0%",
+                           "range": [0, 1.05]})}
+    return {"fig": fig, "fig_year": fig_year, "overall_rate": round(overall, 4),
+            "n_valued": int(valued.sum()), "companies": comp_rows[::-1][:20],
+            "note": ("심사청구 여부는 KR·JP 등 심사청구제 국가에서만 기록됩니다 — "
+                     "값이 해석되는 문헌만 분모로 사용했습니다. 미청구 출원도 출원일로"
+                     "부터 청구 기한(KR 3년) 내에는 청구될 수 있습니다.")}, None
+
+
+# ---------------------------------------------------------------------------
 # ⑥ 분할·계속출원 타이밍
 # ---------------------------------------------------------------------------
 def _divisional_section(df, settings):
-    if "parent_app_number" not in df.columns:
-        return None, "원출원번호 컬럼 필요 (분할·계속출원 식별)"
-    isdiv = df["parent_app_number"].astype(str).str.strip() \
-        .map(lambda v: v not in ("", "nan", "None"))
+    """분할출원 식별: '분할출원 여부' 플래그(있으면) ∪ 원출원번호 보유."""
+    has_flag = "divisional_flag" in df.columns
+    has_parent = "parent_app_number" in df.columns
+    if not (has_flag or has_parent):
+        return None, "분할출원 여부 또는 원출원번호 컬럼 필요 (분할·계속출원 식별)"
+    isdiv = pd.Series(False, index=df.index)
+    if has_flag:
+        isdiv |= df["divisional_flag"].map(parse_bool) == True  # noqa: E712
+    if has_parent:
+        isdiv |= df["parent_app_number"].astype(str).str.strip() \
+            .map(lambda v: v not in ("", "nan", "None"))
+    # 기업별 분할출원 비율 — 분할·계속을 붙이는 특허는 출원인이 중요하게 여기는
+    # 핵심특허일 가능성이 높다 (비율 높은 기업=핵심특허 다중 방어 전략)
+    fig_ratio = None
+    div_all = df[isdiv]
+    if len(div_all) >= 3:
+        totals = applicant_counts(df, settings)
+        div_counts = applicant_counts(div_all, settings)
+        ratio_rows = []
+        for comp, n_tot in totals.items():
+            if n_tot < 8:
+                continue
+            n_div = int(div_counts.get(comp, 0))
+            ratio_rows.append((str(comp), n_div, int(n_tot),
+                               n_div / float(n_tot)))
+        ratio_rows = [r for r in ratio_rows if r[1] > 0]
+        if ratio_rows:
+            ratio_rows.sort(key=lambda r: r[3])
+            ratio_rows = ratio_rows[-14:]
+            fig_ratio = bar_chart(
+                [r[0] for r in ratio_rows], [round(r[3], 4) for r in ratio_rows],
+                title="기업별 분할·계속출원 비율 — 높을수록 핵심특허 다중 방어 전략 "
+                      "(막대 클릭 → 그 회사의 분할출원)",
+                orientation="h", x_title="분할출원 비율",
+                hovertext=["%s — 분할출원 %d건 / 전체 %d건 (%s)"
+                           % (r[0], r[1], r[2], fmt_pct(r[3])) for r in ratio_rows],
+                customdata=[{"drill": {"applicant": r[0], "applicant_scope": "any",
+                                       "divisional": True}} for r in ratio_rows])
+            fig_ratio["layout"]["xaxis"]["tickformat"] = ".0%"
     sub = df[isdiv & df["app_date"].notna()
              & (df["applicant_display"].astype(str) != "")].copy()
     if len(sub) < 5:
-        return None, "분할·계속출원(원출원번호 보유) 문헌 부족 (5건 미만)"
+        if fig_ratio is not None:
+            return {"fig": None, "fig_ratio": fig_ratio, "bursts": [],
+                    "n_divisionals": int(isdiv.sum()),
+                    "note": "타임라인은 분할출원(출원일 보유) 5건 이상일 때 표시됩니다."}, None
+        return None, "분할·계속출원(분할 여부/원출원번호 보유) 문헌 부족 (5건 미만)"
     ids = _ids_of(sub)
     # 공동출원 분할건은 각 출원인 레인에 모두 표시 (coapplicant_mode 따름)
     sub_x = explode_applicants(sub, settings)
     comp_counts = sub_x["applicant_display"].value_counts()
     top_comps = [c for c in comp_counts.index if comp_counts[c] >= 2][:8]
     if not top_comps:
+        if fig_ratio is not None:
+            return {"fig": None, "fig_ratio": fig_ratio, "bursts": [],
+                    "n_divisionals": int(len(sub)),
+                    "note": "타임라인은 분할출원 2건 이상 기업이 있을 때 표시됩니다."}, None
         return None, "분할출원 2건 이상 기업 없음"
     color_reg = {}
     traces = []
@@ -13901,8 +14433,11 @@ def _divisional_section(df, settings):
             "type": "scatter", "mode": "markers", "name": str(comp),
             "x": xs, "y": [lane] * len(g),
             "hovertext": ["%s %s 분할출원 (원출원 %s)"
-                          % (comp, x, str(p)[:20])
-                          for x, p in zip(xs, g["parent_app_number"])],
+                          % (comp, x, str(p)[:20] if str(p).strip() not in
+                             ("", "nan", "None") else "번호 미기재")
+                          for x, p in zip(xs, (g["parent_app_number"]
+                                               if "parent_app_number" in g.columns
+                                               else [""] * len(g)))],
             "hoverinfo": "text",
             "customdata": [{"drill": {"type": "ids", "ids": [str(i)]}}
                            for i in _ids_of(g)],
@@ -13934,7 +14469,8 @@ def _divisional_section(df, settings):
                "range": [-0.6, len(top_comps) - 0.4]},
         height=max(360, 120 + 40 * len(top_comps)), showlegend=False)}
     bursts.sort(key=lambda b: -b["n"])
-    return {"fig": fig, "bursts": bursts[:10], "n_divisionals": int(len(sub)),
+    return {"fig": fig, "fig_ratio": fig_ratio, "bursts": bursts[:10],
+            "n_divisionals": int(len(sub)),
             "note": ("산업 이벤트(경쟁사 발표·소송) 데이터가 없어 이벤트 정렬은 "
                      "제공하지 않습니다 — 단기 집중(버스트) 구간은 방어적 청구항 "
                      "조정 가능성이 있는 '관찰된 군집'입니다.")}, None
@@ -14310,7 +14846,8 @@ def _gov_program_section(df, settings):
 # ---------------------------------------------------------------------------
 _SECTIONS = (("survival", _survival_section), ("market_entry", _market_entry_section),
              ("agent", _agent_section), ("examiner_eye", _examiner_eye_section),
-             ("expedited", _expedited_section), ("divisional", _divisional_section),
+             ("expedited", _expedited_section), ("exam_request", _exam_request_section),
+             ("divisional", _divisional_section),
              ("anomaly", _anomaly_section), ("disclosure", _disclosure_section),
              ("trial", _trial_section), ("gov_program", _gov_program_section))
 
@@ -14345,7 +14882,8 @@ def compute_wips_deep(df, settings, only_sections=None, company=None):
     if not sections:
         labels = {"survival": "연차료 생존곡선", "market_entry": "지정국 진입 시차",
                   "agent": "대리인 전환", "examiner_eye": "심사관의 눈",
-                  "expedited": "우선심사", "divisional": "분할출원",
+                  "expedited": "우선심사", "exam_request": "심사청구율",
+                  "divisional": "분할출원",
                   "anomaly": "심사기간 이상탐지", "disclosure": "개시 충실도",
                   "trial": "심판·소송", "gov_program": "국가연구 과제"}
         details = " · ".join("%s: %s" % (labels.get(s["section"], s["section"]),
@@ -14389,6 +14927,20 @@ def compute_wips_deep(df, settings, only_sections=None, company=None):
                              "1~2년 내 제품화 가능성이 높은 영역입니다."
                              % (s0["tech"], fmt_pct(s0["prior_ratio"]),
                                 fmt_pct(s0["recent_ratio"])))
+    if "exam_request" in sections:
+        er = sections["exam_request"]
+        low = [c for c in er["companies"] if c["rate"] < max(0.0, er["overall_rate"] - 0.15)]
+        sent = ("전체 심사청구율은 %s(판정 가능 %s건 기준)입니다."
+                % (fmt_pct(er["overall_rate"]), fmt_num(er["n_valued"])))
+        if low:
+            sent += (" '%s'는 청구율 %s로 평균보다 크게 낮아 방어·보류 출원 비중이 "
+                     "높은 포트폴리오입니다." % (low[0]["company"], fmt_pct(low[0]["rate"])))
+        sentences.append(sent)
+    if "divisional" in sections and sections["divisional"].get("fig_ratio"):
+        sentences.append("분할·계속출원 비율이 높은 기업은 핵심특허를 여러 권리로 나눠 "
+                         "방어하는 전략을 쓰고 있습니다 — 그 분할출원 대상이 곧 그 회사가 "
+                         "스스로 중요하다고 판단한 기술입니다 (분할출원 %s건)."
+                         % fmt_num(sections["divisional"]["n_divisionals"]))
     if "trial" in sections and sections["trial"]["top_target"]:
         sentences.append("심판 청구가 '%s'로 수렴합니다 — 병목(핵심) 특허 보유자일 "
                          "가능성이 있습니다." % sections["trial"]["top_target"])
@@ -15540,16 +16092,118 @@ def _examiner_section(df, settings):
 
 
 # ---------------------------------------------------------------------------
+# ⑦ 권리 유지 신호 — EPC 검증국 유지 + 연차료 납부 최신성
+# ---------------------------------------------------------------------------
+def _epc_maintenance_section(df, settings):
+    """EPC 유효국 수·유지율(기업이 돈을 내며 유지하는 시장 수)과 최근 연차료일.
+
+    유럽특허는 등록 후 국가별 검증(validation)·연차료를 따로 내므로, 유효국을
+    많이 유지하는 특허일수록 출원인이 스스로 높게 평가한 권리다. 최근 연차료일은
+    권리 유지 의지의 최신 기록이다. 관찰 신호이며 데이터 추출 시점에 따라
+    달라질 수 있다.
+    """
+    has_valid = "epc_valid_states" in df.columns and _dp_nonempty(df["epc_valid_states"]).any()
+    has_annuity = "annuity_date" in df.columns and df["annuity_date"].notna().any()
+    if not (has_valid or has_annuity):
+        return None, "EPC유효국 또는 최근 연차료일 컬럼 필요"
+    out = {}
+    if has_valid:
+        sub = df[_dp_nonempty(df["epc_valid_states"])].copy()
+        sub["_n_valid"] = sub["epc_valid_states"].map(
+            lambda v: len(parse_multiclass_cell(v)))
+        if "epc_lapsed_states" in sub.columns:
+            sub["_n_lapsed"] = sub["epc_lapsed_states"].map(
+                lambda v: len(parse_multiclass_cell(v)))
+        else:
+            sub["_n_lapsed"] = 0
+        if len(sub) >= _DP_MIN_N:
+            # 기업별 평균 유효국 수 (공동출원은 설정에 따라 각 출원인에게 계상)
+            sub_x = explode_applicants(sub, settings)
+            sub_x = sub_x[sub_x["applicant_display"].astype(str) != ""]
+            rows_c = []
+            for comp, g in sub_x.groupby("applicant_display"):
+                if len(g) < 3:
+                    continue
+                keep = float(g["_n_valid"].sum()) / \
+                    float(g["_n_valid"].sum() + g["_n_lapsed"].sum() or 1)
+                rows_c.append({"company": str(comp), "n": int(len(g)),
+                               "avg_valid": round(float(g["_n_valid"].mean()), 2),
+                               "keep_rate": round(keep, 4)})
+            fig_comp = None
+            if rows_c:
+                rows_c.sort(key=lambda r: r["avg_valid"])
+                show = rows_c[-14:]
+                fig_comp = bar_chart(
+                    [r["company"] for r in show],
+                    [r["avg_valid"] for r in show],
+                    title="기업별 평균 EPC 유효(검증)국 수 — 돈을 내며 유지하는 "
+                          "유럽 시장의 폭", orientation="h",
+                    x_title="평균 유효국 수",
+                    hovertext=["%s — 평균 유효국 %.1f개국, 유지율 %s (EP 특허 %d건)"
+                               % (r["company"], r["avg_valid"],
+                                  fmt_pct(r["keep_rate"]), r["n"]) for r in show])
+            # 유효국을 가장 넓게 유지하는 특허 (고가치 후보)
+            top_pat = []
+            for idx, r in sub.nlargest(10, "_n_valid").iterrows():
+                pid = _dp_ids_of(sub.loc[[idx]])[0]
+                top_pat.append({
+                    "id": pid, "title": str(r.get("title", ""))[:70],
+                    "applicant": str(r.get("applicant_display", "")),
+                    "n_valid": int(r["_n_valid"]), "n_lapsed": int(r["_n_lapsed"]),
+                    "states": str(r.get("epc_valid_states", ""))[:60],
+                    "drill": {"type": "ids", "ids": [pid]}})
+            out.update({"fig_epc": fig_comp, "epc_rows": top_pat,
+                        "n_epc": int(len(sub)),
+                        "avg_valid_all": round(float(sub["_n_valid"].mean()), 2)})
+    if has_annuity:
+        ann = df[df["annuity_date"].notna()].copy()
+        if len(ann) >= _DP_MIN_N:
+            years = ann["annuity_date"].dt.year.astype(int)
+            counts = years.value_counts().sort_index()
+            fig_ann = bar_chart(
+                [str(y) for y in counts.index], [int(v) for v in counts.values],
+                title="최근 연차료 납부 연도 분포 — 오래된 막대의 유효특허는 유지 "
+                      "여부 재확인 후보", x_title="최근 연차료일 연도", y_title="건수")
+            # 유효 상태인데 연차료 기록이 3년 이상 오래된 특허 (관찰 신호)
+            now_y = pd.Timestamp.now().year
+            stale_mask = (years <= now_y - 3) & \
+                ann["_active_flag"].map(lambda v: v is True)
+            stale = []
+            sub_st = ann[stale_mask]
+            ids_st = _dp_ids_of(sub_st, cap=len(sub_st) or 1)
+            for k, (idx, r) in enumerate(sub_st.head(10).iterrows()):
+                stale.append({
+                    "id": ids_st[k] if k < len(ids_st) else str(idx),
+                    "title": str(r.get("title", ""))[:70],
+                    "applicant": str(r.get("applicant_display", "")),
+                    "last_annuity": str(r["annuity_date"].date()),
+                    "drill": {"type": "ids",
+                              "ids": [ids_st[k] if k < len(ids_st) else str(idx)]}})
+            out.update({"fig_annuity": fig_ann, "stale_rows": stale,
+                        "n_annuity": int(len(ann)),
+                        "n_stale": int(stale_mask.sum())})
+    if not out:
+        return None, "EPC유효국/최근 연차료일 값 보유 문헌 부족 (3건 미만)"
+    out["note"] = ("EPC 검증국 유지·연차료 납부는 출원인이 비용을 들여 표시한 "
+                   "자기 평가 신호입니다. 최근 연차료일은 데이터 추출 시점 기준의 "
+                   "기록이므로 '오래됨'이 곧 포기를 뜻하지는 않습니다 — 재확인 "
+                   "후보로만 해석하세요.")
+    return out, None
+
+
+# ---------------------------------------------------------------------------
 # 통합
 # ---------------------------------------------------------------------------
 _DP_SECTIONS = (("license", _license_section), ("sep", _sep_section),
                 ("rejection", _rejection_section), ("science", _science_section),
                 ("assignment", _assignment_section),
-                ("examiner", _examiner_section))
+                ("examiner", _examiner_section),
+                ("epc", _epc_maintenance_section))
 
 _DP_LABELS = {"license": "실시권(라이선스)", "sep": "표준특허",
               "rejection": "거절 사유", "science": "과학 연계성",
-              "assignment": "권리변동", "examiner": "심사관"}
+              "assignment": "권리변동", "examiner": "심사관",
+              "epc": "권리 유지(EPC·연차료)"}
 
 
 def compute_deep_plus(df, settings, only_sections=None, company=None):
@@ -15623,6 +16277,17 @@ def compute_deep_plus(df, settings, only_sections=None, company=None):
         ex = sections["examiner"]
         sentences.append("심사관 %s명이 확인됩니다 (개인 실명 정보 — 내부 참고용)."
                          % fmt_num(ex["n_examiners"]))
+    if "epc" in sections:
+        ep = sections["epc"]
+        if ep.get("n_epc"):
+            sentences.append("EPC 검증국 정보 보유 %s건의 평균 유효국은 %s개국입니다 — "
+                             "유효국을 넓게 유지하는 특허는 출원인이 비용을 들여 "
+                             "스스로 높게 평가한 권리입니다."
+                             % (fmt_num(ep["n_epc"]), ep["avg_valid_all"]))
+        if ep.get("n_stale"):
+            sentences.append("유효 상태인데 최근 연차료 기록이 3년 이상 지난 특허가 "
+                             "%s건 있습니다 — 포기 예정이거나 데이터 시점 차이일 수 "
+                             "있어 재확인 후보입니다." % fmt_num(ep["n_stale"]))
     if not sentences:
         sentences.append("%s 기준 특수 신호 %d개 섹션이 계산되었습니다."
                          % (period, len(sections)))
@@ -16703,7 +17368,7 @@ def compute_quality_report(df, settings):
 
 
 # 검증 리포트용 빌드 정보 (tools/build_backend.py 가 실측 집계)
-_QR_BUILD_INFO = {'built_at': '2026-09-09 01:20', 'modules': 46, 'test_functions': 280, 'test_files': 15, 'source': 'build'}
+_QR_BUILD_INFO = {'built_at': '2026-09-09 01:57', 'modules': 46, 'test_functions': 290, 'test_files': 16, 'source': 'build'}
 
 
 
