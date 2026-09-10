@@ -700,6 +700,7 @@ def test_per_user_dataset_selection(client, raw_df):
     _st.save_store("user_datasets", {})
     prev_settings = _st.load_settings() or {}
     prev_uploads = _st.load_uploads()
+    prev_filter = _st.load_filter_state()
     try:
         # 첫 사용자(관리자) + 일반 사용자 A(문보라)·B(김철수)
         tokAdm = _post(client, "/api/auth/login",
@@ -720,32 +721,39 @@ def test_per_user_dataset_selection(client, raw_df):
              "worker": "김철수", "job": "B작업", "file_exists": True}]})
         s = _st.load_settings() or {}
         s["demo_mode"] = False
+        s["dataset"] = None   # 전역 미설정 상태에서 시작 (첫 업로더가 전역이 됨)
         _st.save_settings(s)
         # A 가 자기 작업을 선택 (실제 흐름: 업로드 → 저장하고 분석 시작)
-        # → 전역 선택 = A 의 작업 + A 의 개인 선택 기록
+        # → 전역이 비어 있었으므로 전역 = A 의 작업 + A 의 개인 선택 기록
         assert client.post("/api/settings", headers=hA,
                            json={"dataset": "upload__a"}).get_json()["status"] == "ok"
+        assert (_st.load_settings() or {}).get("dataset") == "upload__a"
 
-        # ① B 의 config: 전역이 A 소유 → dataset None + 안내
+        # ① B 의 config: 전역이 A 소유지만 B 본인의 업로드(ub)가 있으므로
+        #    오류 벽 없이 B 의 최근 작업으로 자동 전환 (작업 중 차단 재발 방지)
         cfgB = client.get("/api/config", headers=hB).get_json()
-        assert cfgB["settings"]["dataset"] is None
-        assert cfgB["settings"]["dataset_blocked_owner"] == "IP전략팀/문보라"
+        assert cfgB["settings"]["dataset"] == "upload__b"
+        assert "dataset_blocked_owner" not in cfgB["settings"]
         # A 본인·관리자는 그대로 접근
         assert client.get("/api/config", headers=hA).get_json()["settings"]["dataset"] == "upload__a"
         assert client.get("/api/config", headers=hAdm).get_json()["settings"]["dataset"] == "upload__a"
 
-        # ② B 의 분석 요청: 오류지만 해결 방법이 담긴 안내 메시지
-        rB = client.post("/api/basic-stats", headers=hB, json={"filters": {}})
-        msg = (rB.get_json() or {}).get("message", "")
-        assert "IP전략팀/문보라" in msg and "시작하기" in msg, msg
+        # ② B 의 분석 요청: 개인 선택 기록이 없어도 본인 업로드로 자동 전환되어
+        #    즉시 성공하고, 개인 선택이 기록된다
+        okB0 = client.post("/api/basic-stats", headers=hB, json={"filters": {}}).get_json()
+        assert okB0["status"] == "ok"
+        assert (_st.load_store("user_datasets") or {}).get("특허팀/김철수") == "upload__b"
 
-        # ③ B 가 자기 작업 선택 → B 는 분석 가능, A·전역 선택은 그대로 유지
+        # ③ B 가 자기 작업을 명시 선택 → B 는 분석 가능, 전역(A 폴백)은 뒤집히지
+        #    않는다 (일반 사용자의 선택은 개인 기록에만 반영)
         rSet = client.post("/api/settings", headers=hB, json={"dataset": "upload__b"})
         assert rSet.get_json()["status"] == "ok"
+        assert rSet.get_json()["settings"]["dataset"] == "upload__b"  # 응답=내 기준
+        assert (_st.load_settings() or {}).get("dataset") == "upload__a"  # 전역 유지
         okB = client.post("/api/basic-stats", headers=hB, json={"filters": {}}).get_json()
         assert okB["status"] == "ok"
         assert client.get("/api/config", headers=hB).get_json()["settings"]["dataset"] == "upload__b"
-        # A 는 개인 선택 기록 덕에 B 가 전역을 바꿔도 자기 작업 유지
+        # A 는 개인 선택 기록 덕에 B 가 무엇을 하든 자기 작업 유지
         cfgA = client.get("/api/config", headers=hA).get_json()
         assert cfgA["settings"]["dataset"] == "upload__a", cfgA["settings"]["dataset"]
         okA = client.post("/api/basic-stats", headers=hA, json={"filters": {}}).get_json()
@@ -755,10 +763,58 @@ def test_per_user_dataset_selection(client, raw_df):
         rX = client.post("/api/basic-stats", headers=hB,
                          json={"dataset": "upload__a", "filters": {}})
         assert "본인 계정으로" in (rX.get_json() or {}).get("message", "")
+
+        # ⑤ 업로드가 하나도 없는 새 사용자 C: 오류 벽 대신 시작하기 안내
+        tokC = _post(client, "/api/auth/login",
+                     {"name": "신입/박신규", "emp_no": "20240003"}).get_json()["token"]
+        hC = {"X-IPLS-Auth": tokC}
+        cfgC = client.get("/api/config", headers=hC).get_json()
+        assert cfgC["settings"]["dataset"] is None
+        assert cfgC["settings"]["dataset_blocked_owner"] == "IP전략팀/문보라"
+        rC = client.post("/api/basic-stats", headers=hC, json={"filters": {}})
+        msgC = (rC.get_json() or {}).get("message", "")
+        assert "IP전략팀/문보라" in msgC and "시작하기" in msgC, msgC
+
+        # ⑥ 실제 업로드·불러오기도 개인 선택으로 즉시 기록된다 (settings 호출
+        #    없이도 본인 작업으로 분석이 이어지는지 — 서버측 기록 검증)
+        _st.save_store("user_datasets", {})
+        import openpyxl
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.append(["공개번호", "출원인", "출원일", "발명의 명칭"])
+        for i in range(5):
+            ws.append(["KR10-2020-%07dA" % i, "삼성전자", "2020-01-0%d" % (i + 1),
+                       "테스트 발명 %d" % i])
+        buf = io.BytesIO()
+        wb.save(buf)
+        buf.seek(0)
+        rUp = client.post("/api/uploads", headers=hB,
+                          data={"file": (buf, "t.xlsx"), "worker": "김철수",
+                                "job": "기록검증"},
+                          content_type="multipart/form-data")
+        upJ = rUp.get_json()
+        assert upJ["status"] == "ok", upJ
+        new_ds = upJ["entry"]["dataset"]
+        assert (_st.load_store("user_datasets") or {}).get("특허팀/김철수") == new_ds
+        _st.save_store("user_datasets", {})
+        rL = client.post("/api/uploads/load", headers=hB,
+                         json={"id": upJ["entry"]["id"]})
+        assert rL.get_json()["status"] == "ok"
+        assert (_st.load_store("user_datasets") or {}).get("특허팀/김철수") == new_ds
+
+        # ⑦ 필터 상태는 계정별 — B 가 저장해도 A 의 복원 필터는 그대로
+        client.post("/api/filter-state", headers=hA,
+                    json={"filters": {"year_from": 2015}})
+        client.post("/api/filter-state", headers=hB,
+                    json={"filters": {"year_from": 2020}})
+        fsA = client.get("/api/config", headers=hA).get_json()["filter_state"]
+        fsB = client.get("/api/config", headers=hB).get_json()["filter_state"]
+        assert fsA.get("year_from") == 2015 and fsB.get("year_from") == 2020
     finally:
         _st.save_store("users", {"items": []})
         _st.save_store("user_datasets", {})
         _st.save_uploads(prev_uploads)
         _st.save_settings(prev_settings)
+        _st.save_filter_state(prev_filter)
         from src.cache import clear_all_caches
         clear_all_caches()

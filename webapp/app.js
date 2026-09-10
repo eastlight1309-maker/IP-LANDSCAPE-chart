@@ -1573,13 +1573,15 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
 
     content.appendChild(Ui.el('<div class="card"><div class="card-body" ' +
       'style="font-size:13px;line-height:1.9"><b style="font-size:15px">🚀 분석 시작 가이드</b><br>' +
-      '아래 순서대로 진행하세요: <b>① 로그인 → ② 작업자·작업명 입력 + 엑셀 업로드 ' +
-      '(저장하고 분석 시작) → ③ 분석 범위 선택 → ④ 분석 목적 선택 후 분석 시작</b>. ' +
-      '이미 완료한 단계는 ✔ 로 표시되며, 언제든 이 화면(좌측 🚀 시작하기)으로 돌아와 ' +
-      '바꿀 수 있습니다.</div></div>'));
+      '아래 순서대로 진행하세요: <b>① 로그인(팀명/이름은 여기 한 번만 입력) → ' +
+      '② 작업명 입력 + 엑셀 업로드 (저장하고 분석 시작) → ③ 분석 범위 선택 → ' +
+      '④ 분석 목적 선택 후 분석 시작</b>. 작업자 이름은 로그인 계정으로 자동 기록되어 ' +
+      '다시 입력할 필요가 없습니다. 이미 완료한 단계는 ✔ 로 표시되며, 언제든 이 화면' +
+      '(좌측 🚀 시작하기)으로 돌아와 바꿀 수 있습니다.</div></div>'));
 
     // ── STEP 1. 로그인 ──────────────────────────────────────────
-    var c1 = stepCard(1, '로그인 (작업 구분용)', !!Auth.user());
+    var c1 = stepCard(1, '로그인 (작업 구분용 — 여기 입력한 팀명/이름이 곧 작업자 이름)',
+      !!Auth.user());
     if (c1) {
       c1.body.appendChild(Ui.el('<div style="font-size:12.5px;color:#46607a">' +
         (Auth.user()
@@ -1590,8 +1592,8 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
             '자동 등록됩니다.') + '</div>'));
     }
 
-    // ── STEP 2. 데이터 준비: 작업자·작업명 + 엑셀 업로드 ─────────
-    var c2 = stepCard(2, '데이터 준비 — 작업자·작업명 입력 후 엑셀 업로드', hasDataset);
+    // ── STEP 2. 데이터 준비: 작업명 + 엑셀 업로드 (작업자=로그인 계정 자동) ──
+    var c2 = stepCard(2, '데이터 준비 — 작업명 입력 후 엑셀 업로드', hasDataset);
     if (!hasDataset && s.dataset_blocked_owner) {
       c2.body.appendChild(Ui.el('<div class="disclaimer" style="margin:0 0 8px">' +
         "현재 앱의 전역 선택은 '" + Ui.esc(s.dataset_blocked_owner) + "' 사용자의 " +
@@ -1605,8 +1607,10 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
         '바꾸려면 아래에 새로 업로드하거나 저장된 작업을 불러오세요.</div>'));
     }
     var form = Ui.el('<div>' +
-      '<div class="settings-row"><label>작업자 이름 *</label>' +
-      '<input type="text" id="st-worker" maxlength="60" placeholder="예: 홍길동" style="flex:1"></div>' +
+      '<div class="settings-row"><label>작업자</label>' +
+      '<input type="text" id="st-worker" maxlength="60" style="flex:1" readonly ' +
+      'title="STEP 1 에서 로그인한 계정이 곧 작업자입니다 — 별도 입력이 필요 없습니다">' +
+      '<span style="font-size:11px;color:#93a5b4;white-space:nowrap">로그인 계정 자동</span></div>' +
       '<div class="settings-row"><label>작업명 *</label>' +
       '<input type="text" id="st-job" maxlength="120" placeholder="예: 2026 상반기 패키징 IP 조사" style="flex:1"></div>' +
       '<div class="settings-row"><label>엑셀 파일 *</label>' +
@@ -1614,7 +1618,8 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
     c2.body.appendChild(form);
     var upBtn = Ui.el('<button class="btn primary">📤 업로드 → 저장하고 분석 시작</button>');
     c2.body.appendChild(upBtn);
-    form.querySelector('#st-worker').value = getWorkerName() || Auth.user() || '';
+    form.querySelector('#st-worker').value = getWorkerName();
+    if (!Auth.user()) form.querySelector('#st-worker').removeAttribute('readonly');
     function afterDataset(name) {
       // 업로드/불러오기 완료 → 이 화면을 유지한 채 다음 단계(③ 범위)로 진행
       return Api.post('/api/settings', { dataset: name }).then(function (resp) {
@@ -1625,10 +1630,11 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
       });
     }
     upBtn.addEventListener('click', function () {
-      var worker = form.querySelector('#st-worker').value.trim();
+      var worker = getWorkerName() || form.querySelector('#st-worker').value.trim();
       var job = form.querySelector('#st-job').value.trim();
       var fileEl = form.querySelector('#st-file');
-      if (!worker || !job) { Ui.toast('작업자 이름과 작업명을 반드시 입력하세요.', 'error'); return; }
+      if (!worker) { Ui.toast('STEP 1 에서 먼저 로그인하세요 — 로그인 계정이 작업자 이름이 됩니다.', 'error'); return; }
+      if (!job) { Ui.toast('작업명을 입력하세요.', 'error'); return; }
       if (!fileEl.files || !fileEl.files[0]) { Ui.toast('엑셀 파일을 선택하세요.', 'error'); return; }
       setWorkerName(worker);
       var fd = new FormData();
@@ -5409,9 +5415,9 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
       content.appendChild(c.root);
     }
     section('🚀 시작하기 (4단계)',
-      '<div style="margin-bottom:6px;font-size:12.5px">좌측 맨 위 <b>🚀 시작하기</b> 메뉴가 이 4단계를 순서대로 안내하는 화면입니다 — 처음 접속(데이터 미설정) 시 자동으로 열리며, ① 로그인 → ② 작업자·작업명 입력 + 엑셀 업로드(저장하고 분석 시작) → ③ 분석 범위 선택(여러 회사/1개 회사) → ④ 분석 목적 선택 후 분석 시작 순서로 진행하면 됩니다. 완료된 단계는 ✔ 로 표시됩니다.</div>' +
+      '<div style="margin-bottom:6px;font-size:12.5px">좌측 맨 위 <b>🚀 시작하기</b> 메뉴가 이 4단계를 순서대로 안내하는 화면입니다 — 처음 접속(데이터 미설정) 시 자동으로 열리며, ① 로그인(팀명/이름은 여기 한 번만 입력 — 이 계정이 곧 작업자 이름) → ② 작업명 입력 + 엑셀 업로드(저장하고 분석 시작) → ③ 분석 범위 선택(여러 회사/1개 회사) → ④ 분석 목적 선택 후 분석 시작 순서로 진행하면 됩니다. 완료된 단계는 ✔ 로 표시됩니다.</div>' +
       '<ol style="padding-left:18px;line-height:1.9">' +
-      '<li><b>데이터 준비</b> — 🚀 시작하기 STEP 2 (또는 Settings &amp; Admin → "📤 엑셀 업로드")에서 <b>작업자 이름·작업명을 입력</b>하고 WIPS Excel 을 직접 올리면 서버에 저장되고 바로 분석 Dataset 으로 설정됩니다 (저장된 작업은 목록에서 언제든 다시 불러오기 가능). 또는 Flow 에 이미 있는 Dataset 을 선택해도 됩니다.</li>' +
+      '<li><b>데이터 준비</b> — 🚀 시작하기 STEP 2 (또는 Settings &amp; Admin → "📤 엑셀 업로드" — 같은 업로드입니다)에서 <b>작업명을 입력</b>하고 WIPS Excel 을 직접 올리면 서버에 저장되고 바로 분석 Dataset 으로 설정됩니다 (작업자 이름은 로그인 계정으로 자동 기록 — 별도 입력 없음. 저장된 작업은 목록에서 언제든 다시 불러오기 가능). 또는 Flow 에 이미 있는 Dataset 을 선택해도 됩니다. 업로드한 작업은 <b>내 계정 전용 선택</b>이라 다른 사용자가 나중에 파일을 올려도 내 분석 대상은 바뀌지 않습니다.</li>' +
       '<li><b>컬럼 매핑 확인</b> — Settings → 컬럼 매핑에서 자동 추천 결과를 확인하고, 잘못 잡힌 항목은 직접 수정 후 저장합니다. ' +
       '각 컬럼의 "예시 값"으로 실제 데이터를 확인할 수 있습니다. 기술 대·중·소분류 컬럼이 없는 파일도 IPC/CPC 만 있으면 자동 분류(섹션→클래스→서브클래스)로 기술 차트가 동작합니다.</li>' +
       '<li><b>분석 단위 선택</b> — 문헌(건별) 또는 패밀리 대표 중 선택합니다. 지정국 진입 시차 등 일부 분석은 문헌 단위가 필요합니다. <b>공동출원 집계 방식</b>(공동출원인 각각 집계 / 대표 출원인만)도 이 단계에서 Settings → 분석 설정으로 정해 두세요 — 출원인 순위·매트릭스·버블 등 출원인별 차트의 집계 기준이 됩니다.</li>' +
@@ -5421,7 +5427,7 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
       '<div class="disclaimer">모든 분석은 매핑된 실제 데이터로만 계산되며 값을 임의로 만들지 않습니다. 데이터가 없는 항목은 "계산 불가 + 사유"로 표시됩니다.</div>');
     section('🗺️ 메뉴 안내',
       '<table class="ipls-table"><thead><tr><th>메뉴</th><th>내용</th></tr></thead><tbody>' +
-      '<tr><td>🚀 시작하기</td><td>로그인 → 데이터 준비(작업자·작업명·엑셀 업로드) → 분석 범위 → 분석 목적·분석 시작을 순서대로 안내하는 단계별 화면. 데이터가 설정되지 않은 상태로 접속하면 자동으로 열립니다.</td></tr>' +
+      '<tr><td>🚀 시작하기</td><td>로그인(팀명/이름 한 번만 입력) → 데이터 준비(작업명·엑셀 업로드 — 작업자는 로그인 계정 자동) → 분석 범위 → 분석 목적·분석 시작을 순서대로 안내하는 단계별 화면. 데이터가 설정되지 않은 상태로 접속하면 자동으로 열립니다.</td></tr>' +
       '<tr><td>🎯 목적 맞춤 분석</td><td>분석 목적(기술 동향·경쟁사·R&amp;D 방향·White Space·특허 회피·FTO·포트폴리오·M&amp;A·국가 R&amp;D·라이선스) 선택 → 목적별 추천 차트를 우선순위·이유와 함께 표시, [열기]로 바로 이동. 특허 회피·FTO 목적에는 법률 자문 아님 고지가 함께 표시됩니다.</td></tr>' +
       '<tr><td>📊 Executive Overview</td><td>경영 요약(KPI·경보·BCG 매트릭스·경쟁 포지션) + 경영 차트 6종: 📅만료 절벽 / 💰R&amp;D 효율 사분면 / 👤키맨 리스크 / ⏱️추격 시계 / 🚨위협 레이더 / ✂️포트폴리오 다이어트. 탭마다 자사 기준을 선택할 수 있고(미선택 시 최다 출원인 자동), <b>"자사 선택 안 함 (중립 분석)"</b>을 고르면 자사 강조 없이 출원인들을 동등하게 비교합니다 — 이때 자사 관점 전용 섹션(키맨·추격·위협·다이어트, 전략 대시보드)은 사유와 함께 생략됩니다.</td></tr>' +
       '<tr><td>📈 전체 동향</td><td>포트폴리오 전체의 기본 현황: 연도별 출원 동향(출원인 선택 가능), 국가별 분포·<b>원천국(최우선출원국)→출원국 흐름</b>(기술이 어디서 시작해 어느 시장으로 전개되는지 — 셀 클릭 드릴다운)·출원인 순위·활동 매트릭스, 심화 분석(심사기간·만료 타임라인·청구항·공동출원 협력 네트워크·IPC/CPC 분포). 협력 네트워크는 선(두 회사) 또는 노드(기업) 클릭으로 공동출원 특허 목록(출원번호·출원인 전원·명칭·대표청구항)을 열 수 있고, IPC/CPC 차트는 분류 체계·매핑 컬럼과 코드별 한글 설명을 함께 표시합니다.</td></tr>' +
@@ -5449,7 +5455,7 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
       '<li><b>🤖 AI 인사이트 (차트별)</b>: 차트가 여러 개인 탭에서 "LLM 인사이트 생성 (차트별)" 버튼을 누르면 <b>차트 선택 체크리스트</b>가 열려 필요한 차트만 골라 생성할 수 있고(불필요한 LLM 호출 절약), 각 차트 아래의 <b>"🤖 이 차트 인사이트"</b> 버튼으로 그 차트 하나만 바로 생성할 수도 있습니다 — 결과는 해당 차트 바로 아래에 표시되고 보관함에 저장됩니다. 생성되는 인사이트는 그 차트의 수치·읽는 법을 근거로 <b>IP Landscape 전문 컨설턴트 수준의</b> 슬라이드 형식 인사이트를 만듭니다 — [슬라이드 제목]→[차트 요지](이 차트가 어떤 목적으로 무엇을 보여주는지 한 줄)→[핵심 메시지]→<b>[심층 해석]</b>(경쟁 구도·기술 수명주기 위치·진입장벽·변곡점·R&amp;D 전략 관점, "관찰 수치→해석→함의" 구조)→[근거 데이터]→[시사점·제언](단기/중기 우선순위 + 후속 분석 제안)→[유의사항]. 뻔한 차트 묘사가 아니라 "이 수치가 왜 중요한가"에 집중하며, 화면 데이터가 뒷받침하지 않는 해석은 쓰지 않도록 지시됩니다 (진행 표시 n/m). 각 차트 아래의 "💡 이 차트의 인사이트"는 LLM 없이 항상 표시되는 규칙 기반 요약입니다. AI 패널에서는 추가 질문(챗)이 가능하고 "웹 검색 포함"을 켜면 출처 링크와 함께 외부 검색을 참고합니다.</li>' +
       '<li><b>🗂️ 인사이트 보관함 → PPT</b>: 생성된 인사이트는 차트 이미지와 함께 작업별로 자동 저장됩니다 (기본은 현재 작업만 표시, 이전 작업은 버튼으로 선택). 항목을 골라 PPT 로 내려받으면 <b>1p 표지, 2p 목차, 이후 차트마다 [차트 페이지: 차트 + 바로 아래 "이 차트의 의미" 한 줄 캡션 → 다음 페이지: 나머지 인사이트 전체]</b> 순서로 들어가고, 카드에 차트가 여러 개면 전부 수록됩니다. 인사이트 페이지는 임원 보고용으로 디자인되어 있습니다 — 옅은 카드 패널 배경, ▎섹션 머리글, 핵심 메시지 ■ 네이비 강조 불릿, 시사점 ➤ 화살 불릿, 유의사항 별도 색상, 네이비 표지·페이지 번호 푸터·차트 비율 유지.</li>' +
       '<li><b>💾 분석 스냅샷</b>: Settings 의 "분석 스냅샷" 카드(또는 상단 헤더 저장 버튼)로 현재 분석 상태(Dataset·필터·분석 단위·보던 화면)를 이름 붙여 저장하고, 목록이나 헤더 드롭다운에서 선택해 그대로 복원할 수 있습니다. 데이터가 그대로면 결과는 서버 캐시에서 즉시 열립니다.</li>' +
-      '<li><b>👤 내 작업만 보기</b>: 업로드 작업·분석 스냅샷 목록에서 작업자 드롭다운으로 고르거나 이름/팀명을 직접 입력하면 내 작업만 날짜별로 표시됩니다. 이름은 브라우저에 기억되어 다음 방문 때 자동 적용되고, "전체 보기"로 다른 사람 작업도 볼 수 있습니다 (편의 필터 — 접근 차단은 Dataiku 권한으로 관리).</li>' +
+      '<li><b>👤 내 작업만 보기</b>: 업로드 작업·분석 스냅샷 목록은 기본으로 <b>내 로그인 계정</b> 작업만 표시됩니다 (작업자 이름=로그인 계정 자동 — 별도 입력 불필요). 다른 작업자를 보려면 드롭다운에서 고르거나 "전체 보기"를 켜세요. 또한 <b>분석 대상(Dataset) 선택은 계정별로 따로 기억</b>되므로, 다른 사용자가 동시에 파일을 올리거나 자기 작업을 선택해도 내 분석은 영향을 받지 않습니다.</li>' +
       '<li><b>비차단 로딩</b>: 계산이 오래 걸리는 분석은 우하단 배지로 진행 상태만 표시됩니다 — 기다리는 동안 다른 탭을 자유롭게 볼 수 있고, 돌아오면 캐시에서 바로 열립니다.</li>' +
       '<li><b>📑 한 화면 한 차트 (차트 페이저)</b>: 카드에 차트가 여러 개면 상단 페이저(◀ 이전 / 목록 선택 / 다음 ▶)로 <b>한 번에 한 차트씩</b> 크게 봅니다. 스크롤로 길게 나열되지 않아 각 차트에 집중할 수 있고, 예전처럼 세로로 모두 펼치려면 "전체 보기"를 켜세요 (선택은 브라우저에 기억됩니다). 차트 해석·인사이트·AI 패널은 페이지와 무관하게 항상 하단에 표시됩니다.</li>' +
       '<li><b>📖 차트 해석 · 접힌 설명</b>: 각 차트 아래 노란 박스에 축 의미와 읽는 법이 표시됩니다. 화면 정돈을 위해 <b>긴 해석·카드 설명은 2줄로 접혀</b> 있고, 박스를 클릭하면 전체가 펼쳐집니다(다시 클릭=접기). 상단의 기간·기업·분류 상세 필터도 기본 접힘 — <b>🔍 상세 필터</b> 버튼으로 열고, 적용 중인 필터 수는 버튼에 항상 표시됩니다.</li>' +
@@ -5497,14 +5503,17 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
 
     /* 엑셀 업로드 작업 저장소 */
     var cu = card('📤 엑셀 업로드 (작업 저장소)',
-      'WIPS Excel(xlsx/xls/csv)을 앱에서 직접 올려 바로 분석합니다. 작업자 이름과 작업명은 필수이며, ' +
+      'WIPS Excel(xlsx/xls/csv)을 앱에서 직접 올려 바로 분석합니다. 작업자는 로그인 계정으로 ' +
+      '자동 기록되고(별도 입력 없음 — 🚀 시작하기 STEP 2 와 같은 업로드입니다), 작업명은 필수입니다. ' +
       '업로드한 파일은 서버 저장소에 보관되어 아래 목록에서 언제든 다시 불러올 수 있습니다 ' +
       '(Backend 재시작 후에도 유지). 파일 60MB · 60,000행 이하, 첫 시트만 사용합니다. ' +
-      '아래 "내 작업 보기"에 이름/팀명을 입력하면 내가 올린 작업만 날짜별로 표시됩니다.');
+      '아래 "내 작업 보기"는 기본으로 내 로그인 계정 작업만 표시합니다.');
     grid.appendChild(cu.root);
     var upForm = Ui.el('<div>' +
-      '<div class="settings-row"><label>작업자 이름 *</label>' +
-      '<input type="text" id="up-worker" maxlength="60" placeholder="예: 홍길동" style="flex:1"></div>' +
+      '<div class="settings-row"><label>작업자</label>' +
+      '<input type="text" id="up-worker" maxlength="60" style="flex:1" readonly ' +
+      'title="로그인한 계정이 곧 작업자입니다 — 별도 입력이 필요 없습니다">' +
+      '<span style="font-size:11px;color:#93a5b4;white-space:nowrap">로그인 계정 자동</span></div>' +
       '<div class="settings-row"><label>작업명 *</label>' +
       '<input type="text" id="up-job" maxlength="120" placeholder="예: 2026 상반기 패키징 IP 조사" style="flex:1"></div>' +
       '<div class="settings-row"><label>엑셀 파일 *</label>' +
@@ -5524,6 +5533,7 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
     var listWrap = Ui.el('<div style="margin-top:8px"></div>');
     cu.body.appendChild(listWrap);
     upForm.querySelector('#up-worker').value = getWorkerName();
+    if (!Auth.user()) upForm.querySelector('#up-worker').removeAttribute('readonly');
     upFilt.querySelector('#up-filter').value = getWorkerName();
 
     function useDataset(name) {
@@ -5660,10 +5670,11 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
     });
     upFilt.querySelector('#up-showall').addEventListener('change', renderUploadList);
     upBtn.addEventListener('click', function () {
-      var worker = document.getElementById('up-worker').value.trim();
+      var worker = getWorkerName() || document.getElementById('up-worker').value.trim();
       var job = document.getElementById('up-job').value.trim();
       var fileEl = document.getElementById('up-file');
-      if (!worker || !job) { Ui.toast('작업자 이름과 작업명을 반드시 입력하세요.', 'error'); return; }
+      if (!worker) { Ui.toast('먼저 로그인하세요 — 로그인 계정이 작업자 이름이 됩니다.', 'error'); return; }
+      if (!job) { Ui.toast('작업명을 입력하세요.', 'error'); return; }
       if (!fileEl.files || !fileEl.files[0]) { Ui.toast('엑셀 파일을 선택하세요.', 'error'); return; }
       setWorkerName(worker);
       upFilt.querySelector('#up-filter').value = worker;
@@ -6275,9 +6286,14 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
   };
 
   /* ------------------------------------------- 작업자/팀명 (내 작업 필터) */
+  /* 작업자 정체성은 로그인 계정 하나로 통일한다 — 로그인 이름이 있으면 그것이
+     곧 작업자 이름이고(업로드·스냅샷·내 작업 필터 공통), 별도 입력을 받지
+     않는다. 로그인 전 저장분 호환을 위해 localStorage 값은 폴백으로만 쓴다. */
   /* Dataiku Webapp 은 별도 로그인 개념이 없으므로, 사용자가 입력한 작업자/팀명을
      브라우저(localStorage)에 기억해 '내 작업만 보기'의 기준으로 쓴다. */
   function getWorkerName() {
+    var u = (Auth.user() || '').trim();
+    if (u) return u;  // 로그인 이름 = 작업자 이름 (단일 소스)
     try { return (localStorage.getItem('ipls_worker') || '').trim(); } catch (e) { return ''; }
   }
   function setWorkerName(v) {

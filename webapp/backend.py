@@ -17368,7 +17368,7 @@ def compute_quality_report(df, settings):
 
 
 # 검증 리포트용 빌드 정보 (tools/build_backend.py 가 실측 집계)
-_QR_BUILD_INFO = {'built_at': '2026-09-09 01:57', 'modules': 46, 'test_functions': 290, 'test_files': 16, 'source': 'build'}
+_QR_BUILD_INFO = {'built_at': '2026-09-10 23:25', 'modules': 46, 'test_functions': 290, 'test_files': 16, 'source': 'build'}
 
 
 
@@ -17551,11 +17551,44 @@ def _guard_dataset_owner(name, explicit=True):
                           "다른 사용자 화면에는 영향을 주지 않습니다." % owner)
 
 
+def _my_filter_state(me):
+    """이 사용자의 마지막 필터 상태 — 계정별(_by_user) 우선, 없으면 레거시 루트."""
+    state = storage.load_filter_state() or {}
+    by_user = state.get("_by_user") if isinstance(state.get("_by_user"), dict) else {}
+    if me and str(me) in by_user:
+        return by_user.get(str(me)) or {}
+    return {k: v for k, v in state.items() if k != "_by_user"}
+
+
+def _own_latest_upload(me):
+    """이 사용자가 소유한 가장 최근 업로드의 dataset 이름 (적재 가능한 것만).
+
+    전역 선택이 다른 사용자의 작업으로 바뀌어도, 본인 업로드가 있으면 오류 벽
+    대신 그 작업으로 자동 전환하기 위한 폴백이다.
+    """
+    if not me:
+        return None
+    items = [it for it in (storage.load_uploads().get("items") or [])
+             if it.get("owner") == me]
+    items.sort(key=lambda it: str(it.get("uploaded_at") or ""), reverse=True)
+    for it in items:
+        name = str(it.get("dataset") or "")
+        if not name:
+            continue
+        if validate_dataset_name(name) is None:
+            uploads_ensure_loaded(name)
+        if validate_dataset_name(name) is not None:
+            return name
+    return None
+
+
 def _resolve_dataset(body):
     """요청/설정에서 dataset 결정. demo_mode 면 데모 데이터 주입.
 
     우선순위: 요청 body → 로그인 사용자의 개인 선택(user_datasets) → 전역 설정.
     개인 선택 덕분에 다른 사용자가 파일을 올려도 내 분석 대상은 바뀌지 않는다.
+    전역 폴백이 다른 사용자의 업로드를 가리키면(내 개인 선택이 없거나 사라진
+    경우) 본인 최근 업로드로 자동 전환해 작업 중 오류 벽을 만들지 않는다.
     업로드 dataset(upload__…)이 Backend 재시작으로 내려간 경우 저장 파일에서
     자동 재적재한다.
     """
@@ -17585,7 +17618,21 @@ def _resolve_dataset(body):
         valid = validate_dataset_name(name)
     if valid is None:
         raise LookupError("허용되지 않은 Dataset 입니다: %s" % name)
-    _guard_dataset_owner(valid, explicit=bool(body_name))
+    if body_name:
+        _guard_dataset_owner(valid, explicit=True)
+    else:
+        owner = _dataset_owner(valid)
+        if owner and not auth_can_see(owner, me):
+            own = _own_latest_upload(me)
+            if own:
+                # 전역/이전 선택이 다른 사용자의 작업 → 본인 최근 업로드로
+                # 자동 전환하고 개인 선택으로 기록 (작업 중 오류 벽 제거)
+                um = storage.load_user_datasets()
+                um[me] = own
+                storage.save_user_datasets(um)
+                valid = own
+            else:
+                _guard_dataset_owner(valid, explicit=False)
     return valid, settings
 
 
@@ -17716,14 +17763,19 @@ def register_routes(app):
         me = _req_user()
         per = (storage.load_user_datasets() or {}).get(me) if me else None
         dataset = per or settings.get("dataset")
-        # 전역 선택이 다른 사용자의 업로드라면 이 사용자에게는 '미선택'으로
-        # 안내 — 화면이 접근 차단 오류로 도배되는 대신 🚀 시작하기로 유도
+        # 전역 선택이 다른 사용자의 업로드라면: 본인 최근 업로드가 있으면 그
+        # 작업으로 자동 전환(작업 중 오류 벽 제거), 없으면 '미선택'으로 안내 —
+        # 화면이 접근 차단 오류로 도배되는 대신 🚀 시작하기로 유도
         blocked_owner = None
         if dataset and not settings.get("demo_mode"):
             owner = _dataset_owner(dataset)
             if owner and not auth_can_see(owner, me):
-                blocked_owner = owner
-                dataset = None
+                own = _own_latest_upload(me)
+                if own:
+                    dataset = own
+                else:
+                    blocked_owner = owner
+                    dataset = None
         availability, mapping = {}, {}
         if settings.get("demo_mode") and not dataset:
             dataset = DEMO_DATASET_NAME
@@ -17756,7 +17808,7 @@ def register_routes(app):
                 "transition_modes": TRANSITION_MODES,
                 "limits_defaults": LIMITS, "thresholds_defaults": THRESHOLDS,
                 "weights_defaults": WEIGHTS,
-                "run_log": get_run_log(50), "filter_state": storage.load_filter_state(),
+                "run_log": get_run_log(50), "filter_state": _my_filter_state(me),
                 "disclaimer": MESSAGES["disclaimer"]}
 
     @app.route("/api/datasets", methods=["GET"])
@@ -18220,6 +18272,7 @@ def register_routes(app):
                     "settings": {k: v for k, v in s.items() if k != "llm_id"}}
         body = json_body()
         current = storage.load_settings() or {}
+        prev_dataset = current.get("dataset")
         allowed_keys = set(DEFAULT_SETTINGS.keys()) | {"llm_label"}
         for k, v in body.items():
             if k not in allowed_keys:
@@ -18247,21 +18300,36 @@ def register_routes(app):
                 if validate_dataset_name(v) is None:
                     return _error(400, "허용되지 않은 Dataset: %s" % v)
             current[k] = v
-        storage.save_settings(current)
-        # Dataset 선택은 사용자별로도 기억 — 다른 사용자가 나중에 파일을 올려
-        # 전역 선택이 바뀌어도 내 분석 대상은 유지된다 (분석은 개인 선택 우선)
+        # Dataset 선택은 사용자별로 기억 — 다른 사용자가 나중에 파일을 올려도
+        # 내 분석 대상은 유지된다 (분석은 개인 선택 우선). 반대로 내 선택이
+        # 다른 사용자의 전역 폴백을 뒤집지 않도록, 로그인한 일반 사용자의
+        # 선택은 개인 기록에만 반영하고 전역(settings.dataset)은
+        # ① 관리자이거나 ② 전역이 비어 있거나 ③ 전역이 내 소유 업로드일
+        # 때만 갱신한다 — "다른 사람이 작업 중이라 진행이 안 됨" 재발 방지.
         if "dataset" in body:
             me = _req_user()
+            new_dataset = current.get("dataset")
             if me:
                 um = storage.load_user_datasets()
-                um[me] = current.get("dataset")
+                um[me] = new_dataset
                 storage.save_user_datasets(um)
+                if not auth_is_admin(me) and prev_dataset and \
+                        prev_dataset != new_dataset:
+                    prev_owner = _dataset_owner(prev_dataset)
+                    if prev_owner != me:
+                        current["dataset"] = prev_dataset  # 전역 유지
+        storage.save_settings(current)
         # 분석 목적은 계산에 영향이 없으므로 목적만 바뀐 요청은 캐시 유지
         touched = {k for k in body if k in allowed_keys}
         if touched - {"analysis_purpose"}:
             clear_all_caches()
         s = merged_settings(current)
-        return {"status": "ok", "settings": {k: v for k, v in s.items() if k != "llm_id"}}
+        out = {k: v for k, v in s.items() if k != "llm_id"}
+        if "dataset" in body and _req_user():
+            # 응답은 요청자 기준 유효 선택(개인 기록)을 보여준다 — 전역 보호로
+            # settings.dataset 이 이전 값으로 유지되어도 내 화면은 내 작업
+            out["dataset"] = (storage.load_user_datasets() or {}).get(_req_user())
+        return {"status": "ok", "settings": out}
 
     @app.route("/api/applicant-rules", methods=["GET", "POST"])
     @wrap
@@ -18385,8 +18453,25 @@ def register_routes(app):
     @app.route("/api/filter-state", methods=["POST"])
     @wrap
     def api_filter_state():
-        """POST {"filters":{...}} → 마지막 필터 상태 저장 (재방문 시 복원)."""
-        storage.save_filter_state((json_body() or {}).get("filters") or {})
+        """POST {"filters":{...}} → 마지막 필터 상태 저장 (재방문 시 복원).
+
+        로그인 사용자는 계정별(_by_user)로 저장한다 — 전역 하나만 쓰면 다른
+        사용자가 적용한 필터가 내 재방문 화면에 복원되는 간섭이 생긴다.
+        비로그인(레거시)은 기존처럼 루트에 저장하되 계정별 기록은 보존한다.
+        """
+        me = _req_user()
+        filters = (json_body() or {}).get("filters") or {}
+        state = storage.load_filter_state() or {}
+        by_user = state.get("_by_user") if isinstance(state.get("_by_user"), dict) \
+            else {}
+        if me:
+            by_user[str(me)] = filters
+            state["_by_user"] = by_user
+        else:
+            state = dict(filters)
+            if by_user:
+                state["_by_user"] = by_user
+        storage.save_filter_state(state)
         return {"status": "ok"}
 
     # ---------------- 접속자 관리 (앱 수준 편의 접근 제어) ----------------
@@ -18468,6 +18553,12 @@ def register_routes(app):
                                             owner=me)
         except ValueError as e:
             return _error(400, str(e))
+        if me:
+            # 업로드 즉시 업로더의 개인 선택으로 기록 — 후속 settings 호출이
+            # 실패해도 본인 작업으로 분석이 이어진다 (전역 선택은 건드리지 않음)
+            um = storage.load_user_datasets()
+            um[me] = entry.get("dataset")
+            storage.save_user_datasets(um)
         clear_all_caches()
         items = [it for it in uploads_list()
                  if auth_can_see(it.get("owner"), me)]
@@ -18485,6 +18576,10 @@ def register_routes(app):
                 return _error(403, "'%s' 사용자의 작업입니다 — 본인 작업만 불러올 수 "
                                    "있습니다 (관리자 예외)." % it.get("owner"))
         entry = uploads_load(uid)
+        if me:
+            um = storage.load_user_datasets()
+            um[me] = entry.get("dataset")
+            storage.save_user_datasets(um)
         clear_all_caches()
         return {"status": "ok", "entry": entry}
 
