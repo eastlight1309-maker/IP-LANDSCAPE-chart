@@ -4005,7 +4005,7 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
       { label: '기술 DNA', render: function (h) {
         analysisCard({
           analysis: 'company-dna', holder: h, title: '경쟁사 기술 DNA Fingerprint',
-          help: '12개 지표(집중도 HHI/다양성 entropy/신규진입률/조합다양성/패밀리규모/해외범위/등록유지율/평균피인용/후속출원/공동출원/발명자집중도/최근성장률). 축 값 = 원값 ÷ 비교 모집단 최대값(예: 패밀리 6.4 vs 4.0 → 1.00 vs 0.63) — 상대적으로 낮다고 0으로 붕괴하지 않습니다. Hover 에 원값·표준화값 동시 표시.',
+          help: '12개 지표(집중도 HHI/다양성 entropy/신규진입률/조합다양성/패밀리규모/해외범위/등록유지율/평균피인용/후속출원/공동출원/발명자집중도/최근성장률). 축 값 = 원값 ÷ 비교 모집단 최대값(예: 패밀리 6.4 vs 4.0 → 1.00 vs 0.63) — 상대적으로 낮다고 0으로 붕괴하지 않습니다. 상단 "회사 추가…"로 분석 대상 출원인을 직접 고르면 그 출원인들만으로 계산·표준화되어, 선택하지 않은 공동출원 상대(대학·파트너 등)가 그래프에 영향을 주지 않습니다. Hover 에 원값·표준화값 동시 표시.',
           renderOk: function (r, c, setTarget) {
             if (r.definitions) c.body.appendChild(definitionsTable(r.definitions));
             if (r.normalization_note) {

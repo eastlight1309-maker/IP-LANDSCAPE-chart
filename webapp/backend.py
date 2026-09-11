@@ -8951,11 +8951,12 @@ def compute_company_dna(df, settings, companies=None):
     if not wanted:
         return empty_result("최소 표본(%d건) 이상의 기업이 없습니다." % int(min_n))
 
-    # 표준화 모집단: 선택 기업이 아니라 데이터셋 상위 기업군(최대 30) ∪ 선택
-    # 기업으로 고정 — 2개사만 골라도 min-max 가 두 회사를 1/0 극값으로 강제하지
-    # 않으며(예: 패밀리 6.4 vs 4.0), 회사 선택이 표준화 값·유형 판정을 바꾸지
-    # 않는다 (전체 보기와 동일한 값).
-    pool = list(dict.fromkeys(pool_all[:30] + wanted))
+    # 표준화 모집단 = 화면에 표시되는 기업들과 동일.
+    # 회사를 직접 선택하면 '그 출원인들만'으로 계산·표준화한다 — 선택하지 않은
+    # 공동출원 상대(대학·파트너 등)가 최대값 기준에 끼어들어 그래프를 왜곡하지
+    # 않는다 (사용자 요청). 값÷최대(ratio-to-max) 방식이라 소수 기업 선택에도
+    # 최소값이 0 으로 강제되지 않는다 (예: 패밀리 6.4 vs 4.0 → 1.00 vs 0.63).
+    pool = list(wanted)
 
     # 회사별 문헌 = 공동출원 포함 membership (공동출원 1건이 양쪽 회사 지표에
     # 모두 반영 — '각각 집계' 원칙과 일치)
@@ -9065,16 +9066,24 @@ def compute_company_dna(df, settings, companies=None):
                       "companies": companies_payload, "metric_labels": dict(DNA_METRICS),
                       "definitions": DNA_DEFINITIONS,
                       "normalization_note":
-                          "레이더/히트맵/평행좌표의 축 값 = 원값 ÷ 모집단 최대값 "
-                          "(최대 기업=1). 실제 비율이 그대로 유지되어, 예를 들어 "
-                          "패밀리 규모 6.4 vs 4.0 이면 1.00 vs 0.63 으로 표시됩니다 "
-                          "(최소값이 0 으로 강제되지 않음). 음수(감소 성장률)만 0 "
-                          "으로 표시되며 원값은 hover 와 기업 표에서 확인할 수 "
-                          "있습니다. 모집단은 회사 선택과 무관하게 데이터셋 상위 "
-                          "기업군(최대 30개사)으로 고정 — 몇 개사를 골라도 값은 "
-                          "전체 보기와 동일합니다. 출원인 집계는 공동출원 설정을 "
-                          "따릅니다(기본: 각각 집계). 유형 분류는 표준화 점수 ≥ "
-                          "cutoff(Settings 조정 가능) 규칙의 첫 매칭입니다.",
+                          ("레이더/히트맵/평행좌표의 축 값 = 원값 ÷ 비교 모집단 "
+                           "최대값 (최대 기업=1). 실제 비율이 그대로 유지되어, 예를 "
+                           "들어 패밀리 규모 6.4 vs 4.0 이면 1.00 vs 0.63 으로 "
+                           "표시됩니다 (최소값이 0 으로 강제되지 않음). 음수(감소 "
+                           "성장률)만 0 으로 표시되며 원값은 hover 와 기업 표에서 "
+                           "확인할 수 있습니다. "
+                           + ("비교 모집단 = 지금 선택한 기업 %d개사만 — 선택하지 "
+                              "않은 공동출원 상대(대학·파트너 등)는 계산·표준화에서 "
+                              "완전히 제외됩니다. 유형 분류도 이 기업들 사이의 상대 "
+                              "위치 기준입니다." % len(wanted) if companies else
+                              "비교 모집단 = 데이터셋 상위 기업군(최대 30개사). 상단 "
+                              "'회사 추가…'로 기업을 직접 고르면 그 출원인들만으로 "
+                              "다시 계산·표준화됩니다.")
+                           + " 출원인 집계는 공동출원 설정을 따릅니다(기본: 각각 "
+                           "집계 — 공동출원 특허는 그 회사의 특허로 포함되며, 대표 "
+                           "출원인 건만 보려면 Settings 의 공동출원 집계를 '대표 "
+                           "출원인만'으로 바꾸세요). 유형 분류는 표준화 점수 ≥ "
+                           "cutoff(Settings 조정 가능) 규칙의 첫 매칭입니다."),
                       "similarity": sim_matrix, "overlap": overlap_matrix},
                      insight=insight)
 
@@ -17456,7 +17465,7 @@ def compute_quality_report(df, settings):
 
 
 # 검증 리포트용 빌드 정보 (tools/build_backend.py 가 실측 집계)
-_QR_BUILD_INFO = {'built_at': '2026-09-11 04:51', 'modules': 46, 'test_functions': 293, 'test_files': 16, 'source': 'build'}
+_QR_BUILD_INFO = {'built_at': '2026-09-11 05:02', 'modules': 46, 'test_functions': 293, 'test_files': 16, 'source': 'build'}
 
 
 

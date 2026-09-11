@@ -2213,11 +2213,12 @@ def test_company_focus_new_entry_honest_with_unknown_years(settings):
     assert "HIDDEN_OLD" in all_techs
 
 
-def test_company_dna_std_selection_invariant(settings):
-    """DNA Fingerprint: 회사 선택이 표준화 값·유형 판정을 바꾸지 않는다.
+def test_company_dna_selection_scoped(settings):
+    """DNA Fingerprint: 회사를 선택하면 '그 출원인들만'으로 계산·표준화한다.
 
-    2개사만 선택했을 때 min-max 가 두 회사를 1/0 극값으로 강제하던 문제의
-    회귀 테스트 — 표준화 모집단은 데이터셋 상위 기업군으로 고정된다.
+    사용자 요청 회귀 — 4개사만 고르고 싶은데 선택하지 않은 공동출원 상대까지
+    표준화 모집단에 끼어들어 그래프가 왜곡되던 문제. 선택 시 모집단=선택 기업.
+    ratio-to-max 방식이라 소수 선택에도 최소값이 0 으로 강제되지 않는다.
     """
     from src.analyses.company_dna import compute_company_dna
     df = make_prepared(generate_sample(n=500, seed=42))
@@ -2227,15 +2228,25 @@ def test_company_dna_std_selection_invariant(settings):
     a, b = by_fam[0], by_fam[len(by_fam) // 2]
     sel = compute_company_dna(df, settings,
                               companies=[a["company"], b["company"]])
+    # 표시는 선택 기업만
+    assert [p["company"] for p in sel["companies"]] == [a["company"], b["company"]]
     sp = {p["company"]: p for p in sel["companies"]}
-    assert sp[a["company"]]["std"] == a["std"]
-    assert sp[b["company"]]["std"] == b["std"]
-    assert sp[a["company"]]["type"] == a["type"]
-    assert sp[b["company"]]["type"] == b["type"]
-    # 중간 순위 회사가 0.0 으로 강제되지 않음 (모집단 기준 위치 유지)
+    # 원값(raw)은 선택과 무관하게 동일 (회사별 실측 지표)
+    assert sp[a["company"]]["raw"] == a["raw"]
+    assert sp[b["company"]]["raw"] == b["raw"]
+    # 표준화는 선택 기업 기준: 두 회사 중 패밀리 최대인 a 가 1.0,
+    # b 는 실제 비율 (0 강제 없음)
+    assert sp[a["company"]]["std"]["family_size"] == 1.0
+    fa = a["raw"]["family_size"] or 0.0
+    fb = b["raw"]["family_size"] or 0.0
+    assert abs(sp[b["company"]]["std"]["family_size"] - round(fb / fa, 4)) < 1e-3
     assert sp[b["company"]]["std"]["family_size"] > 0.0
+    # 선택하지 않은 기업(공동출원 상대 포함)은 유사도·중첩 행렬에도 없음
+    if sel["similarity"]:
+        assert set(sel["similarity"]["data"][0]["x"]) <= {a["company"], b["company"]}
     # 표준화 기준이 화면 안내문에 명시됨
-    assert "모집단" in sel["normalization_note"]
+    assert "선택한 기업" in sel["normalization_note"]
+    assert "모집단" in full["normalization_note"]
 
 
 def test_keyman_excludes_joint_filing_inventors(settings):
