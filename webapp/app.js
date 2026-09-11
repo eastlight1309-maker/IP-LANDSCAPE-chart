@@ -1661,7 +1661,8 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
       upBtn.disabled = true;
       Api.upload('/api/uploads', fd, '엑셀 업로드·저장 중…').then(function (r) {
         Ui.toast('업로드 완료: ' + r.entry.n_rows + '행 저장됨.');
-        return afterDataset(r.entry.dataset);
+        // 시트가 여러 개면 분석할 시트를 고르게 한 뒤 진행 (재업로드 불필요)
+        sheetChooser(r.entry, function (en) { afterDataset(en.dataset); });
       }).catch(errToast).finally(function () { upBtn.disabled = false; });
     });
     // 저장된 작업 다시 불러오기 (내 작업 우선 표시)
@@ -5434,7 +5435,7 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
     section('🚀 시작하기 (4단계)',
       '<div style="margin-bottom:6px;font-size:12.5px">좌측 맨 위 <b>🚀 시작하기</b> 메뉴가 이 4단계를 순서대로 안내하는 화면입니다 — 처음 접속(데이터 미설정) 시 자동으로 열리며, ① 로그인(팀명/이름은 여기 한 번만 입력 — 이 계정이 곧 작업자 이름) → ② 작업명 입력 + 엑셀 업로드(저장하고 분석 시작) → ③ 분석 범위 선택(여러 회사/1개 회사) → ④ 분석 목적 선택 후 분석 시작 순서로 진행하면 됩니다. 완료된 단계는 ✔ 로 표시됩니다.</div>' +
       '<ol style="padding-left:18px;line-height:1.9">' +
-      '<li><b>데이터 준비</b> — 🚀 시작하기 STEP 2 (또는 Settings &amp; Admin → "📤 엑셀 업로드" — 같은 업로드입니다)에서 <b>작업명을 입력</b>하고 WIPS Excel 을 직접 올리면 서버에 저장되고 바로 분석 Dataset 으로 설정됩니다 (작업자 이름은 로그인 계정으로 자동 기록 — 별도 입력 없음. 저장된 작업은 목록에서 언제든 다시 불러오기 가능). 또는 Flow 에 이미 있는 Dataset 을 선택해도 됩니다. 업로드한 작업은 <b>내 계정 전용 선택</b>이라 다른 사용자가 나중에 파일을 올려도 내 분석 대상은 바뀌지 않습니다.</li>' +
+      '<li><b>데이터 준비</b> — 🚀 시작하기 STEP 2 (또는 Settings &amp; Admin → "📤 엑셀 업로드" — 같은 업로드입니다)에서 <b>작업명을 입력</b>하고 WIPS Excel 을 직접 올리면 서버에 저장되고 바로 분석 Dataset 으로 설정됩니다 (작업자 이름은 로그인 계정으로 자동 기록 — 별도 입력 없음. 저장된 작업은 목록에서 언제든 다시 불러오기 가능). <b>시트가 여러 개인 엑셀</b>은 업로드 직후 분석할 시트를 고르는 창이 뜨고, Settings 의 작업 목록 "시트" 열에서도 재업로드 없이 다른 시트로 전환할 수 있습니다. 또는 Flow 에 이미 있는 Dataset 을 선택해도 됩니다. 업로드한 작업은 <b>내 계정 전용 선택</b>이라 다른 사용자가 나중에 파일을 올려도 내 분석 대상은 바뀌지 않습니다.</li>' +
       '<li><b>컬럼 매핑 확인</b> — Settings → 컬럼 매핑에서 자동 추천 결과를 확인하고, 잘못 잡힌 항목은 직접 수정 후 저장합니다. ' +
       '각 컬럼의 "예시 값"으로 실제 데이터를 확인할 수 있습니다. 기술 대·중·소분류 컬럼이 없는 파일도 IPC/CPC 만 있으면 자동 분류(섹션→클래스→서브클래스)로 기술 차트가 동작합니다.</li>' +
       '<li><b>분석 단위 선택</b> — 문헌(건별) 또는 패밀리 대표 중 선택합니다. 지정국 진입 시차 등 일부 분석은 문헌 단위가 필요합니다. <b>공동출원 집계 방식</b>(공동출원인 각각 집계 / 대표 출원인만)도 이 단계에서 Settings → 분석 설정으로 정해 두세요 — 출원인 순위·매트릭스·버블 등 출원인별 차트의 집계 기준이 됩니다.</li>' +
@@ -5523,7 +5524,9 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
       'WIPS Excel(xlsx/xls/csv)을 앱에서 직접 올려 바로 분석합니다. 작업자는 로그인 계정으로 ' +
       '자동 기록되고(별도 입력 없음 — 🚀 시작하기 STEP 2 와 같은 업로드입니다), 작업명은 필수입니다. ' +
       '업로드한 파일은 서버 저장소에 보관되어 아래 목록에서 언제든 다시 불러올 수 있습니다 ' +
-      '(Backend 재시작 후에도 유지). 파일 60MB · 60,000행 이하, 첫 시트만 사용합니다. ' +
+      '(Backend 재시작 후에도 유지). 파일 60MB · 60,000행 이하. 시트가 여러 개인 엑셀은 ' +
+      '업로드 직후 분석할 시트를 고를 수 있고, 아래 목록의 "시트" 열에서 언제든 다른 ' +
+      '시트로 전환할 수 있습니다 (재업로드 불필요). ' +
       '아래 "내 작업 보기"는 기본으로 내 로그인 계정 작업만 표시합니다.');
     grid.appendChild(cu.root);
     var upForm = Ui.el('<div>' +
@@ -5599,7 +5602,7 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
             return (String(x.uploaded_at || '').slice(0, 10) || '날짜 미상') === dstr;
           }).length;
           var sep = document.createElement('tr');
-          sep.innerHTML = '<td colspan="6" style="background:#eef5fa;font-weight:700;' +
+          sep.innerHTML = '<td colspan="7" style="background:#eef5fa;font-weight:700;' +
             'font-size:11.5px;color:#4a6274">📅 ' + Ui.esc(dstr) + ' (' + nDay + '건)</td>';
           rows.push(sep);
         }
@@ -5612,6 +5615,32 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
             '<td class="num">' + Ui.num(it.n_rows, 0) + '행</td>' +
             '<td>' + (it.loaded ? '<span class="badge good">로드됨</span>' :
               (it.file_exists ? '' : '<span class="badge warn">파일 없음</span>')) + '</td>');
+          // 시트 열: 다중 시트 엑셀이면 드롭다운으로 분석 시트 전환 (재업로드 불필요)
+          var tdSheet = document.createElement('td');
+          if ((it.sheets || []).length > 1) {
+            var shSel = document.createElement('select');
+            shSel.style.maxWidth = '130px';
+            it.sheets.forEach(function (s) {
+              var o = document.createElement('option');
+              o.value = s; o.textContent = s;
+              if (s === it.sheet) o.selected = true;
+              shSel.appendChild(o);
+            });
+            shSel.disabled = !it.file_exists;
+            shSel.addEventListener('change', function () {
+              Api.post('/api/uploads/sheet', { id: it.id, sheet: shSel.value },
+                       '시트 재해석 중…').then(function (r) {
+                Ui.toast('시트 "' + shSel.value + '" 기준 ' +
+                  Ui.num(r.entry.n_rows, 0) + '행으로 변경되었습니다.');
+                renderUploads();
+                boot(true);
+              }).catch(function (e) { errToast(e); renderUploads(); });
+            });
+            tdSheet.appendChild(shSel);
+          } else {
+            tdSheet.textContent = it.sheet || '-';
+          }
+          tr.appendChild(tdSheet);
           var tdAct = document.createElement('td');
           tdAct.style.whiteSpace = 'nowrap';
           var loadBtn = Ui.el('<button class="btn small">불러와 분석</button>');
@@ -5634,7 +5663,7 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
           tr.appendChild(tdAct);
           rows.push(tr);
         });
-      var tbl = Ui.el(simpleTable(['작업명 / 파일', '작업자', '업로드 시각', '행수', '상태', ''], []));
+      var tbl = Ui.el(simpleTable(['작업명 / 파일', '작업자', '업로드 시각', '행수', '상태', '시트', ''], []));
       rows.forEach(function (tr) { tbl.querySelector('tbody').appendChild(tr); });
       var wrap = Ui.el('<div style="overflow-x:auto;max-height:280px;overflow-y:auto"></div>');
       wrap.appendChild(tbl);
@@ -5703,8 +5732,11 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
       Api.upload('/api/uploads', fd, '엑셀 업로드·저장 중…').then(function (r) {
         Ui.toast('업로드 완료: ' + r.entry.n_rows + '행 저장됨.');
         fileEl.value = '';
-        renderUploads();
-        return useDataset(r.entry.dataset);
+        // 시트가 여러 개면 분석할 시트를 고르게 한 뒤 진행 (재업로드 불필요)
+        sheetChooser(r.entry, function (en) {
+          renderUploads();
+          useDataset(en.dataset);
+        });
       }).catch(errToast).finally(function () { upBtn.disabled = false; });
     });
     renderUploads();
@@ -6322,6 +6354,48 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
     if (!q) return true;
     if (!w) return false;
     return w.indexOf(q) !== -1 || q.indexOf(w) !== -1;
+  }
+
+  /* ------------------------------------------- 업로드 시트 선택 */
+  /* 엑셀에 시트가 여러 개면 업로드 직후 분석할 시트를 고르게 한다.
+     파일은 이미 서버에 저장되어 있으므로 재업로드 없이 재해석만 한다. */
+  function sheetChooser(entry, done) {
+    var sheets = (entry && entry.sheets) || [];
+    if (sheets.length < 2) { done(entry); return; }
+    var ov = Ui.el('<div style="position:fixed;inset:0;background:rgba(15,35,55,.45);' +
+      'z-index:1200;display:flex;align-items:center;justify-content:center"></div>');
+    var box = Ui.el('<div style="background:#fff;border-radius:12px;padding:18px 20px;' +
+      'max-width:440px;width:92%;box-shadow:0 12px 40px rgba(0,0,0,.28)">' +
+      '<div style="font-weight:700;font-size:14px;margin-bottom:6px">📑 분석할 시트 선택</div>' +
+      '<div style="font-size:12.5px;color:#46607a;margin-bottom:10px">이 엑셀에는 시트가 ' +
+      sheets.length + '개 있습니다. 현재 <b>' + Ui.esc(entry.sheet || sheets[0]) +
+      '</b> 시트 기준 ' + Ui.num(entry.n_rows, 0) + '행이 해석되었습니다. 다른 시트를 ' +
+      '고르면 그 시트로 다시 해석합니다 (나중에 Settings 작업 목록에서도 변경 가능).</div>' +
+      '<select id="sheet-pick" style="width:100%"></select>' +
+      '<div style="display:flex;gap:8px;margin-top:14px;justify-content:flex-end">' +
+      '<button class="btn small primary" id="sheet-ok">이 시트로 분석 시작</button>' +
+      '</div></div>');
+    var sel = box.querySelector('#sheet-pick');
+    sheets.forEach(function (s) {
+      var o = document.createElement('option');
+      o.value = s;
+      o.textContent = s + (s === (entry.sheet || sheets[0]) ? ' (현재 해석됨)' : '');
+      if (s === (entry.sheet || sheets[0])) o.selected = true;
+      sel.appendChild(o);
+    });
+    ov.appendChild(box);
+    document.body.appendChild(ov);
+    box.querySelector('#sheet-ok').addEventListener('click', function () {
+      var picked = sel.value;
+      if (!picked || picked === entry.sheet) { ov.remove(); done(entry); return; }
+      Api.post('/api/uploads/sheet', { id: entry.id, sheet: picked },
+               '시트 "' + picked + '" 재해석 중…').then(function (r) {
+        Ui.toast('시트 "' + picked + '" 기준 ' + Ui.num(r.entry.n_rows, 0) +
+          '행이 분석 대상으로 설정되었습니다.');
+        ov.remove();
+        done(r.entry);
+      }).catch(function (e) { errToast(e); /* 대화상자는 유지 — 다른 시트 재시도 */ });
+    });
   }
 
   /* ------------------------------------------- 분석 스냅샷 (프로젝트) */

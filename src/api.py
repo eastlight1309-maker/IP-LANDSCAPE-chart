@@ -79,6 +79,7 @@ from src.auth import (login as auth_login, verify_token as auth_verify_token,
 from src.uploads import (save_upload as uploads_save, list_uploads as uploads_list,
                          load_upload as uploads_load,
                          delete_upload as uploads_delete,
+                         set_sheet as uploads_set_sheet,
                          ensure_loaded as uploads_ensure_loaded)
 from src.insight_store import (add_insight, list_insights, delete_insight,
                                get_insights, build_pptx,
@@ -1200,10 +1201,12 @@ def register_routes(app):
         """엑셀 업로드 작업 저장소.
 
         GET → {"items":[{id,worker,job,orig_filename,dataset,uploaded_at,
-               n_rows,n_cols,loaded,file_exists}...]} (최신순).
+               n_rows,n_cols,sheet,sheets,loaded,file_exists}...]} (최신순).
         POST multipart form: file(필수), worker(작업자 이름, 필수),
-             job(작업명, 필수) → 파일을 서버 저장소에 보관하고 메타데이터를
-             영속화하며 즉시 분석 dataset 으로 등록.
+             job(작업명, 필수), sheet(시트명, 선택 — 미지정 시 첫 시트)
+             → 파일을 서버 저장소에 보관하고 메타데이터를 영속화하며 즉시
+             분석 dataset 으로 등록. entry.sheets 로 시트 목록을 돌려주므로
+             업로드 후 /api/uploads/sheet 로 다른 시트로 전환할 수 있다.
         오류 400: 작업자/작업명 누락, 형식·크기 위반, 해석 불가.
         """
         me = _req_user()
@@ -1219,7 +1222,8 @@ def register_routes(app):
             entry = uploads_save(f.read(), f.filename,
                                             request.form.get("worker"),
                                             request.form.get("job"),
-                                            owner=me)
+                                            owner=me,
+                                            sheet=request.form.get("sheet"))
         except ValueError as e:
             return _error(400, str(e))
         if me:
@@ -1245,6 +1249,32 @@ def register_routes(app):
                 return _error(403, "'%s' 사용자의 작업입니다 — 본인 작업만 불러올 수 "
                                    "있습니다 (관리자 예외)." % it.get("owner"))
         entry = uploads_load(uid)
+        if me:
+            um = storage.load_user_datasets()
+            um[me] = entry.get("dataset")
+            storage.save_user_datasets(um)
+        clear_all_caches()
+        return {"status": "ok", "entry": entry}
+
+    @app.route("/api/uploads/sheet", methods=["POST"])
+    @wrap
+    def api_uploads_sheet():
+        """POST {"id","sheet"} → 저장된 엑셀 작업의 분석 시트 변경 (재해석).
+
+        dataset 이름은 유지된다. 본인 작업(또는 관리자)만 변경 가능.
+        """
+        body = json_body()
+        uid = body.get("id")
+        me = _req_user()
+        for it in uploads_list():
+            if str(it.get("id")) == str(uid) and \
+                    not auth_can_see(it.get("owner"), me):
+                return _error(403, "'%s' 사용자의 작업입니다 — 본인 작업의 시트만 "
+                                   "변경할 수 있습니다 (관리자 예외)." % it.get("owner"))
+        try:
+            entry = uploads_set_sheet(uid, body.get("sheet"))
+        except ValueError as e:
+            return _error(400, str(e))
         if me:
             um = storage.load_user_datasets()
             um[me] = entry.get("dataset")

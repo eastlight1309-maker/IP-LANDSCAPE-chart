@@ -3573,8 +3573,21 @@ def _slug(text, limit=24):
     return (s or "job")[:limit]
 
 
-def _parse_table(raw_bytes, ext):
-    """업로드 바이트 → DataFrame (첫 시트, 행 상한)."""
+def _sheet_names(raw_bytes, ext):
+    """엑셀 파일의 시트명 목록 (CSV 는 []). 실패 시 [] (업로드 자체는 계속)."""
+    if ext == ".csv":
+        return []
+    try:
+        xf = pd.ExcelFile(io.BytesIO(raw_bytes),
+                          engine="openpyxl" if ext == ".xlsx" else None)
+        return [str(s) for s in xf.sheet_names][:40]
+    except Exception as e:
+        logger.warning("시트 목록 읽기 실패: %s", e)
+        return []
+
+
+def _parse_table(raw_bytes, ext, sheet=None):
+    """업로드 바이트 → DataFrame (기본 첫 시트, sheet 지정 시 해당 시트, 행 상한)."""
     buf = io.BytesIO(raw_bytes)
     if ext == ".csv":
         try:
@@ -3583,16 +3596,19 @@ def _parse_table(raw_bytes, ext):
             buf.seek(0)
             df = pd.read_csv(buf, nrows=MAX_ROWS, encoding="cp949")
     else:
-        df = pd.read_excel(buf, sheet_name=0, nrows=MAX_ROWS,
+        df = pd.read_excel(buf, sheet_name=(sheet if sheet not in (None, "") else 0),
+                           nrows=MAX_ROWS,
                            engine="openpyxl" if ext == ".xlsx" else None)
     df.columns = [str(c).strip() for c in df.columns]
     df = df.dropna(how="all")
     return df
 
 
-def save_upload(raw_bytes, orig_filename, worker, job, owner=None):
+def save_upload(raw_bytes, orig_filename, worker, job, owner=None, sheet=None):
     """엑셀 업로드 저장 + 즉시 분석 가능 등록. 반환: 메타데이터 entry.
 
+    sheet: 분석할 시트명 (미지정 시 첫 시트). 시트 목록은 entry["sheets"]로
+    반환되어 업로드 후 다른 시트로 전환(set_sheet)할 수 있다.
     실패 시 ValueError(사용자 안내 메시지).
     """
     worker = str(worker or "").strip()[:60]
@@ -3608,12 +3624,19 @@ def save_upload(raw_bytes, orig_filename, worker, job, owner=None):
         raise ValueError("빈 파일입니다.")
     if len(raw_bytes) > MAX_FILE_MB * 1024 * 1024:
         raise ValueError("파일이 %dMB 를 초과합니다." % MAX_FILE_MB)
+    sheets = _sheet_names(raw_bytes, ext)
+    sheet = str(sheet or "").strip()
+    if sheet and sheets and sheet not in sheets:
+        raise ValueError("시트 '%s' 가 파일에 없습니다 (시트: %s)."
+                         % (sheet, ", ".join(sheets[:10])))
     try:
-        df = _parse_table(raw_bytes, ext)
+        df = _parse_table(raw_bytes, ext, sheet=sheet or None)
     except Exception as e:
         raise ValueError("파일을 표로 해석할 수 없습니다: %s" % e)
+    used_sheet = sheet or (sheets[0] if sheets else "")
     if not len(df) or not len(df.columns):
-        raise ValueError("표 데이터가 비어 있습니다 (첫 시트를 확인하세요).")
+        raise ValueError("표 데이터가 비어 있습니다 (시트 '%s' 확인 — 업로드 후 "
+                         "다른 시트를 선택할 수도 있습니다)." % (used_sheet or "첫 시트"))
 
     uid = uuid.uuid4().hex[:10]
     dataset_name = "%s%s_%s" % (DATASET_PREFIX, _slug(job), uid[:6])
@@ -3629,6 +3652,7 @@ def save_upload(raw_bytes, orig_filename, worker, job, owner=None):
         "dataset": dataset_name,
         "uploaded_at": time.strftime("%Y-%m-%d %H:%M:%S"),
         "n_rows": int(len(df)), "n_cols": int(len(df.columns)),
+        "sheet": used_sheet, "sheets": sheets,
     }
     data = storage.load_uploads()
     items = list(data.get("items") or [])
@@ -3670,10 +3694,55 @@ def load_upload(upload_id):
                           % entry.get("orig_filename"))
     ext = os.path.splitext(path)[1].lower()
     with open(path, "rb") as fh:
-        df = _parse_table(fh.read(), ext)
+        df = _parse_table(fh.read(), ext, sheet=entry.get("sheet") or None)
     inject_dataset(str(entry["dataset"]), df)
     entry = dict(entry, n_rows=int(len(df)))
     return entry
+
+
+def set_sheet(upload_id, sheet):
+    """저장된 엑셀 작업의 분석 시트 변경 — 저장 파일에서 재해석 (재업로드 불필요).
+
+    dataset 이름은 유지되어 저장 매핑·개인 선택이 그대로 이어진다 (컬럼이
+    달라지면 자동 매핑이 새 컬럼 기준으로 다시 계산됨). 반환: 갱신된 entry.
+    """
+    entry = _find(upload_id)
+    if entry is None:
+        raise LookupError("저장된 작업을 찾을 수 없습니다: %s" % upload_id)
+    path = os.path.join(storage.upload_dir(), str(entry.get("stored_name")))
+    if not os.path.exists(path):
+        raise LookupError("저장 파일이 서버에 없습니다 (%s) — 다시 업로드하세요."
+                          % entry.get("orig_filename"))
+    ext = os.path.splitext(path)[1].lower()
+    if ext == ".csv":
+        raise ValueError("CSV 파일에는 시트가 없습니다.")
+    with open(path, "rb") as fh:
+        raw = fh.read()
+    sheets = _sheet_names(raw, ext)
+    sheet = str(sheet or "").strip()
+    if not sheet or (sheets and sheet not in sheets):
+        raise ValueError("시트 '%s' 가 파일에 없습니다 (시트: %s)."
+                         % (sheet, ", ".join(sheets[:10])))
+    try:
+        df = _parse_table(raw, ext, sheet=sheet)
+    except Exception as e:
+        raise ValueError("시트 '%s' 를 표로 해석할 수 없습니다: %s" % (sheet, e))
+    if not len(df) or not len(df.columns):
+        raise ValueError("시트 '%s' 의 표 데이터가 비어 있습니다." % sheet)
+    data = storage.load_uploads()
+    items = list(data.get("items") or [])
+    for it in items:
+        if str(it.get("id")) == str(upload_id):
+            it["sheet"] = sheet
+            it["sheets"] = sheets
+            it["n_rows"] = int(len(df))
+            it["n_cols"] = int(len(df.columns))
+            entry = it
+            break
+    storage.save_uploads({"items": items})
+    inject_dataset(str(entry["dataset"]), df)
+    logger.info("업로드 시트 변경: %s → %s (%d행)", entry["dataset"], sheet, len(df))
+    return dict(entry)
 
 
 def ensure_loaded(dataset_name):
@@ -17371,7 +17440,7 @@ def compute_quality_report(df, settings):
 
 
 # 검증 리포트용 빌드 정보 (tools/build_backend.py 가 실측 집계)
-_QR_BUILD_INFO = {'built_at': '2026-09-10 23:58', 'modules': 46, 'test_functions': 290, 'test_files': 16, 'source': 'build'}
+_QR_BUILD_INFO = {'built_at': '2026-09-11 00:53', 'modules': 46, 'test_functions': 291, 'test_files': 16, 'source': 'build'}
 
 
 
@@ -17453,6 +17522,7 @@ uploads_save = save_upload  # [merged import alias]
 uploads_list = list_uploads  # [merged import alias]
 uploads_load = load_upload  # [merged import alias]
 uploads_delete = delete_upload  # [merged import alias]
+uploads_set_sheet = set_sheet  # [merged import alias]
 uploads_ensure_loaded = ensure_loaded  # [merged import alias]
 insight_get_image = get_image  # [merged import alias]
 
@@ -18534,10 +18604,12 @@ def register_routes(app):
         """엑셀 업로드 작업 저장소.
 
         GET → {"items":[{id,worker,job,orig_filename,dataset,uploaded_at,
-               n_rows,n_cols,loaded,file_exists}...]} (최신순).
+               n_rows,n_cols,sheet,sheets,loaded,file_exists}...]} (최신순).
         POST multipart form: file(필수), worker(작업자 이름, 필수),
-             job(작업명, 필수) → 파일을 서버 저장소에 보관하고 메타데이터를
-             영속화하며 즉시 분석 dataset 으로 등록.
+             job(작업명, 필수), sheet(시트명, 선택 — 미지정 시 첫 시트)
+             → 파일을 서버 저장소에 보관하고 메타데이터를 영속화하며 즉시
+             분석 dataset 으로 등록. entry.sheets 로 시트 목록을 돌려주므로
+             업로드 후 /api/uploads/sheet 로 다른 시트로 전환할 수 있다.
         오류 400: 작업자/작업명 누락, 형식·크기 위반, 해석 불가.
         """
         me = _req_user()
@@ -18553,7 +18625,8 @@ def register_routes(app):
             entry = uploads_save(f.read(), f.filename,
                                             request.form.get("worker"),
                                             request.form.get("job"),
-                                            owner=me)
+                                            owner=me,
+                                            sheet=request.form.get("sheet"))
         except ValueError as e:
             return _error(400, str(e))
         if me:
@@ -18579,6 +18652,32 @@ def register_routes(app):
                 return _error(403, "'%s' 사용자의 작업입니다 — 본인 작업만 불러올 수 "
                                    "있습니다 (관리자 예외)." % it.get("owner"))
         entry = uploads_load(uid)
+        if me:
+            um = storage.load_user_datasets()
+            um[me] = entry.get("dataset")
+            storage.save_user_datasets(um)
+        clear_all_caches()
+        return {"status": "ok", "entry": entry}
+
+    @app.route("/api/uploads/sheet", methods=["POST"])
+    @wrap
+    def api_uploads_sheet():
+        """POST {"id","sheet"} → 저장된 엑셀 작업의 분석 시트 변경 (재해석).
+
+        dataset 이름은 유지된다. 본인 작업(또는 관리자)만 변경 가능.
+        """
+        body = json_body()
+        uid = body.get("id")
+        me = _req_user()
+        for it in uploads_list():
+            if str(it.get("id")) == str(uid) and \
+                    not auth_can_see(it.get("owner"), me):
+                return _error(403, "'%s' 사용자의 작업입니다 — 본인 작업의 시트만 "
+                                   "변경할 수 있습니다 (관리자 예외)." % it.get("owner"))
+        try:
+            entry = uploads_set_sheet(uid, body.get("sheet"))
+        except ValueError as e:
+            return _error(400, str(e))
         if me:
             um = storage.load_user_datasets()
             um[me] = entry.get("dataset")

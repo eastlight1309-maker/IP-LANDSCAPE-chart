@@ -205,6 +205,73 @@ def test_applicant_rules_cover_co_applicants(client, raw_df):
         _post(client, "/api/applicant-rules", {"reset": ["에이티아이 테크놀로지스"]})
 
 
+def _multi_sheet_xlsx():
+    """시트 2개짜리 테스트 엑셀: '요약메모'(잡동사니) + '특허데이터'(실데이터)."""
+    import openpyxl
+    wb = openpyxl.Workbook()
+    ws1 = wb.active
+    ws1.title = "요약메모"
+    ws1.append(["메모"])
+    ws1.append(["이 시트는 분석 대상이 아님"])
+    ws2 = wb.create_sheet("특허데이터")
+    ws2.append(["공개번호", "출원인", "출원일", "발명의 명칭"])
+    for i in range(8):
+        ws2.append(["KR10-2022-%07dA" % i, "삼성전자", "2022-03-0%d" % (i % 9 + 1),
+                    "시트 테스트 발명 %d" % i])
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return buf
+
+
+def test_upload_sheet_selection(client):
+    """다중 시트 엑셀: 시트 목록 반환 → 시트 전환(재해석) → 불러오기 시 유지.
+
+    회귀: 과거에는 첫 시트만 사용해 실데이터가 둘째 시트인 파일을 분석할 수
+    없었다."""
+    from src import storage as _st
+    prev_uploads = _st.load_uploads()
+    try:
+        up = _post_mp = client.post(
+            "/api/uploads",
+            data={"file": (_multi_sheet_xlsx(), "multi.xlsx"),
+                  "worker": "시트봇", "job": "시트선택"},
+            content_type="multipart/form-data").get_json()
+        assert up["status"] == "ok", up
+        entry = up["entry"]
+        assert entry["sheets"] == ["요약메모", "특허데이터"]
+        assert entry["sheet"] == "요약메모"          # 기본=첫 시트
+        assert entry["n_rows"] == 1                  # 잡동사니 시트
+        # 시트 전환 → 재해석 (dataset 이름 유지)
+        sw = _post(client, "/api/uploads/sheet",
+                   {"id": entry["id"], "sheet": "특허데이터"}).get_json()
+        assert sw["status"] == "ok", sw
+        assert sw["entry"]["sheet"] == "특허데이터"
+        assert sw["entry"]["n_rows"] == 8
+        assert sw["entry"]["dataset"] == entry["dataset"]
+        cols = client.get("/api/columns?dataset=%s" % entry["dataset"]).get_json()
+        assert "공개번호" in cols["columns"]
+        # 없는 시트는 400
+        bad = _post(client, "/api/uploads/sheet",
+                    {"id": entry["id"], "sheet": "없는시트"})
+        assert bad.status_code == 400
+        # 불러오기(재적재)는 선택한 시트를 유지
+        rl = _post(client, "/api/uploads/load", {"id": entry["id"]}).get_json()
+        assert rl["status"] == "ok" and rl["entry"]["n_rows"] == 8
+        # 업로드 시 시트를 직접 지정할 수도 있다
+        up2 = client.post(
+            "/api/uploads",
+            data={"file": (_multi_sheet_xlsx(), "multi2.xlsx"),
+                  "worker": "시트봇", "job": "직접지정", "sheet": "특허데이터"},
+            content_type="multipart/form-data").get_json()
+        assert up2["status"] == "ok"
+        assert up2["entry"]["sheet"] == "특허데이터" and up2["entry"]["n_rows"] == 8
+    finally:
+        _st.save_uploads(prev_uploads)
+        from src.cache import clear_all_caches
+        clear_all_caches()
+
+
 def test_project_save_load(client):
     _post(client, "/api/project/save",
           {"name": "테스트 프로젝트", "filters": {"year_from": 2018}})
