@@ -1159,16 +1159,33 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
           document.getElementById('modal-page-info').textContent = '0건';
           return;
         }
-        var cols = Object.keys(data.records[0]);
+        // _* 메타 필드(상세보기 링크 등)는 열로 표시하지 않는다
+        var cols = Object.keys(data.records[0]).filter(function (c) {
+          return c.charAt(0) !== '_';
+        });
+        var hasLink = data.records.some(function (r) { return r._detail_link; });
         var html = '<table class="ipls-table"><thead><tr>' +
           cols.map(function (c) { return '<th>' + Ui.esc(c) + '</th>'; }).join('') +
           '</tr></thead><tbody>';
         data.records.forEach(function (r) {
-          html += '<tr>' + cols.map(function (c) {
-            return '<td>' + Ui.esc(r[c]) + '</td>';
+          html += '<tr>' + cols.map(function (c, ci) {
+            var v = Ui.esc(r[c]);
+            // 첫 열(특허번호)에 상세보기 링크(비로그인)가 있으면 새 창 링크로
+            if (ci === 0 && r._detail_link &&
+                /^https?:\/\//.test(String(r._detail_link))) {
+              return '<td><a href="' + Ui.esc(r._detail_link) + '" target="_blank" ' +
+                'rel="noopener noreferrer" title="윈텔립스 상세보기(비로그인) — 새 창">' +
+                v + ' ↗</a></td>';
+            }
+            return '<td>' + v + '</td>';
           }).join('') + '</tr>';
         });
         html += '</tbody></table>';
+        if (hasLink) {
+          html += '<div style="font-size:11px;color:#93a5b4;margin-top:4px">↗ 특허번호를 ' +
+            '클릭하면 윈텔립스 상세보기(비로그인) 페이지가 새 창으로 열립니다 ' +
+            '(상세보기 링크 컬럼 매핑 기준).</div>';
+        }
         body.innerHTML = html;
         var pages = Math.max(1, Math.ceil(data.total / data.page_size));
         document.getElementById('modal-page-info').textContent =

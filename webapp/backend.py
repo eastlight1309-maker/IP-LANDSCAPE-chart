@@ -1165,6 +1165,13 @@ CONCEPTS = {
         "preferred": ["특징 요약"],  # 기본 매핑 (윈텔립스)
         "variants": ["특징 요약", "특징요약", "특징 요약문", "feature summary"],
     },
+    "detail_link": {
+        "label": "상세보기 링크", "dtype": "URL (윈텔립스 상세보기 — 비로그인 링크 권장)",
+        "preferred": ["상세보기 링크(비로그인)"],  # 기본 매핑 (윈텔립스)
+        # '상세보기 링크(로그인)' 과 혼동되지 않도록 비로그인 명시 변형만 등록
+        "variants": ["상세보기 링크(비로그인)", "상세보기링크(비로그인)",
+                     "상세보기 링크 비로그인", "detail link", "상세페이지 링크"],
+    },
 }
 # 기존 assignee 개념에 변형 표기 보강 (최종권리자·등록권리자 등)
 CONCEPTS["assignee"]["variants"] += ["최종권리자", "최종 권리자", "등록권리자",
@@ -6459,6 +6466,13 @@ def patent_records(df, page=1, page_size=25, max_page_size=200, extra_fields=Non
             rec["대표청구항"] = claim[:180] + ("…" if len(claim) > 180 else "")
         active = row.get("_active_flag")
         rec["유효특허"] = ("Y" if active is True else ("N" if active is False else "?"))
+        # 상세보기 링크(비로그인): 프론트가 특허번호를 클릭 링크로 렌더링
+        # (밑줄 키 _* 는 표의 열로는 표시되지 않는 메타 필드).
+        # http(s) URL 만 허용 — javascript: 등 위험 스킴 차단.
+        if "detail_link" in sub.columns:
+            link = str(row.get("detail_link") or "").strip()
+            if link.startswith(("http://", "https://")):
+                rec["_detail_link"] = link
         records.append(rec)
     return {"total": int(total), "page": page, "page_size": page_size, "records": records}
 
@@ -6477,6 +6491,8 @@ def export_dataframe(df, extra_fields=None, max_rows=20000):
     out["기술분류"] = techs
     years = df["_base_year"].head(int(max_rows))
     out["연도"] = years
+    if "detail_link" in df.columns:
+        out["상세보기 링크"] = df["detail_link"].head(int(max_rows))
     return out
 
 
@@ -17440,7 +17456,7 @@ def compute_quality_report(df, settings):
 
 
 # 검증 리포트용 빌드 정보 (tools/build_backend.py 가 실측 집계)
-_QR_BUILD_INFO = {'built_at': '2026-09-11 00:53', 'modules': 46, 'test_functions': 291, 'test_files': 16, 'source': 'build'}
+_QR_BUILD_INFO = {'built_at': '2026-09-11 04:51', 'modules': 46, 'test_functions': 293, 'test_files': 16, 'source': 'build'}
 
 
 

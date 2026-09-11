@@ -54,7 +54,7 @@ def test_availability_matrix(mapping):
 
 def test_concept_catalog_complete():
     cat = concept_catalog()
-    assert len(cat) == len(CONCEPTS) == 91
+    assert len(cat) == len(CONCEPTS) == 92
 
 
 # 윈텔립스(WIPS ON) Excel 실제 다운로드 항목 전체 — 자동 매핑 회귀의 기준 목록
@@ -168,11 +168,13 @@ def test_wintelips_full_header_mapping():
         "annuity_date": "최근 연차료일[KR,US,EP]",
         "ai_summary": "AI 요약[KR,US,JP,CN,EP,PCT,TW]",
         "feature_summary": "특징 요약[KR,US,JP,CN,EP,PCT,TW]",
+        "detail_link": "상세보기 링크(비로그인)",
     }
     for concept, col in expect.items():
         assert got.get(concept) == col, \
             "%s: 기대 %r, 실제 %r" % (concept, col, got.get(concept))
-    # 오매핑 금지: 인원수·주소·링크류가 개념에 배정되면 안 됨
+    # 오매핑 금지: 인원수·주소·PDF/로그인 링크가 개념에 배정되면 안 됨
+    # (상세보기 링크(비로그인)는 detail_link 개념으로 정식 매핑됨)
     banned = {"출원인 수", "발명자 수", "출원인 주소[KR]", "원문(PDF)링크",
-              "상세보기 링크(비로그인)"}
+              "상세보기 링크(로그인)"}
     assert not banned & set(got.values()), banned & set(got.values())

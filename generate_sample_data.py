@@ -298,6 +298,9 @@ def generate_sample(n=600, seed=42, sep="; ", multiclass_format="sep",
     df["최근 연차료일"] = ["%d-%s-01" % (min(y + 3 + int(rng2.integers(0, 6)),
                                         year_max + 1), m) if g else ""
                      for y, m, g in zip(years, months, grants)]
+    # 상세보기 링크(비로그인) — 결정적 합성 URL (rng 미사용)
+    df["상세보기 링크(비로그인)"] = [
+        "https://example.wintelips.test/detail/%s" % p for p in pubs]
     return df
 
 

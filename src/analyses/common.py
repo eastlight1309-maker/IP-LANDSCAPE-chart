@@ -391,6 +391,13 @@ def patent_records(df, page=1, page_size=25, max_page_size=200, extra_fields=Non
             rec["대표청구항"] = claim[:180] + ("…" if len(claim) > 180 else "")
         active = row.get("_active_flag")
         rec["유효특허"] = ("Y" if active is True else ("N" if active is False else "?"))
+        # 상세보기 링크(비로그인): 프론트가 특허번호를 클릭 링크로 렌더링
+        # (밑줄 키 _* 는 표의 열로는 표시되지 않는 메타 필드).
+        # http(s) URL 만 허용 — javascript: 등 위험 스킴 차단.
+        if "detail_link" in sub.columns:
+            link = str(row.get("detail_link") or "").strip()
+            if link.startswith(("http://", "https://")):
+                rec["_detail_link"] = link
         records.append(rec)
     return {"total": int(total), "page": page, "page_size": page_size, "records": records}
 
@@ -409,6 +416,8 @@ def export_dataframe(df, extra_fields=None, max_rows=20000):
     out["기술분류"] = techs
     years = df["_base_year"].head(int(max_rows))
     out["연도"] = years
+    if "detail_link" in df.columns:
+        out["상세보기 링크"] = df["detail_link"].head(int(max_rows))
     return out
 
 

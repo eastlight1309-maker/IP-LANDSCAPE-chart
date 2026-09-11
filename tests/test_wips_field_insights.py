@@ -188,6 +188,29 @@ def test_epc_maintenance_section(prepared, settings_mod):
     assert "note" in sec
 
 
+# ---------------- 상세보기 링크(비로그인) ----------------
+def test_patent_records_detail_link(prepared):
+    """근거특허 목록: 상세보기 링크(비로그인)가 _detail_link 메타로 포함되고
+    http(s) 외 스킴(javascript: 등)은 차단된다."""
+    from src.analyses.common import patent_records
+    out = patent_records(prepared.head(5))
+    for rec in out["records"]:
+        assert rec["_detail_link"].startswith("https://")
+        assert "상세보기" not in rec  # 표의 열로는 노출하지 않음 (메타 필드)
+    # 위험 스킴·비 URL 값은 링크 미포함
+    df2 = prepared.head(3).copy()
+    df2["detail_link"] = ["javascript:alert(1)", "메모텍스트", ""]
+    out2 = patent_records(df2)
+    assert all("_detail_link" not in rec for rec in out2["records"])
+
+
+def test_export_includes_detail_link(prepared):
+    from src.analyses.common import export_dataframe
+    out = export_dataframe(prepared.head(10))
+    assert "상세보기 링크" in out.columns
+    assert str(out["상세보기 링크"].iloc[0]).startswith("https://")
+
+
 # ---------------- ⑦ AI 요약 시맨틱 텍스트 소스 ----------------
 def test_corpus_texts_prefers_ai_summary(prepared):
     texts, source = _corpus_texts(prepared)
