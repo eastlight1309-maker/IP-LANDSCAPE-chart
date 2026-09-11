@@ -234,7 +234,10 @@ DEFAULT_SETTINGS = {
     "multiclass_mode": DEFAULT_MULTICLASS_MODE,
     "coapplicant_mode": DEFAULT_COAPPLICANT_MODE,
     "llm_id": DEFAULT_LLM_ID,
-    "llm_insights_enabled": False,
+    # 차트별 AI 인사이트 생성 버튼 기본 켜짐 — 버튼을 누를 때만 LLM 을 호출하고,
+    # LLM 미가용 환경에서는 규칙 기반 폴백으로 동작하므로 켜져 있어도 안전하다.
+    # (꺼진 경우에는 버튼 대신 '🤖 AI 인사이트 켜기' 복구 버튼이 표시된다)
+    "llm_insights_enabled": True,
     # none | dataset | rest | sbert(로컬 sentence-transformers) | llm_mesh
     # 기본: KR-SBERT 특허 특화 모델. model_name 이 비어 있으면 자동
     # (사내 로컬 경로 → HF 캐시 순서, SBERT_MODEL_CANDIDATES). 사전 계산 임베딩
