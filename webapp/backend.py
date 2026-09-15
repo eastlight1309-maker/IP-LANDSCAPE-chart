@@ -1843,6 +1843,67 @@ def build_tech_lists(df):
     return df
 
 
+TECH_UNCLASSIFIED = "미분류"
+
+# 자동 노이즈 판정: 값이 전부 특수문자('-', '.', '/')·순수 숫자이거나
+# 결측 표기(nan/none/null/미상/없음/해당없음)면 분류 정보가 아니다 → '미분류'.
+# 한 글자 알파벳('A' 등)은 정당한 분류 코드일 수 있어 자동 판정하지 않는다 —
+# 필요하면 기술분류 정비 화면에서 노이즈로 직접 지정한다.
+_TECH_JUNK_WORDS = {"nan", "none", "null", "-", "미상", "없음", "해당없음", "n/a", "na"}
+
+
+def is_tech_noise(label):
+    """기술분류 라벨의 자동 노이즈 여부 (미분류 처리 대상)."""
+    s = str(label or "").strip()
+    if not s or s.lower() in _TECH_JUNK_WORDS:
+        return True
+    if re.fullmatch(r"[\W_]+", s):       # 특수문자만
+        return True
+    if re.fullmatch(r"\d+(\.\d+)?", s):  # 순수 숫자
+        return True
+    return False
+
+
+def apply_tech_rules(df, tech_rules):
+    """기술분류 정비 규칙 적용 — A축 분류 리스트(_tech_list, _tech_l1/l2/l3_list).
+
+    - mapping: 원본분류 → 표준분류 (연쇄 1회 허용 — 표준분류에 또 규칙이 있으면 추적)
+    - noise: 사용자가 노이즈로 지정한 분류 → '미분류'
+    - 자동 노이즈(is_tech_noise): 특수문자·숫자·결측 표기 → '미분류' (규칙 없이도 항상)
+    병합 후 리스트 내 중복은 제거(순서 유지). B·C축(별도 분류 체계)은 건드리지 않는다.
+    """
+    rules = tech_rules or {}
+    tmap = {str(k).strip(): str(v).strip()
+            for k, v in (rules.get("mapping") or {}).items() if str(v).strip()}
+    noise = {str(x).strip() for x in (rules.get("noise") or []) if str(x).strip()}
+
+    def _norm_label(t):
+        s = str(t).strip()
+        if not s:
+            return None
+        if s in noise or is_tech_noise(s):
+            return TECH_UNCLASSIFIED
+        s = tmap.get(s, s)
+        s = tmap.get(s, s)  # 연쇄 규칙 1회 (변형→표준명, 표준명→새 표준명)
+        if s in noise or is_tech_noise(s):
+            return TECH_UNCLASSIFIED
+        return s
+
+    def _norm_list(lst):
+        out, seen = [], []
+        for t in (lst or []):
+            s = _norm_label(t)
+            if s and s not in seen:
+                seen.append(s)
+                out.append(s)
+        return out
+
+    for col in ("_tech_list", "_tech_l1_list", "_tech_l2_list", "_tech_l3_list"):
+        if col in df.columns:
+            df[col] = df[col].map(_norm_list)
+    return df
+
+
 def _tech_list_from_levels(df):
     """레벨 컬럼(소→중→대 우선)으로 _tech_list 구성."""
     for level in ("_tech_l3_list", "_tech_l2_list", "_tech_l1_list"):
@@ -2225,7 +2286,7 @@ def _derive_country(df):
 # ---------------------------------------------------------------------------
 # 표준 프레임 생성
 # ---------------------------------------------------------------------------
-def build_standard_frame(raw_df, mapping, applicant_rules=None):
+def build_standard_frame(raw_df, mapping, applicant_rules=None, tech_rules=None):
     """원본 DataFrame + 매핑 → 표준 개념 컬럼 DataFrame.
 
     - 매핑된 컬럼만 유지·rename (필요 컬럼 최소화)
@@ -2337,6 +2398,8 @@ def build_standard_frame(raw_df, mapping, applicant_rules=None):
         for a, s in zip(df["_is_active_bool"], df["legal_status_norm"])])
 
     df = build_tech_lists(df)
+    # 기술분류 정비 규칙 (유사 분류 병합·노이즈→미분류) — 자동 노이즈는 항상 적용
+    df = apply_tech_rules(df, tech_rules)
     # B·C축 기술분류 리스트 (매핑된 경우에만 — 소→중→대 우선, 다중값 지원)
     for axis in ("b", "c"):
         target = "_tech_%s_list" % axis
@@ -3063,6 +3126,16 @@ def save_applicant_rules(rules):
     return save_store("applicant_rules", rules)
 
 
+def load_tech_rules():
+    """기술분류 정비 규칙 {"mapping": {원본분류: 표준분류}, "noise": [분류...],
+    "history": [...]}. 노이즈 지정 분류는 '미분류'로 표기된다."""
+    return load_store("tech_rules")
+
+
+def save_tech_rules(rules):
+    return save_store("tech_rules", rules)
+
+
 def load_user_datasets():
     """사용자별 활성 Dataset 선택 {사용자명: dataset}.
 
@@ -3128,10 +3201,11 @@ import types as _types
 storage = _types.SimpleNamespace(
     load_store=load_store, save_store=save_store, load_settings=load_settings,
     save_settings=save_settings, load_mapping_for=load_mapping_for, save_mapping_for=save_mapping_for,
-    load_applicant_rules=load_applicant_rules, save_applicant_rules=save_applicant_rules, load_user_datasets=load_user_datasets,
-    save_user_datasets=save_user_datasets, load_projects=load_projects, save_projects=save_projects,
-    load_filter_state=load_filter_state, save_filter_state=save_filter_state, load_uploads=load_uploads,
-    save_uploads=save_uploads, upload_dir=upload_dir, insight_image_dir=insight_image_dir)
+    load_applicant_rules=load_applicant_rules, save_applicant_rules=save_applicant_rules, load_tech_rules=load_tech_rules,
+    save_tech_rules=save_tech_rules, load_user_datasets=load_user_datasets, save_user_datasets=save_user_datasets,
+    load_projects=load_projects, save_projects=save_projects, load_filter_state=load_filter_state,
+    save_filter_state=save_filter_state, load_uploads=load_uploads, save_uploads=save_uploads,
+    upload_dir=upload_dir, insight_image_dir=insight_image_dir)
 
 
 
@@ -3509,7 +3583,7 @@ def needed_raw_columns(mapping):
 
 
 def get_prepared(dataset_name, mapping, applicant_rules=None, analysis_unit="family",
-                 embedding_file=None):
+                 embedding_file=None, tech_rules=None):
     """전처리 완료 표준 프레임 (캐시). 모든 분석 API 의 공통 진입점.
 
     embedding_file: 업로드된 임베딩 파일(.npy/.npz) entry id — 지정 시
@@ -3520,12 +3594,12 @@ def get_prepared(dataset_name, mapping, applicant_rules=None, analysis_unit="fam
     if not mapping:
         raise ValueError("컬럼 매핑이 비어 있습니다. 컬럼 매핑 화면에서 매핑을 설정하세요.")
     key = make_cache_key("prepared", dataset_name, mapping, applicant_rules or {},
-                         analysis_unit, embedding_file or "")
+                         analysis_unit, embedding_file or "", tech_rules or {})
     cached = DF_CACHE.get(key)
     if cached is not None:
         return cached, True
     raw = load_raw_dataframe(dataset_name, columns=needed_raw_columns(mapping))
-    df = build_standard_frame(raw, mapping, applicant_rules)
+    df = build_standard_frame(raw, mapping, applicant_rules, tech_rules=tech_rules)
     df = apply_analysis_unit(df, analysis_unit)
     df = df.reset_index(drop=True)
     if embedding_file:
@@ -6515,20 +6589,27 @@ def applicant_series(df, settings):
     mode 'all'(기본, WIPS 방식): 공동출원 1건이 각 공동출원인 행으로 전개되어
     출원인별 카운팅 시 각각 1건씩 계산된다 (합계가 문헌 수를 초과할 수 있음).
     mode 'first': 대표(첫) 출원인만. 빈 이름은 제외.
+
+    settings["_exclude_applicants"] (필터 '제외 출원인'): 해당 이름은 출원인별
+    집계·순위·전개에서 제외된다 — 문헌 자체는 유지되고, 협력 네트워크 등
+    _co_applicants_display 를 직접 쓰는 공동출원 분석에는 적용되지 않는다.
     """
     import pandas as _pd
+    excluded = set(map(str, (settings or {}).get("_exclude_applicants") or []))
     if _coapp_mode(settings) == "all" and "_co_applicants_display" in df.columns:
         idx, vals = [], []
         for i, lst in df["_co_applicants_display"].items():
             for a in (lst or []):
                 s = str(a).strip()
-                if s:
+                if s and s not in excluded:
                     idx.append(i)
                     vals.append(s)
         if vals:
             return _pd.Series(vals, index=idx)
     s = df["applicant_display"].astype(str)
     s = s[s.str.strip() != ""]
+    if excluded:
+        s = s[~s.isin(excluded)]
     return s
 
 
@@ -10473,17 +10554,23 @@ def _year_series(df, mask=None):
     return year_counts(years) if len(years) else pd.Series(dtype=float)
 
 
-def _applicant_lists(df, mode):
+def _applicant_lists(df, mode, excluded=None):
     """행별 귀속 출원인 리스트.
 
     mode="all"  : 공동출원인 전원 (공동출원 1건이 각 출원인에게 1건씩)
     mode="first": 대표(첫) 출원인만
+    excluded    : 필터 '제외 출원인' — 출원인별 집계에서 제외할 이름 집합
     """
+    ex = set(map(str, excluded or []))
     if mode == "all" and "_co_applicants_display" in df.columns:
         disp = df["applicant_display"].astype(str)
-        return df["_co_applicants_display"].combine(
+        lists = df["_co_applicants_display"].combine(
             disp, lambda lst, d: list(lst) if lst else ([d] if d else []))
-    return df["applicant_display"].astype(str).map(lambda a: [a] if a else [])
+    else:
+        lists = df["applicant_display"].astype(str).map(lambda a: [a] if a else [])
+    if ex:
+        lists = lists.map(lambda lst: [a for a in lst if str(a) not in ex])
+    return lists
 
 
 def compute_basic_stats(df, settings, company=None):
@@ -10600,7 +10687,8 @@ def compute_basic_stats(df, settings, company=None):
     # ③ 출원인 순위 + ④ 출원인×연도 매트릭스
     # 공동출원 처리: co_mode="all"이면 공동출원 1건을 각 공동출원인에게 1건씩 집계
     fig_applicants, fig_app_year = None, None
-    app_lists = _applicant_lists(df, co_mode)
+    app_lists = _applicant_lists(df, co_mode,
+                                 excluded=settings.get("_exclude_applicants"))
     n_joint = int(app_lists.map(lambda lst: len(lst) > 1).sum()) if co_mode == "all" \
         else int(df["_co_applicants_display"].map(lambda lst: len(lst or []) > 1).sum()
                  if "_co_applicants_display" in df.columns else 0)
@@ -17471,7 +17559,7 @@ def compute_quality_report(df, settings):
 
 
 # 검증 리포트용 빌드 정보 (tools/build_backend.py 가 실측 집계)
-_QR_BUILD_INFO = {'built_at': '2026-09-15 01:53', 'modules': 46, 'test_functions': 296, 'test_files': 16, 'source': 'build'}
+_QR_BUILD_INFO = {'built_at': '2026-09-15 03:14', 'modules': 46, 'test_functions': 301, 'test_files': 17, 'source': 'build'}
 
 
 
@@ -17776,9 +17864,17 @@ def _prepared_for(body):
     mapping = _effective_mapping(dataset, actual_cols)
     rules = storage.load_applicant_rules()
     df, _ = get_prepared(dataset, mapping, rules, settings.get("analysis_unit", "family"),
-                         embedding_file=settings.get("embedding_file_id"))
+                         embedding_file=settings.get("embedding_file_id"),
+                         tech_rules=storage.load_tech_rules())
     filters = (body or {}).get("filters") or {}
     filtered = apply_filters(df, filters)
+    # 제외 출원인(필터): 출원인별 집계·순위에서 해당 이름을 제외한다.
+    # 문헌 자체는 유지되므로 전체 건수·기술 차트는 그대로이고, 공동출원 자체
+    # 분석(협력 네트워크 등 _co_applicants_display 직접 사용)에는 적용되지 않는다.
+    exclude = [str(x) for x in (filters.get("exclude_applicants") or []) if str(x).strip()]
+    if exclude:
+        settings = dict(settings)
+        settings["_exclude_applicants"] = exclude
     return filtered, settings, dataset, mapping, filters
 
 
@@ -18537,6 +18633,140 @@ def register_routes(app):
                 {"ts": time.strftime("%Y-%m-%d %H:%M:%S"),
                  "entry": str(body["history_entry"])[:300]})
         storage.save_applicant_rules(rules)
+        clear_all_caches()
+        return {"status": "ok", "rules": rules}
+
+    @app.route("/api/tech-rules", methods=["GET", "POST"])
+    @wrap
+    def api_tech_rules():
+        """기술분류 정비 관리 — 유사 분류 병합·노이즈(미분류) 지정.
+
+        GET ?dataset=[&q=] → {"classes":[{name,count,current,approved,noise}],
+            "suggestions":[{"members":[{name,count}...],"target"}], "rules"}.
+            classes 는 정비 규칙 적용 전(원본) 분류 기준 — 단, 자동 노이즈
+            (특수문자·순수 숫자·1글자·결측 표기)는 이미 '미분류'로 합산된다.
+            suggestions 는 표기 정규화(대소문자·공백·특수문자 무시) 일치 +
+            문자열 유사도 기반 '묶을까요?' 후보 그룹 (target=최다 건수 표기).
+        POST {"mapping":{원본:표준}, "noise":[분류...], "unnoise":[...],
+              "reset":[원본...], "history_entry"?, "import"?} → 저장.
+        규칙은 A축 기술분류(_tech_list·대/중/소 리스트)에 적용된다.
+        """
+        if request.method == "GET":
+            rules = storage.load_tech_rules() or {}
+            tmap = {str(k): str(v) for k, v in (rules.get("mapping") or {}).items()}
+            noise = {str(x) for x in (rules.get("noise") or [])}
+            q = str(request.args.get("q") or "").strip().lower()
+            classes, suggestions = [], []
+            try:
+                dataset, settings = _resolve_dataset(
+                    {"dataset": request.args.get("dataset")})
+                cols = get_dataset_columns(dataset)
+                mapping = _effective_mapping(dataset, cols)
+                # 원본 분류 기준 목록 (정비 규칙 미적용 프레임 — 자동 노이즈만 반영)
+                df0, _ = get_prepared(dataset, mapping,
+                                      storage.load_applicant_rules(),
+                                      settings.get("analysis_unit", "family"),
+                                      embedding_file=settings.get("embedding_file_id"),
+                                      tech_rules=None)
+                counts = pd.Series(
+                    [t for lst in df0["_tech_list"] for t in (lst or [])]
+                ).value_counts()
+                for name, cnt in counts.items():
+                    name = str(name)
+                    cur = tmap.get(name, name)
+                    cur = tmap.get(cur, cur)
+                    if name in noise:
+                        cur = TECH_UNCLASSIFIED
+                    e = {"name": name, "count": int(cnt), "current": cur,
+                         "approved": name in tmap, "noise": name in noise}
+                    if not q or q in name.lower() or q in cur.lower():
+                        classes.append(e)
+                    if len(classes) >= 500:
+                        break
+                # 유사 분류 제안 (미분류·이미 병합된 항목 제외)
+                import difflib as _dl
+                import re as _re2
+                cand = [str(n) for n in counts.index
+                        if str(n) != TECH_UNCLASSIFIED and str(n) not in tmap
+                        and str(n) not in noise][:120]
+
+                def _nk(s):
+                    return _re2.sub(r"[\W_]+", "", str(s)).casefold()
+
+                parent = {n: n for n in cand}
+
+                def _find(x):
+                    while parent[x] != x:
+                        parent[x] = parent[parent[x]]
+                        x = parent[x]
+                    return x
+
+                def _union(a, b):
+                    ra, rb = _find(a), _find(b)
+                    if ra != rb:
+                        parent[rb] = ra
+
+                by_key = {}
+                for n in cand:
+                    by_key.setdefault(_nk(n), []).append(n)
+                for grp in by_key.values():
+                    for other in grp[1:]:
+                        _union(grp[0], other)
+                for i in range(len(cand)):
+                    for j in range(i + 1, len(cand)):
+                        a, b = cand[i], cand[j]
+                        if _find(a) == _find(b):
+                            continue
+                        if _dl.SequenceMatcher(None, _nk(a), _nk(b)).ratio() >= 0.88:
+                            _union(a, b)
+                groups = {}
+                for n in cand:
+                    groups.setdefault(_find(n), []).append(n)
+                for members in groups.values():
+                    if len(members) < 2:
+                        continue
+                    members = sorted(members, key=lambda n: -int(counts.get(n, 0)))
+                    suggestions.append({
+                        "members": [{"name": n, "count": int(counts.get(n, 0))}
+                                    for n in members],
+                        "target": members[0]})
+                suggestions.sort(key=lambda g: -sum(m["count"] for m in g["members"]))
+                suggestions = suggestions[:20]
+            except (LookupError, ValueError):
+                pass
+            return {"status": "ok", "rules": rules, "classes": classes,
+                    "suggestions": suggestions,
+                    "note": ("규칙은 A축 기술분류(대/중/소·다중분류)에 적용됩니다. "
+                             "자동 노이즈(특수문자만·순수 숫자·1글자·nan/미상/없음 "
+                             "등 결측 표기)는 규칙 없이도 항상 '%s'로 표기됩니다."
+                             % TECH_UNCLASSIFIED)}
+        body = json_body()
+        rules = storage.load_tech_rules() or {}
+        if body.get("import"):
+            imported = body["import"]
+            if not isinstance(imported, dict):
+                return _error(400, "가져오기 형식 오류: JSON 객체가 필요합니다.")
+            rules = {"mapping": dict(imported.get("mapping") or {}),
+                     "noise": list(imported.get("noise") or []),
+                     "history": list(imported.get("history") or [])}
+        if isinstance(body.get("mapping"), dict):
+            rules.setdefault("mapping", {}).update(
+                {str(k): str(v) for k, v in body["mapping"].items() if str(v).strip()})
+        for name in (body.get("reset") or []):
+            rules.get("mapping", {}).pop(str(name), None)
+        if body.get("noise"):
+            cur = set(map(str, rules.get("noise") or []))
+            cur |= set(map(str, body["noise"]))
+            rules["noise"] = sorted(cur)
+        if body.get("unnoise"):
+            cur = set(map(str, rules.get("noise") or []))
+            cur -= set(map(str, body["unnoise"]))
+            rules["noise"] = sorted(cur)
+        if body.get("history_entry"):
+            rules.setdefault("history", []).append(
+                {"ts": time.strftime("%Y-%m-%d %H:%M:%S"),
+                 "entry": str(body["history_entry"])[:300]})
+        storage.save_tech_rules(rules)
         clear_all_caches()
         return {"status": "ok", "rules": rules}
 

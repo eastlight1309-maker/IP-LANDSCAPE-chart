@@ -126,6 +126,16 @@ def save_applicant_rules(rules):
     return save_store("applicant_rules", rules)
 
 
+def load_tech_rules():
+    """기술분류 정비 규칙 {"mapping": {원본분류: 표준분류}, "noise": [분류...],
+    "history": [...]}. 노이즈 지정 분류는 '미분류'로 표기된다."""
+    return load_store("tech_rules")
+
+
+def save_tech_rules(rules):
+    return save_store("tech_rules", rules)
+
+
 def load_user_datasets():
     """사용자별 활성 Dataset 선택 {사용자명: dataset}.
 

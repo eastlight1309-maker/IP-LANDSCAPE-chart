@@ -39,17 +39,23 @@ def _year_series(df, mask=None):
     return year_counts(years) if len(years) else pd.Series(dtype=float)
 
 
-def _applicant_lists(df, mode):
+def _applicant_lists(df, mode, excluded=None):
     """행별 귀속 출원인 리스트.
 
     mode="all"  : 공동출원인 전원 (공동출원 1건이 각 출원인에게 1건씩)
     mode="first": 대표(첫) 출원인만
+    excluded    : 필터 '제외 출원인' — 출원인별 집계에서 제외할 이름 집합
     """
+    ex = set(map(str, excluded or []))
     if mode == "all" and "_co_applicants_display" in df.columns:
         disp = df["applicant_display"].astype(str)
-        return df["_co_applicants_display"].combine(
+        lists = df["_co_applicants_display"].combine(
             disp, lambda lst, d: list(lst) if lst else ([d] if d else []))
-    return df["applicant_display"].astype(str).map(lambda a: [a] if a else [])
+    else:
+        lists = df["applicant_display"].astype(str).map(lambda a: [a] if a else [])
+    if ex:
+        lists = lists.map(lambda lst: [a for a in lst if str(a) not in ex])
+    return lists
 
 
 def compute_basic_stats(df, settings, company=None):
@@ -166,7 +172,8 @@ def compute_basic_stats(df, settings, company=None):
     # ③ 출원인 순위 + ④ 출원인×연도 매트릭스
     # 공동출원 처리: co_mode="all"이면 공동출원 1건을 각 공동출원인에게 1건씩 집계
     fig_applicants, fig_app_year = None, None
-    app_lists = _applicant_lists(df, co_mode)
+    app_lists = _applicant_lists(df, co_mode,
+                                 excluded=settings.get("_exclude_applicants"))
     n_joint = int(app_lists.map(lambda lst: len(lst) > 1).sum()) if co_mode == "all" \
         else int(df["_co_applicants_display"].map(lambda lst: len(lst or []) > 1).sum()
                  if "_co_applicants_display" in df.columns else 0)

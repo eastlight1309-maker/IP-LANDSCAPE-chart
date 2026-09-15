@@ -434,20 +434,27 @@ def applicant_series(df, settings):
     mode 'all'(기본, WIPS 방식): 공동출원 1건이 각 공동출원인 행으로 전개되어
     출원인별 카운팅 시 각각 1건씩 계산된다 (합계가 문헌 수를 초과할 수 있음).
     mode 'first': 대표(첫) 출원인만. 빈 이름은 제외.
+
+    settings["_exclude_applicants"] (필터 '제외 출원인'): 해당 이름은 출원인별
+    집계·순위·전개에서 제외된다 — 문헌 자체는 유지되고, 협력 네트워크 등
+    _co_applicants_display 를 직접 쓰는 공동출원 분석에는 적용되지 않는다.
     """
     import pandas as _pd
+    excluded = set(map(str, (settings or {}).get("_exclude_applicants") or []))
     if _coapp_mode(settings) == "all" and "_co_applicants_display" in df.columns:
         idx, vals = [], []
         for i, lst in df["_co_applicants_display"].items():
             for a in (lst or []):
                 s = str(a).strip()
-                if s:
+                if s and s not in excluded:
                     idx.append(i)
                     vals.append(s)
         if vals:
             return _pd.Series(vals, index=idx)
     s = df["applicant_display"].astype(str)
     s = s[s.str.strip() != ""]
+    if excluded:
+        s = s[~s.isin(excluded)]
     return s
 
 

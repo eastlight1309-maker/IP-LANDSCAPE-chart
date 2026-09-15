@@ -167,8 +167,10 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
       });
     }
     function selected(id) {
+      var el = document.getElementById(id);
+      if (!el) return [];
       return Array.prototype.map.call(
-        document.getElementById(id).selectedOptions, function (o) { return o.value; });
+        el.selectedOptions, function (o) { return o.value; });
     }
     function collect() {
       var f = {};
@@ -176,7 +178,8 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
       var yt = document.getElementById('f-year-to').value;
       if (yf) f.year_from = Number(yf);
       if (yt) f.year_to = Number(yt);
-      ['applicants|f-applicants', 'tech_l1|f-tech-l1', 'tech_l2|f-tech-l2',
+      ['applicants|f-applicants', 'exclude_applicants|f-exclude-applicants',
+       'tech_l1|f-tech-l1', 'tech_l2|f-tech-l2',
        'tech_l3|f-tech-l3', 'countries|f-countries', 'legal_statuses|f-legal']
         .forEach(function (pair) {
           var parts = pair.split('|');
@@ -190,20 +193,41 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
       if (!saved) return;
       if (saved.year_from) document.getElementById('f-year-from').value = saved.year_from;
       if (saved.year_to) document.getElementById('f-year-to').value = saved.year_to;
-      [['applicants', 'f-applicants'], ['tech_l1', 'f-tech-l1'], ['tech_l2', 'f-tech-l2'],
+      [['applicants', 'f-applicants'], ['exclude_applicants', 'f-exclude-applicants'],
+       ['tech_l1', 'f-tech-l1'], ['tech_l2', 'f-tech-l2'],
        ['tech_l3', 'f-tech-l3'], ['countries', 'f-countries'], ['legal_statuses', 'f-legal']]
         .forEach(function (pair) {
           var vals = saved[pair[0]] || [];
-          Array.prototype.forEach.call(document.getElementById(pair[1]).options, function (o) {
+          var el = document.getElementById(pair[1]);
+          if (!el) return;
+          Array.prototype.forEach.call(el.options, function (o) {
             o.selected = vals.indexOf(o.value) >= 0;
           });
         });
       document.getElementById('f-active-only').checked = !!saved.active_only;
     }
+    function ensureExcludeSelect() {
+      // '제외 출원인' 필터 — HTML 탭 수정 없이 JS 로 주입 (출원인 필터 옆).
+      // 공동출원 자체 분석(협력 네트워크 등)을 제외한 출원인별 집계·순위에서
+      // 선택한 이름을 제외한다 (문헌 자체는 유지 — 노이즈 출원인 제거용).
+      if (document.getElementById('f-exclude-applicants')) return;
+      var appItem = document.getElementById('f-applicants');
+      appItem = appItem && appItem.closest('.filter-item');
+      if (!appItem) return;
+      var item = Ui.el('<div class="filter-item"><label title="선택한 출원인을 출원인별 ' +
+        '집계·순위·비교에서 제외합니다 (특허 문헌 자체는 유지, 협력 네트워크 등 공동출원 ' +
+        '자체 분석에는 미적용)">제외 출원인 🚫</label>' +
+        '<select id="f-exclude-applicants" multiple></select></div>');
+      appItem.parentNode.insertBefore(item, appItem.nextSibling);
+    }
     function load() {
       return Api.post('/api/filter-options', { filters: {} }).then(function (data) {
         State.filterOptions = data.options;
+        ensureExcludeSelect();
         fillSelect('f-applicants', data.options.applicants);
+        if (document.getElementById('f-exclude-applicants')) {
+          fillSelect('f-exclude-applicants', data.options.applicants);
+        }
         fillSelect('f-tech-l1', data.options.tech_l1);
         fillSelect('f-tech-l2', data.options.tech_l2);
         fillSelect('f-tech-l3', data.options.tech_l3);
@@ -231,9 +255,12 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
     function reset() {
       document.getElementById('f-year-from').value = '';
       document.getElementById('f-year-to').value = '';
-      ['f-applicants', 'f-tech-l1', 'f-tech-l2', 'f-tech-l3', 'f-countries', 'f-legal']
+      ['f-applicants', 'f-exclude-applicants', 'f-tech-l1', 'f-tech-l2', 'f-tech-l3',
+       'f-countries', 'f-legal']
         .forEach(function (id) {
-          Array.prototype.forEach.call(document.getElementById(id).options,
+          var el = document.getElementById(id);
+          if (!el) return;
+          Array.prototype.forEach.call(el.options,
             function (o) { o.selected = false; });
         });
       document.getElementById('f-active-only').checked = false;
@@ -5519,11 +5546,13 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
       '<tr><td colspan="2" style="background:#f4f8fb;font-weight:700">🗂️ 보관·설정</td></tr>' +
       '<tr><td>🗂️ 인사이트 보관함</td><td>생성한 LLM 인사이트가 차트 이미지와 함께 작업별로 자동 저장되는 곳 — 항목을 골라 임원 보고용 PPT 로 내려받습니다.</td></tr>' +
       '<tr><td>📖 사용 설명서</td><td>지금 보고 있는 이 화면입니다.</td></tr>' +
-      '<tr><td>⚙️ Settings &amp; Admin</td><td>엑셀 업로드(작업 저장소)·임베딩 벡터 파일·컬럼 매핑·분석 단위·공동출원 집계·분석 목적·임계값·LLM 설정·출원인 표준화·분석 스냅샷·사용자 관리.</td></tr></tbody></table>' +
+      '<tr><td>⚙️ Settings &amp; Admin</td><td>엑셀 업로드(작업 저장소)·임베딩 벡터 파일·컬럼 매핑·분석 단위·공동출원 집계·분석 목적·임계값·LLM 설정·출원인 표준화·<b>기술분류 정비</b>(유사 분류 병합 제안·수동 병합·노이즈→미분류)·분석 스냅샷·사용자 관리.</td></tr></tbody></table>' +
       '<div style="color:#647b8d;font-size:11.5px;margin-top:6px">좌측 메뉴는 🚀 시작하기·🎯 목적 맞춤 분석으로 시작해 ① 전체 동향 → ② 기술 분석(어떤 기술) → ③ 기업 분석(어느 회사) → ④ 심층·품질 순서로 배열되어 있습니다 — 전체를 훑고, 기술을 고르고, 회사를 파고드는 흐름입니다.</div>');
     section('🖱️ 차트 공통 기능',
       '<ul style="padding-left:18px;line-height:1.9">' +
       '<li><b>드릴다운</b>: 차트의 점·막대·셀·노드를 클릭하면 근거 특허 목록이 열립니다. 표의 파란 텍스트도 클릭 가능합니다.</li>' +
+      '<li><b>🚫 제외 출원인 (필터)</b>: 상세 필터의 "제외 출원인"에서 고른 이름은 출원인별 집계·순위·비교(출원인 순위, DNA, 엔트로피, 심층 시그널의 기업별 차트 등)에서 제외됩니다 — 대학·개인 등 불필요한 출원인이 순위에 끼어드는 노이즈를 제거합니다. 특허 문헌 자체는 유지되므로 전체 건수·기술 차트는 변하지 않고, 협력 네트워크 등 <b>공동출원 자체 분석에는 적용되지 않습니다</b>.</li>' +
+      '<li><b>🧩 기술분류 정비</b>: Settings 의 "기술분류 정비 관리"에서 비슷한 표기(대소문자·공백·유사 문자열)를 묶을지 제안받아 병합하거나, 표준 분류명을 직접 입력해 수동으로 묶고, 의미 없는 분류를 노이즈로 지정해 "미분류"로 표기할 수 있습니다. 특수문자·순수 숫자·결측 표기는 자동으로 미분류 처리되며, 규칙은 모든 기술 차트에 즉시 반영됩니다.</li>' +
       '<li><b>🎯 분석 범위 (1개 회사 / 여러 회사)</b>: 상단 필터바의 <b>분석 범위</b>에서 "여러 회사 (전체)"와 "1개 회사"를 전환할 수 있습니다. <b>1개 회사</b>를 고르고 회사를 선택하면 모든 분석이 그 회사 중심으로 다시 계산됩니다 — ① 자사 관점 분석(White Space·경영 요약·핵심특허 영향력 등)은 그 회사를 자사/관점으로 삼아 <b>전체 시장 대비</b>로 계산하고, ② 나머지 분석은 그 회사 문헌(공동출원 포함)만 집계하며, ③ 여러 회사 비교 전용 분석(선행-추종·발명자 이동·권리범위 엔트로피·양도 분석)은 사유와 함께 자동 비활성화됩니다. 차트 클릭 드릴다운도 같은 범위로 정렬되고, LLM 인사이트는 그 회사의 전략·리스크·기회 관점으로 작성됩니다 (공동출원 상대 등 다른 회사 정보는 관계 맥락으로 표시). 선택은 브라우저에 기억됩니다.</li>' +
       '<li><b>👥 출원인 선택</b>: 출원 동향 · 기술분류 동향 · 출원인 포커스 · 신흥 기술 탐지 · 기술×연도 버블 · 심층 시그널 4개 탭 · 특수 신호 2개 탭(심사관 인텔리전스 포함) · 핵심특허 영향력 카드 상단의 드롭다운으로 특정 출원인만 골라 볼 수 있습니다 (공동출원 건 포함 매칭). White Space Map 에서는 선택한 출원인이 <b>자사</b>가 되어 ◇(자사 역량 보유) 판정 기준이 됩니다. 출원인 포커스 탭은 선택한 회사의 집중 기술과 "작지만 최근 3년에 급부상한 아이템"을 찾아줍니다. <b>차트가 여러 개인 탭</b>에서는 각 차트 아래의 <b>"이 차트만: 출원인 선택"</b> 드롭다운으로 차트마다 서로 다른 출원인을 적용할 수 있습니다 — 선택한 차트만 그 출원인 기준으로 재계산되어 교체되고 나머지 차트·표는 그대로 유지됩니다 (카드 상단 드롭다운은 탭 전체에 적용). 선택 출원인 기준으로 계산할 수 없는 차트(표본 부족 등)는 사유가 표시되고 원래 차트가 유지됩니다.</li>' +
       '<li><b>Excel</b>: 카드 우상단 Excel 버튼 — 화면 차트의 집계 데이터를 시트별로 다운로드합니다. 첫 시트 "설명"에 카드 설명·각 시트의 축/색 의미·차트 해석·인사이트가 함께 들어가 파일만 열어도 데이터 의미를 알 수 있습니다. 일부 차트는 화면보다 상세한 원천 데이터 시트가 추가로 붙습니다 (예: 기업별 과학 근접도 — 회사별 평균 NPL·표본 수·NPL 인용 특허 수).</li>' +
@@ -6390,7 +6419,143 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
     var holder = Ui.el('<div></div>');
     content.appendChild(holder);
     renderApplicantManager(holder, false);
+
+    /* 기술분류 정비 관리 (전체 폭) */
+    var techHolder = Ui.el('<div></div>');
+    content.appendChild(techHolder);
+    renderTechManager(techHolder);
   };
+
+  /* ---------- 기술분류 정비 관리 ---------- */
+  function renderTechManager(h) {
+    var c = card('🧩 기술분류 정비 관리 (유사 분류 병합 · 노이즈→미분류)',
+      '엑셀의 기술분류 표기를 정비해 분석에 반영합니다. ① 아래 "묶을까요?" 제안에서 비슷한 ' +
+      '표기(대소문자·공백·특수문자 차이, 유사 문자열)를 한 번에 병합하거나, ② 목록에서 표준 ' +
+      '분류명을 직접 입력해 수동으로 묶고, ③ 의미 없는 분류는 노이즈로 지정하면 "미분류"로 ' +
+      '표기됩니다. 특수문자만·순수 숫자·1글자·결측 표기(nan/미상/없음 등)는 규칙 없이도 자동으로 ' +
+      '미분류 처리됩니다. 규칙은 A축 기술분류(대/중/소·다중분류) 전 분석에 즉시 적용됩니다.');
+    h.appendChild(c.root);
+    Api.get('/api/tech-rules').then(function (data) {
+      c.body.innerHTML = '';
+      var classes = data.classes || [];
+      if (!classes.length) {
+        c.body.innerHTML = '<div class="status-empty">Dataset 선택 후 사용 가능합니다 ' +
+          '(기술분류 또는 IPC 매핑 필요).</div>';
+        return;
+      }
+      function post(body, msg) {
+        Api.post('/api/tech-rules', body).then(function () {
+          Ui.toast(msg || '저장되었습니다 — 분석에 즉시 반영됩니다.');
+          Views.render(State.view);
+        }).catch(errToast);
+      }
+      // ── ① 유사 분류 제안 (묶을까요?) ──────────────────────────
+      var sug = data.suggestions || [];
+      if (sug.length) {
+        c.body.appendChild(Ui.el('<div style="font-weight:700;font-size:12.5px;margin-bottom:4px">' +
+          '🔗 비슷한 기술분류 발견 — 묶을까요? (' + sug.length + '그룹)</div>'));
+        var sWrap = Ui.el('<div style="display:flex;flex-direction:column;gap:6px;margin-bottom:10px;' +
+          'max-height:220px;overflow-y:auto"></div>');
+        sug.forEach(function (g) {
+          var row = Ui.el('<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;' +
+            'border:1px solid #e3edf5;border-radius:8px;padding:6px 10px;font-size:12px"></div>');
+          row.appendChild(Ui.el('<span>' + g.members.map(function (m) {
+            return Ui.esc(m.name) + ' <span style="color:#93a5b4">(' + m.count + ')</span>';
+          }).join(' · ') + '</span>'));
+          var tsel = document.createElement('select');
+          g.members.forEach(function (m) {
+            var o = document.createElement('option');
+            o.value = m.name; o.textContent = '→ ' + m.name;
+            if (m.name === g.target) o.selected = true;
+            tsel.appendChild(o);
+          });
+          var btn = Ui.el('<button class="btn small primary">이 표기로 묶기</button>');
+          btn.addEventListener('click', function () {
+            var target = tsel.value;
+            var m = {};
+            g.members.forEach(function (x) { if (x.name !== target) m[x.name] = target; });
+            post({ mapping: m, history_entry: '유사 분류 병합 → ' + target },
+              '"' + target + '" 로 ' + Object.keys(m).length + '개 표기를 병합했습니다.');
+          });
+          row.appendChild(tsel);
+          row.appendChild(btn);
+          sWrap.appendChild(row);
+        });
+        c.body.appendChild(sWrap);
+      }
+      // ── ② 분류 목록 (검색·수동 병합·노이즈) ────────────────────
+      var searchRow = Ui.el('<div style="display:flex;gap:6px;align-items:center;margin-bottom:6px">' +
+        '<input type="text" id="tr-search" placeholder="🔍 분류명 검색 — Enter" style="flex:1;max-width:300px">' +
+        '<button class="btn small" id="tr-search-btn">검색</button>' +
+        '<span id="tr-info" style="font-size:11.5px;color:#647b8d">' + classes.length + '개 분류</span></div>');
+      c.body.appendChild(searchRow);
+      var wrap = Ui.el('<div style="max-height:340px;overflow:auto"></div>');
+      function renderTable(list) {
+        wrap.innerHTML = '';
+        var tbl = Ui.el(simpleTable(['기술분류(원본)', '건수', '현재 표준 분류', '', ''], []));
+        list.slice(0, 200).forEach(function (cl) {
+          var tr = document.createElement('tr');
+          tr.innerHTML = '<td>' + Ui.esc(cl.name) +
+            (cl.noise ? ' <span class="badge warn">노이즈→미분류</span>' : '') +
+            (cl.approved ? ' <span class="badge good">병합됨</span>' : '') +
+            '</td><td class="num">' + cl.count + '</td>';
+          var tdCur = document.createElement('td');
+          var input = Ui.el('<input type="text" style="width:150px" value="' +
+            Ui.esc(cl.current) + '">');
+          tdCur.appendChild(input);
+          tr.appendChild(tdCur);
+          var tdOk = document.createElement('td');
+          var ok = Ui.el('<button class="btn small">이 이름으로 묶기</button>');
+          ok.addEventListener('click', function () {
+            var v = input.value.trim();
+            if (!v || v === cl.name) { Ui.toast('다른 표준 분류명을 입력하세요.', 'warn'); return; }
+            var m = {}; m[cl.name] = v;
+            post({ mapping: m, history_entry: '수동 병합: ' + cl.name + ' → ' + v });
+          });
+          tdOk.appendChild(ok);
+          if (cl.approved || cl.noise) {
+            var rst = Ui.el('<button class="btn small" style="margin-left:4px">원복</button>');
+            rst.addEventListener('click', function () {
+              post({ reset: [cl.name], unnoise: [cl.name],
+                     history_entry: '원복: ' + cl.name });
+            });
+            tdOk.appendChild(rst);
+          }
+          tr.appendChild(tdOk);
+          var tdNo = document.createElement('td');
+          if (!cl.noise) {
+            var nz = Ui.el('<button class="btn small" title="의미 없는 분류를 미분류로 표기">노이즈 지정</button>');
+            nz.addEventListener('click', function () {
+              post({ noise: [cl.name], history_entry: '노이즈 지정: ' + cl.name },
+                '"' + cl.name + '" 은(는) 이제 미분류로 표기됩니다.');
+            });
+            tdNo.appendChild(nz);
+          }
+          tr.appendChild(tdNo);
+          tbl.querySelector('tbody').appendChild(tr);
+        });
+        wrap.appendChild(tbl);
+      }
+      renderTable(classes);
+      c.body.appendChild(wrap);
+      function runSearch() {
+        var q = searchRow.querySelector('#tr-search').value.trim().toLowerCase();
+        var list = !q ? classes : classes.filter(function (cl) {
+          return cl.name.toLowerCase().indexOf(q) >= 0 ||
+            String(cl.current).toLowerCase().indexOf(q) >= 0;
+        });
+        searchRow.querySelector('#tr-info').textContent = list.length + '개 분류';
+        renderTable(list);
+      }
+      searchRow.querySelector('#tr-search-btn').addEventListener('click', runSearch);
+      searchRow.querySelector('#tr-search').addEventListener('keydown', function (ev) {
+        if (ev.key === 'Enter') runSearch();
+      });
+      if (data.note) {
+        c.body.appendChild(Ui.el('<div class="disclaimer">' + Ui.esc(data.note) + '</div>'));
+      }
+    }).catch(errToast);
+  }
 
   /* ------------------------------------------- 작업자/팀명 (내 작업 필터) */
   /* 작업자 정체성은 로그인 계정 하나로 통일한다 — 로그인 이름이 있으면 그것이

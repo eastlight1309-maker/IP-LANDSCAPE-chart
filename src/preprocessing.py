@@ -303,6 +303,67 @@ def build_tech_lists(df):
     return df
 
 
+TECH_UNCLASSIFIED = "미분류"
+
+# 자동 노이즈 판정: 값이 전부 특수문자('-', '.', '/')·순수 숫자이거나
+# 결측 표기(nan/none/null/미상/없음/해당없음)면 분류 정보가 아니다 → '미분류'.
+# 한 글자 알파벳('A' 등)은 정당한 분류 코드일 수 있어 자동 판정하지 않는다 —
+# 필요하면 기술분류 정비 화면에서 노이즈로 직접 지정한다.
+_TECH_JUNK_WORDS = {"nan", "none", "null", "-", "미상", "없음", "해당없음", "n/a", "na"}
+
+
+def is_tech_noise(label):
+    """기술분류 라벨의 자동 노이즈 여부 (미분류 처리 대상)."""
+    s = str(label or "").strip()
+    if not s or s.lower() in _TECH_JUNK_WORDS:
+        return True
+    if re.fullmatch(r"[\W_]+", s):       # 특수문자만
+        return True
+    if re.fullmatch(r"\d+(\.\d+)?", s):  # 순수 숫자
+        return True
+    return False
+
+
+def apply_tech_rules(df, tech_rules):
+    """기술분류 정비 규칙 적용 — A축 분류 리스트(_tech_list, _tech_l1/l2/l3_list).
+
+    - mapping: 원본분류 → 표준분류 (연쇄 1회 허용 — 표준분류에 또 규칙이 있으면 추적)
+    - noise: 사용자가 노이즈로 지정한 분류 → '미분류'
+    - 자동 노이즈(is_tech_noise): 특수문자·숫자·결측 표기 → '미분류' (규칙 없이도 항상)
+    병합 후 리스트 내 중복은 제거(순서 유지). B·C축(별도 분류 체계)은 건드리지 않는다.
+    """
+    rules = tech_rules or {}
+    tmap = {str(k).strip(): str(v).strip()
+            for k, v in (rules.get("mapping") or {}).items() if str(v).strip()}
+    noise = {str(x).strip() for x in (rules.get("noise") or []) if str(x).strip()}
+
+    def _norm_label(t):
+        s = str(t).strip()
+        if not s:
+            return None
+        if s in noise or is_tech_noise(s):
+            return TECH_UNCLASSIFIED
+        s = tmap.get(s, s)
+        s = tmap.get(s, s)  # 연쇄 규칙 1회 (변형→표준명, 표준명→새 표준명)
+        if s in noise or is_tech_noise(s):
+            return TECH_UNCLASSIFIED
+        return s
+
+    def _norm_list(lst):
+        out, seen = [], []
+        for t in (lst or []):
+            s = _norm_label(t)
+            if s and s not in seen:
+                seen.append(s)
+                out.append(s)
+        return out
+
+    for col in ("_tech_list", "_tech_l1_list", "_tech_l2_list", "_tech_l3_list"):
+        if col in df.columns:
+            df[col] = df[col].map(_norm_list)
+    return df
+
+
 def _tech_list_from_levels(df):
     """레벨 컬럼(소→중→대 우선)으로 _tech_list 구성."""
     for level in ("_tech_l3_list", "_tech_l2_list", "_tech_l1_list"):
@@ -685,7 +746,7 @@ def _derive_country(df):
 # ---------------------------------------------------------------------------
 # 표준 프레임 생성
 # ---------------------------------------------------------------------------
-def build_standard_frame(raw_df, mapping, applicant_rules=None):
+def build_standard_frame(raw_df, mapping, applicant_rules=None, tech_rules=None):
     """원본 DataFrame + 매핑 → 표준 개념 컬럼 DataFrame.
 
     - 매핑된 컬럼만 유지·rename (필요 컬럼 최소화)
@@ -797,6 +858,8 @@ def build_standard_frame(raw_df, mapping, applicant_rules=None):
         for a, s in zip(df["_is_active_bool"], df["legal_status_norm"])])
 
     df = build_tech_lists(df)
+    # 기술분류 정비 규칙 (유사 분류 병합·노이즈→미분류) — 자동 노이즈는 항상 적용
+    df = apply_tech_rules(df, tech_rules)
     # B·C축 기술분류 리스트 (매핑된 경우에만 — 소→중→대 우선, 다중값 지원)
     for axis in ("b", "c"):
         target = "_tech_%s_list" % axis

@@ -170,7 +170,7 @@ def needed_raw_columns(mapping):
 
 
 def get_prepared(dataset_name, mapping, applicant_rules=None, analysis_unit="family",
-                 embedding_file=None):
+                 embedding_file=None, tech_rules=None):
     """전처리 완료 표준 프레임 (캐시). 모든 분석 API 의 공통 진입점.
 
     embedding_file: 업로드된 임베딩 파일(.npy/.npz) entry id — 지정 시
@@ -181,12 +181,12 @@ def get_prepared(dataset_name, mapping, applicant_rules=None, analysis_unit="fam
     if not mapping:
         raise ValueError("컬럼 매핑이 비어 있습니다. 컬럼 매핑 화면에서 매핑을 설정하세요.")
     key = make_cache_key("prepared", dataset_name, mapping, applicant_rules or {},
-                         analysis_unit, embedding_file or "")
+                         analysis_unit, embedding_file or "", tech_rules or {})
     cached = DF_CACHE.get(key)
     if cached is not None:
         return cached, True
     raw = load_raw_dataframe(dataset_name, columns=needed_raw_columns(mapping))
-    df = build_standard_frame(raw, mapping, applicant_rules)
+    df = build_standard_frame(raw, mapping, applicant_rules, tech_rules=tech_rules)
     df = apply_analysis_unit(df, analysis_unit)
     df = df.reset_index(drop=True)
     if embedding_file:
