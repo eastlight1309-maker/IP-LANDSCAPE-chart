@@ -170,6 +170,35 @@ def test_applicant_rules(client):
     assert "SAMSUNG ELECTRONICS" not in reset["rules"]["mapping"]
 
 
+def test_applicant_rules_cover_owners_and_search(client, raw_df):
+    """표준화 관리 목록: 현재권리자로만 등장하는 이름(예: 'SK HYNIX')도
+    owner_side 플래그와 함께 나오고, ?q= 검색은 500행 상한 이전에 적용된다.
+
+    회귀: 권리자 전용 표기는 목록에 없어 규칙을 만들 수 없었고, 그 결과
+    'SK HYNIX → SK하이닉스' 같은 표기 변형이 가짜 양도로 남았다."""
+    ds = "owner_rules_ds"
+    df = raw_df.head(40).copy()
+    df["현재권리자"] = df["현재권리자"].astype(str)
+    df.loc[df.index[:6], "현재권리자"] = "SK HYNIX INC."   # 권리자 전용 표기
+    inject_dataset(ds, df)
+    clear_all_caches()
+    got = client.get("/api/applicant-rules?dataset=%s" % ds).get_json()
+    assert "현재권리자" in got["note"]
+    by_raw = {n["raw"]: n for n in got["names"]}
+    assert "SK HYNIX INC." in by_raw, "권리자 전용 이름이 목록에 없음"
+    row = by_raw["SK HYNIX INC."]
+    assert row["owner_side"] is True and row["co_only"] is False
+    assert row["count"] >= 1   # 분석 단위(패밀리 dedup) 기준 문헌 수
+    # 출원인으로 등장하는 이름은 owner_side=False
+    assert any(not n["owner_side"] for n in got["names"])
+    # 검색: 부분일치 (대소문자 무시), 원본/자동/현재 표준명 대상
+    q = client.get("/api/applicant-rules?dataset=%s&q=hynix" % ds).get_json()
+    assert q["names"], "검색 결과 없음"
+    assert all("HYNIX" in (n["raw"] + n["auto"] + n["current"]).upper()
+               for n in q["names"])
+    assert any(n["raw"] == "SK HYNIX INC." for n in q["names"])
+
+
 def test_applicant_rules_cover_co_applicants(client, raw_df):
     """공동출원인으로만 등장하는 원본명(예: 한글 음역 표기)도 표준화 관리
     목록에 나와야 하고(co_only 플래그), 그 이름에 규칙을 만들면 공동출원

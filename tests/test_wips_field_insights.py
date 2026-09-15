@@ -188,6 +188,34 @@ def test_epc_maintenance_section(prepared, settings_mod):
     assert "note" in sec
 
 
+# ---------------- 표준화 규칙: 표시명 키·권리자 적용 ----------------
+def test_rule_on_display_name_merges_variants():
+    """규칙 키가 '화면에 보이는 표준명'이어도 적용된다 (연쇄 규칙 포함).
+
+    회귀: '삼성전자→SEC' 규칙을 만들었는데 다른 규칙/경로로 '삼성전자'로
+    귀결되는 행이 병합되지 않고 남던 문제."""
+    import pandas as pd
+    from src.preprocessing import build_standard_frame
+    from src.column_mapping import suggest_mapping
+    df = pd.DataFrame({
+        "공개번호": ["KR1", "KR2", "KR3"],
+        "출원인": ["에스이씨", "삼성전자 주식회사", "SK하이닉스"],
+        "현재권리자": ["에스이씨", "삼성전자(주)", "SK HYNIX INC."],
+        "출원일": ["2020-01-01", "2021-02-02", "2022-03-03"],
+        "발명의 명칭": ["a", "b", "c"],
+    })
+    m = {k: v["column"] for k, v in suggest_mapping(list(df.columns)).items()}
+    rules = {"mapping": {"에스이씨": "삼성전자",      # 변형 → 표준명
+                         "삼성전자": "SEC",            # 표준명 → 새 표준명 (연쇄)
+                         "SK HYNIX INC.": "SK하이닉스"}}  # 권리자 전용 표기
+    out = build_standard_frame(df, m, applicant_rules=rules)
+    # 출원인: 연쇄 규칙까지 적용되어 전부 SEC 로 병합
+    assert list(out["applicant_display"][:2]) == ["SEC", "SEC"]
+    # 권리자도 동일 규칙 체인 적용 → 가짜 양도(표기 변형) 소멸
+    assert list(out["owner_display"]) == ["SEC", "SEC", "SK하이닉스"]
+    assert (out["applicant_display"] == out["owner_display"]).all()
+
+
 # ---------------- 상세보기 링크(비로그인) ----------------
 def test_patent_records_detail_link(prepared):
     """근거특허 목록: 상세보기 링크(비로그인)가 _detail_link 메타로 포함되고
@@ -209,6 +237,21 @@ def test_export_includes_detail_link(prepared):
     out = export_dataframe(prepared.head(10))
     assert "상세보기 링크" in out.columns
     assert str(out["상세보기 링크"].iloc[0]).startswith("https://")
+
+
+# ---------------- 권리범위 엔트로피: 분석 대상 출원인 선택 ----------------
+def test_scope_entropy_companies_selection(prepared, settings_mod):
+    """회사를 선택하면 그 출원인들만 레이더·표에 표시된다 (사용자 요청)."""
+    from src.analyses.scope_entropy import compute_scope_entropy
+    full = compute_scope_entropy(prepared, settings_mod)
+    assert full["status"] == "ok"
+    all_names = [r["company"] for r in full["companies"]]
+    assert len(all_names) >= 3
+    pick = all_names[:2]
+    sel = compute_scope_entropy(prepared, settings_mod, companies=pick)
+    assert sel["status"] == "ok"
+    sel_names = [r["company"] for r in sel["companies"]]
+    assert set(sel_names) == set(pick), sel_names
 
 
 # ---------------- ⑦ AI 요약 시맨틱 텍스트 소스 ----------------

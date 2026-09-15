@@ -4100,10 +4100,14 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
       { label: '권리범위 엔트로피', render: function (h) {
         analysisCard({
           analysis: 'scope-entropy', holder: h,
-          title: '권리범위 엔트로피 — 다양성 레이더 · 시계열',
+          title: '권리범위 엔트로피 — 다양성 레이더 · 시계열 (분석 대상 출원인 선택 가능)',
+          controls: multiCompanyControls('분석 대상 출원인'),
           help: '핵심 질문: "이 회사는 다양한 기술방향을 커버하는가, 같은 청구구조를 반복하는가?" ' +
             '기업별 범주 분포의 정규화 Shannon 엔트로피(0~1)를 기술분류·IPC·청구구조(임베딩 클러스터)·' +
-            '청구 카테고리·시장(국가)·키워드 차원에서 계산합니다. 데이터에 없는 차원은 자동 제외됩니다.',
+            '청구 카테고리·시장(국가)·키워드 차원에서 계산합니다. 데이터에 없는 차원은 자동 제외됩니다. ' +
+            '카드 상단의 "회사 추가…" 드롭다운으로 비교할 출원인만 직접 고르면(칩 클릭=제거, 최소 2개사) ' +
+            '선택하지 않은 공동출원 상대 등 다른 출원인은 레이더·시계열·표에서 완전히 제외됩니다 ' +
+            '(미선택=출원량 상위 기업 자동).',
           guide: '레이더: 각 축=다양성 차원, 값=정규화 엔트로피(0=한 범주 반복, 1=전 범주 균등). ' +
             '넓은 다각형=가치사슬을 넓게 커버, 좁은 다각형=특정 구조 반복. ' +
             '시계열: X축=연도, Y축=기술분류 엔트로피 — 상승은 탐색 확대, 하락은 수렴(집중) 신호. ' +
@@ -5189,49 +5193,84 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
   function renderApplicantManager(h, readOnly) {
     var c = card('출원인·권리자 표준화 ' + (readOnly ? '상태' : '관리'),
       '자동 표준화(대소문자·법인 접미사·괄호 정리)는 확정값이 아닌 검토·승인 대상입니다. ' +
-      '목록은 공동출원인을 포함한 전체 출원인 원본명 기준이며(건수=등장 문헌 수), ' +
-      '공동출원인으로만 등장하는 이름은 [공동] 배지로 표시됩니다. ' +
+      '목록은 대표 출원인·공동출원인·현재권리자를 포함한 전체 원본명 기준이며(건수=등장 문헌 수), ' +
+      '공동출원인으로만 등장하는 이름은 [공동], 현재권리자로만 등장하는 이름은 [권리자] 배지로 ' +
+      '표시됩니다. 승인한 규칙은 출원인·공동출원인·현재권리자 표준화에 모두 적용되고, 화면에 ' +
+      '보이는 표준명(예: 삼성전자)으로 규칙을 만들면 그 이름으로 귀결되는 모든 표기 변형이 한 번에 ' +
+      '병합됩니다. 표시는 500행까지 — 검색으로 그 밖의 표기 변형도 찾을 수 있습니다. ' +
       '그룹(자회사→모회사) 및 합병·사명변경 이력 관리, JSON Export/Import 지원.');
     h.appendChild(c.root);
-    Api.get('/api/applicant-rules').then(function (data) {
+    function loadNames(q) {
+      return Api.get('/api/applicant-rules' + (q ? ('?q=' + encodeURIComponent(q)) : ''));
+    }
+    var lastQ = '';
+    loadNames('').then(function (data) {
       c.body.innerHTML = '';
       var names = data.names || [];
       if (!names.length) {
         c.body.innerHTML = '<div class="status-empty">Dataset 선택 후 사용 가능합니다.</div>';
         return;
       }
-      var pendingMap = {};
-      var tbl = Ui.el(simpleTable(['원본명', '건수', '자동 표준명(후보)', '현재 표준명', '상태', ''], []));
-      names.slice(0, 200).forEach(function (n) {
-        var tr = document.createElement('tr');
-        tr.innerHTML = '<td>' + Ui.esc(n.raw) +
-          (n.co_only ? ' <span class="badge" title="공동출원인으로만 등장하는 이름 — 규칙을 만들면 협력 네트워크 등 공동출원 분석에 반영됩니다">공동</span>' : '') +
-          '</td><td class="num">' + n.count + '</td><td>' +
-          Ui.esc(n.auto) + '</td>';
-        var tdCur = document.createElement('td');
-        var input = Ui.el('<input type="text" style="width:160px" value="' + Ui.esc(n.current) + '"' +
-          (readOnly ? ' disabled' : '') + '>');
-        tdCur.appendChild(input);
-        tr.appendChild(tdCur);
-        tr.insertAdjacentHTML('beforeend', '<td>' + (n.approved ? '<span class="badge good">승인됨</span>'
-          : '<span class="badge">검토 대기</span>') + '</td>');
-        var tdBtn = document.createElement('td');
-        if (!readOnly) {
-          var ok = Ui.el('<button class="btn small">승인</button>');
-          ok.addEventListener('click', function () { pendingMap[n.raw] = input.value; ok.textContent = '대기…'; });
-          var rst = Ui.el('<button class="btn small">원복</button>');
-          rst.addEventListener('click', function () {
-            Api.post('/api/applicant-rules', { reset: [n.raw] }).then(function () {
-              Ui.toast('원본값으로 복원되었습니다.'); Views.render(State.view);
-            }).catch(errToast);
-          });
-          tdBtn.appendChild(ok); tdBtn.appendChild(rst);
-        }
-        tr.appendChild(tdBtn);
-        tbl.querySelector('tbody').appendChild(tr);
+      // 검색: 원본명/자동·현재 표준명 부분일치 — 서버에서 상한(500) 이전에
+      // 필터하므로 상위 500 밖의 표기 변형(예: SK HYNIX 변형들)도 찾을 수 있다
+      var searchRow = Ui.el('<div style="display:flex;gap:6px;align-items:center;margin-bottom:6px">' +
+        '<input type="text" id="ar-search" placeholder="🔍 회사명 검색 (예: 삼성, HYNIX) — Enter" ' +
+        'style="flex:1;max-width:320px">' +
+        '<button class="btn small" id="ar-search-btn">검색</button>' +
+        '<span id="ar-search-info" style="font-size:11.5px;color:#647b8d"></span></div>');
+      c.body.appendChild(searchRow);
+      function runSearch() {
+        var q = searchRow.querySelector('#ar-search').value.trim();
+        if (q === lastQ) return;
+        lastQ = q;
+        loadNames(q).then(function (d2) {
+          names = d2.names || [];
+          searchRow.querySelector('#ar-search-info').textContent =
+            (q ? '"' + q + '" ' : '') + names.length + '건';
+          renderTable();
+        }).catch(errToast);
+      }
+      searchRow.querySelector('#ar-search-btn').addEventListener('click', runSearch);
+      searchRow.querySelector('#ar-search').addEventListener('keydown', function (ev) {
+        if (ev.key === 'Enter') runSearch();
       });
+      var pendingMap = {};
       var wrap = Ui.el('<div style="max-height:380px;overflow:auto"></div>');
-      wrap.appendChild(tbl);
+      function renderTable() {
+        wrap.innerHTML = '';
+        var tbl = Ui.el(simpleTable(['원본명', '건수', '자동 표준명(후보)', '현재 표준명', '상태', ''], []));
+        names.slice(0, 200).forEach(function (n) {
+          var tr = document.createElement('tr');
+          tr.innerHTML = '<td>' + Ui.esc(n.raw) +
+            (n.co_only ? ' <span class="badge" title="공동출원인으로만 등장하는 이름 — 규칙을 만들면 협력 네트워크 등 공동출원 분석에 반영됩니다">공동</span>' : '') +
+            (n.owner_side ? ' <span class="badge" title="현재권리자로만 등장하는 이름 — 규칙을 만들면 출원인↔권리자 양도 분석의 가짜 이전(표기 변형)이 제거됩니다">권리자</span>' : '') +
+            '</td><td class="num">' + n.count + '</td><td>' +
+            Ui.esc(n.auto) + '</td>';
+          var tdCur = document.createElement('td');
+          var input = Ui.el('<input type="text" style="width:160px" value="' + Ui.esc(n.current) + '"' +
+            (readOnly ? ' disabled' : '') + '>');
+          tdCur.appendChild(input);
+          tr.appendChild(tdCur);
+          tr.insertAdjacentHTML('beforeend', '<td>' + (n.approved ? '<span class="badge good">승인됨</span>'
+            : '<span class="badge">검토 대기</span>') + '</td>');
+          var tdBtn = document.createElement('td');
+          if (!readOnly) {
+            var ok = Ui.el('<button class="btn small">승인</button>');
+            ok.addEventListener('click', function () { pendingMap[n.raw] = input.value; ok.textContent = '대기…'; });
+            var rst = Ui.el('<button class="btn small">원복</button>');
+            rst.addEventListener('click', function () {
+              Api.post('/api/applicant-rules', { reset: [n.raw] }).then(function () {
+                Ui.toast('원본값으로 복원되었습니다.'); Views.render(State.view);
+              }).catch(errToast);
+            });
+            tdBtn.appendChild(ok); tdBtn.appendChild(rst);
+          }
+          tr.appendChild(tdBtn);
+          tbl.querySelector('tbody').appendChild(tr);
+        });
+        wrap.appendChild(tbl);
+      }
+      renderTable();
       c.body.appendChild(wrap);
       if (!readOnly) {
         var bar = Ui.el('<div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap"></div>');

@@ -1010,15 +1010,19 @@ def register_routes(app):
         POST {"mapping":{원본:표준}, "groups":{표준:그룹}, "history_entry"?,
               "import"?:{...}} → 저장. "reset":[원본명...] → 해당 매핑 제거(원복).
 
-        목록은 대표(첫) 출원인만이 아니라 공동출원인까지 포함한 전체 출원인
-        원본명 기준이다 — 공동출원인으로만 등장하는 이름(예: 한글 음역 표기)도
-        여기서 규칙을 만들 수 있어야 협력 네트워크 등 공동출원 분석에 반영된다.
-        count 는 그 이름이 출원인으로 등장하는 문헌 수, co_only 는 공동출원인
-        으로만 등장(대표 출원인으로는 없음)을 뜻한다.
+        목록은 대표(첫) 출원인·공동출원인·현재권리자까지 포함한 전체 원본명
+        기준이다 — 공동출원인/권리자로만 등장하는 이름(예: 'SK HYNIX' 같은
+        권리자 표기, 한글 음역)도 여기서 규칙을 만들 수 있어야 협력 네트워크·
+        양도(권리이전) 분석에 반영된다. 같은 규칙이 출원인·공동출원인·현재권리자
+        표준화 모두에 적용된다. count 는 그 이름이 등장하는 문헌 수,
+        co_only 는 공동출원인으로만, owner_side 는 현재권리자로만 등장을 뜻한다.
+        ?q=검색어 로 원본명/자동·현재 표준명 부분일치 검색 (상한 500행 이전에
+        적용되므로 상위 500 밖의 표기 변형도 찾을 수 있다).
         """
         if request.method == "GET":
             rules = storage.load_applicant_rules()
             names = []
+            q = str(request.args.get("q") or "").strip().lower()
             try:
                 df, settings, dataset, mapping, _f = _prepared_for(
                     {"dataset": request.args.get("dataset")})
@@ -1031,17 +1035,50 @@ def register_routes(app):
                     all_raw = first_raw
                 raw_counts = all_raw.value_counts()
                 first_set = set(first_raw.astype(str))
+                app_set = set(map(str, raw_counts.index))
                 user_map = (rules.get("mapping") or {})
-                for raw, cnt in raw_counts.head(500).items():
+
+                def _entry(raw, cnt, co_only, owner_side):
                     auto = auto_standardize_name(raw)
-                    names.append({"raw": str(raw), "auto": auto,
-                                  "current": user_map.get(str(raw), auto),
-                                  "approved": str(raw) in user_map, "count": int(cnt),
-                                  "co_only": str(raw) not in first_set})
+                    return {"raw": str(raw), "auto": auto,
+                            "current": user_map.get(str(raw), auto),
+                            "approved": str(raw) in user_map, "count": int(cnt),
+                            "co_only": bool(co_only), "owner_side": bool(owner_side)}
+
+                def _match(e):
+                    if not q:
+                        return True
+                    return any(q in str(e[k]).lower()
+                               for k in ("raw", "auto", "current"))
+
+                for raw, cnt in raw_counts.items():
+                    e = _entry(raw, cnt, str(raw) not in first_set, False)
+                    if _match(e):
+                        names.append(e)
+                    if len(names) >= 500:
+                        break
+                # 현재권리자(assignee) 원본명 — 출원인으로는 등장하지 않는 표기
+                # (예: 권리자 컬럼의 'SK HYNIX')도 규칙을 만들 수 있게 포함
+                if "assignee" in df.columns and len(names) < 500:
+                    owner_first = df["assignee"].map(
+                        lambda v: (split_names(v) or [""])[0]).astype(str).str.strip()
+                    owner_first = owner_first[
+                        (owner_first != "") &
+                        (~owner_first.str.lower().isin(["nan", "none"]))]
+                    for raw, cnt in owner_first.value_counts().items():
+                        if str(raw) in app_set:
+                            continue
+                        e = _entry(raw, cnt, False, True)
+                        if _match(e):
+                            names.append(e)
+                        if len(names) >= 500:
+                            break
             except (LookupError, ValueError):
                 pass
             return {"status": "ok", "rules": rules, "names": names,
-                    "note": "자동 표준화 결과는 확정값이 아니라 검토·승인 대상입니다."}
+                    "note": "자동 표준화 결과는 확정값이 아니라 검토·승인 대상입니다. "
+                            "규칙은 출원인·공동출원인·현재권리자 표준화에 모두 "
+                            "적용됩니다."}
         body = json_body()
         rules = storage.load_applicant_rules() or {}
         if body.get("import"):

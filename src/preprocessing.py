@@ -557,6 +557,10 @@ def standardize_applicants(df, applicant_rules=None):
         name = user_map.get(raw) or user_map.get(prov) or user_map.get(auto)
         if not name:
             name = prov or auto or raw
+        # 최종 표시명에도 규칙 적용 — 화면에 보이는 표준명(대표명화 값·자동
+        # 표준화 결과)으로 규칙을 만들면, 그 이름으로 귀결되는 모든 표기 변형이
+        # 한 번에 병합된다 (예: '삼성전자'→'SEC' 규칙 하나로 잔존 표기 정리).
+        name = user_map.get(str(name).strip(), name)
         return groups.get(name, name)
 
     df["applicant_display"] = [
@@ -828,6 +832,8 @@ def build_standard_frame(raw_df, mapping, applicant_rules=None):
             auto = auto_standardize_name(v)
             name = _omap.get(v) or _omap.get(auto) \
                 or _canon.get(auto) or auto
+            # 최종 표시명에도 규칙 적용 (출원인 쪽 _final 과 동일한 안전망)
+            name = _omap.get(str(name).strip(), name)
             return _ogroups.get(name, name)
 
         df["owner_display"] = owner_first.map(_owner_std)
