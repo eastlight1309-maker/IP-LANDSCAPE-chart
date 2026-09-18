@@ -46,6 +46,7 @@ MODULE_ORDER = [
     "src/analyses/transition.py",
     "src/analyses/trajectory.py",
     "src/analyses/company_dna.py",
+    "src/analyses/custom_chart.py",
     "src/analyses/lead_lag.py",
     "src/analyses/claim_density.py",
     "src/analyses/citation_influence.py",

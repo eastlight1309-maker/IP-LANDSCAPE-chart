@@ -370,3 +370,102 @@ textarea.json-box { width: 100%; min-height: 110px; font-family: monospace; font
 /* 인사이트·AI 패널 여백 통일 */
 .insight-box, .ai-panel, .chart-guide { margin-top: 12px; }
 .status-empty, .status-disabled, .status-error { border: 1px dashed #e0e8ef; }
+
+/* ======================================================================
+   가독성 개선 · 경영진 화면 (2026-09)
+   - 차트 가운데 / 인사이트 오른쪽 2단 배치 (.chart-split)
+   - 🏠 시작 화면 타일, 🧪 사용자 정의 차트 폼, 📂 저장 결과 갤러리
+   - 본문 타이포·표·카드 여백 정돈 (기존 클래스 이름은 그대로 사용)
+   ====================================================================== */
+
+/* ---------- 차트 가운데 · 인사이트 오른쪽 ---------- */
+.chart-split {
+  display: grid; grid-template-columns: minmax(0, 1fr) 360px;
+  gap: 16px; align-items: start;
+}
+.chart-split-main { min-width: 0; }
+.chart-split-side {
+  min-width: 0; position: sticky; top: 6px;
+  max-height: calc(100vh - 150px); overflow-y: auto; overscroll-behavior: contain;
+  padding-left: 14px; border-left: 2px solid #e6eef5;
+}
+.chart-split-side .insight-box,
+.chart-split-side .ai-panel { margin-top: 0; margin-bottom: 12px; }
+.chart-split-side .ai-panel { position: static; }
+.chart-split-side::-webkit-scrollbar { width: 8px; }
+.chart-split-side::-webkit-scrollbar-thumb { background: #d4e0ea; border-radius: 4px; }
+@media (max-width: 1240px) {
+  .chart-split { grid-template-columns: 1fr; }
+  .chart-split-side {
+    position: static; max-height: none; padding-left: 0;
+    border-left: 0; border-top: 2px solid #e6eef5; padding-top: 12px;
+  }
+}
+
+/* ---------- 🏠 시작 화면 ---------- */
+.home-hero .card-body { padding: 22px 24px; }
+.home-title { font-size: 21px; font-weight: 800; color: #14344f; letter-spacing: -.2px; }
+.home-sub { font-size: 13.5px; color: #55708a; margin-top: 6px; line-height: 1.7; }
+.home-grid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 16px; margin-bottom: 16px;
+}
+.home-tile {
+  background: #fff; border: 1px solid #dfe8f0; border-radius: 12px;
+  padding: 20px 22px; display: flex; flex-direction: column; gap: 10px;
+  box-shadow: 0 1px 3px rgba(20, 40, 60, .06); transition: box-shadow .15s, transform .15s;
+}
+.home-tile:hover { box-shadow: 0 6px 18px rgba(20, 40, 60, .12); transform: translateY(-1px); }
+.home-tile.primary { border-color: #1668a8; border-width: 2px; }
+.home-tile-icon { font-size: 30px; line-height: 1; }
+.home-tile-title { font-size: 17px; font-weight: 800; color: #14344f; }
+.home-tile-desc { font-size: 13px; color: #55708a; line-height: 1.65; }
+.home-tile-list {
+  margin: 0; padding-left: 18px; font-size: 12.5px; color: #647b8d;
+  line-height: 1.85; flex: 1;
+}
+
+/* ---------- 🧪 사용자 정의 차트 폼 ---------- */
+.builder-form {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 12px 16px;
+}
+.builder-field { display: flex; flex-direction: column; gap: 4px; }
+.builder-field label { font-size: 12px; font-weight: 700; color: #35566f; }
+.builder-field select {
+  height: 34px; border: 1px solid #ccd6df; border-radius: 6px;
+  background: #fbfcfd; font-size: 12.5px; padding: 0 8px; width: 100%;
+}
+.builder-field select:focus { outline: 2px solid #9fc6e6; outline-offset: -1px; }
+.builder-help { font-size: 11px; color: #93a5b4; }
+
+/* ---------- 📂 저장된 결과 갤러리 ---------- */
+.saved-item {
+  border: 1px solid #e3ecf3; border-radius: 10px; padding: 12px 14px; margin-bottom: 14px;
+  background: #fff;
+}
+.saved-head { display: flex; gap: 10px; align-items: center; margin-bottom: 10px; }
+.saved-head b { font-size: 13.5px; color: #14344f; }
+.saved-meta { color: #93a5b4; font-size: 11px; white-space: nowrap; }
+.saved-img {
+  max-width: 100%; border: 1px solid #e8eff5; border-radius: 8px;
+  margin-bottom: 10px; background: #fff; display: block;
+}
+
+/* ---------- 전반 가독성 ---------- */
+#ipls-app { font-size: 13.5px; }
+#ipls-content { padding: 16px; }
+.card-title { font-size: 14.5px; letter-spacing: -.1px; }
+.card-desc { font-size: 12.5px; line-height: 1.75; }
+.card-body { padding: 12px 16px; }
+.insight-box { font-size: 12.8px; line-height: 1.8; }
+.insight-box ul li { margin-bottom: 3px; }
+.chart-guide { font-size: 12.3px; line-height: 1.8; }
+.ipls-table { font-size: 12.3px; }
+.ipls-table tbody tr:hover { background: #eef5fb; }
+.ipls-table th {
+  position: sticky; top: 0; z-index: 1; font-weight: 700;
+  box-shadow: inset 0 -1px 0 #dde7ef;
+}
+.status-empty, .status-disabled, .status-error { font-size: 12.5px; line-height: 1.8; }
+.badge { letter-spacing: -.1px; }

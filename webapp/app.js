@@ -89,6 +89,27 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
         return fetch(backendUrl(path), { headers: Auth.headers() }).then(handle)
           .finally(function () { spin(false); });
       },
+      /* 인증이 필요한 이미지 로드 — <img src> 는 인증 헤더를 보낼 수 없어
+         본인 소유 차트 캡처가 404 로 비어 보이던 문제를 해결한다.
+         fetch 로 받아 blob URL 로 표시하고, 실패 시 사유를 대신 보여준다. */
+      image: function (img, path) {
+        return fetch(backendUrl(path), { headers: Auth.headers() })
+          .then(function (resp) {
+            if (!resp.ok) throw new Error('이미지를 불러오지 못했습니다 (' + resp.status + ')');
+            return resp.blob();
+          }).then(function (blob) {
+            var url = URL.createObjectURL(blob);
+            img.src = url;
+            img.addEventListener('load', function () {
+              setTimeout(function () { URL.revokeObjectURL(url); }, 2000);
+            });
+          }).catch(function (e) {
+            var note = document.createElement('div');
+            note.className = 'status-empty';
+            note.textContent = '차트 이미지를 표시할 수 없습니다 — ' + e.message;
+            if (img.parentNode) img.parentNode.replaceChild(note, img);
+          });
+      },
       post: function (path, body, spinText) {
         spin(true, spinText);
         return fetch(backendUrl(path), {
@@ -1612,6 +1633,460 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
      → ④ 분석 목적 선택·분석 시작. 흩어져 있던 시작 절차를 한 화면에 순서대로
      모은 가이드로, 각 단계는 기존 기능(Settings 업로드·필터바 분석 범위·목적
      화면)과 같은 저장소를 공유한다 — 어디서 바꿔도 서로 동기화. */
+  /* ---------- 0. 시작 화면 — 새 프로젝트 vs 기존 결과 보기 ----------
+     경영진·검토자는 분석을 새로 돌리지 않고 저장된 결과만 보는 경우가 많아,
+     앱 진입 시 두 갈래를 먼저 고르게 한다 (기존 화면·기능은 그대로 유지). */
+  Views.home = function (content) {
+    var s = (State.config && State.config.settings) || {};
+    var hasDataset = !!(s.dataset || s.demo_mode);
+    var hero = Ui.el('<div class="card home-hero"><div class="card-body">' +
+      '<div class="home-title">IP Landscape Advanced Insight</div>' +
+      '<div class="home-sub">무엇을 하시겠어요? 아래에서 하나를 선택하세요. ' +
+      '언제든 좌측 메뉴에서 다시 돌아올 수 있습니다.</div></div></div>');
+    content.appendChild(hero);
+
+    var grid = Ui.el('<div class="home-grid"></div>');
+    content.appendChild(grid);
+
+    function tile(icon, title, desc, bullets, btnLabel, onClick, primary) {
+      var t = Ui.el('<div class="home-tile' + (primary ? ' primary' : '') + '">' +
+        '<div class="home-tile-icon">' + icon + '</div>' +
+        '<div class="home-tile-title">' + Ui.esc(title) + '</div>' +
+        '<div class="home-tile-desc">' + Ui.esc(desc) + '</div>' +
+        '<ul class="home-tile-list">' +
+        bullets.map(function (b) { return '<li>' + Ui.esc(b) + '</li>'; }).join('') +
+        '</ul></div>');
+      var btn = Ui.el('<button class="btn ' + (primary ? 'primary' : '') +
+        '" style="width:100%;padding:10px;font-size:13.5px;font-weight:700">' +
+        Ui.esc(btnLabel) + '</button>');
+      btn.addEventListener('click', onClick);
+      t.appendChild(btn);
+      grid.appendChild(t);
+      return t;
+    }
+
+    tile('🆕', '새 프로젝트 시작',
+      '엑셀(WIPS/윈텔립스)을 올려 처음부터 분석합니다.',
+      ['작업명 입력 + 엑셀 업로드 (시트 선택 가능)',
+       '분석 범위(여러 회사 / 1개 회사) 선택',
+       '분석 목적에 맞는 차트 자동 추천'],
+      '새 분석 시작하기 →', function () { Views.render('start'); }, true);
+
+    tile('📂', '기존 결과 불러오기',
+      '이전에 저장한 분석 상태와 차트·인사이트를 그대로 봅니다.',
+      ['저장된 분석 스냅샷을 열어 그때 화면 그대로 재현',
+       '생성해 둔 차트 이미지 + LLM 인사이트 열람',
+       'PPT 보고서로 내려받기'],
+      '저장된 결과 보기 →', function () { Views.render('results'); });
+
+    if (hasDataset) {
+      var cont = Ui.el('<div class="card"><div class="card-body" ' +
+        'style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">' +
+        '<span style="font-size:12.5px;color:#46607a">현재 분석 중인 데이터: <b>' +
+        Ui.esc(s.dataset || '데모 데이터') + '</b></span></div></div>');
+      var goBtn = Ui.el('<button class="btn small primary">이어서 분석하기 →</button>');
+      goBtn.addEventListener('click', function () {
+        Views.render(s.analysis_purpose ? 'purpose' : 'overview');
+      });
+      cont.querySelector('.card-body').appendChild(goBtn);
+      content.appendChild(cont);
+    }
+  };
+
+  /* ---------- 0-b. 저장된 결과 보기 (차트 + 인사이트 그대로) ---------- */
+  Views.results = function (content) {
+    /* 두 가지 저장물을 한 화면에서 제공한다.
+       ① 분석 스냅샷: Dataset·필터·화면을 복원해 "그때 그 분석"을 다시 연다.
+       ② 인사이트 보관함: 생성 당시 캡처된 차트 이미지 + 인사이트 본문을
+          그대로 읽는다 (데이터 재계산 없이 열람 — 경영진 보고용). */
+    var cs = card('📂 저장된 분석 스냅샷 — 열면 그때 화면이 그대로 복원됩니다',
+      'Dataset·필터·분석 단위·보던 화면이 함께 저장되어 있어, 열면 당시 조건으로 ' +
+      '모든 차트가 다시 계산되어 표시됩니다 (데이터가 그대로면 캐시에서 즉시 열림).');
+    content.appendChild(cs.root);
+    cs.body.innerHTML = '<div class="status-empty">불러오는 중…</div>';
+    Api.post('/api/project/load', {}).then(function (d) {
+      var list = d.projects || [];
+      cs.body.innerHTML = '';
+      if (!list.length) {
+        cs.body.innerHTML = '<div class="status-empty">저장된 스냅샷이 없습니다 — ' +
+          '분석 화면 상단의 <b>저장</b> 버튼으로 현재 상태를 저장할 수 있습니다.</div>';
+        return;
+      }
+      list.sort(function (a, b) {
+        return String(b.saved_at || '').localeCompare(String(a.saved_at || ''));
+      });
+      var tbl = Ui.el(simpleTable(['분석 이름', '작업자', '저장 시각', '메모', ''], []));
+      list.forEach(function (p) {
+        var tr = document.createElement('tr');
+        tr.insertAdjacentHTML('beforeend',
+          '<td><b>' + Ui.esc(p.name) + '</b></td>' +
+          '<td>' + Ui.esc(p.worker || p.owner || '-') + '</td>' +
+          '<td style="white-space:nowrap">' + Ui.esc(p.saved_at || '-') + '</td>' +
+          '<td style="color:#647b8d">' + Ui.esc(p.note || '') + '</td>');
+        var td = document.createElement('td');
+        var open = Ui.el('<button class="btn small primary">결과 열기</button>');
+        open.addEventListener('click', function () {
+          open.disabled = true;
+          loadSnapshot(p.name).catch(errToast).finally(function () {
+            open.disabled = false;
+          });
+        });
+        td.appendChild(open);
+        tr.appendChild(td);
+        tbl.querySelector('tbody').appendChild(tr);
+      });
+      var wrap = Ui.el('<div style="overflow-x:auto;max-height:320px;overflow-y:auto"></div>');
+      wrap.appendChild(tbl);
+      cs.body.appendChild(wrap);
+    }).catch(function (e) {
+      cs.body.innerHTML = Render.statusBlock({ status: 'error', message: e.message });
+    });
+
+    var ci = card('🖼️ 저장된 차트 · 인사이트 (재계산 없이 그대로 열람)',
+      '각 차트에서 생성한 LLM 인사이트가 그때의 차트 이미지와 함께 보관되어 있습니다. ' +
+      '작업을 고르면 차트는 왼쪽, 인사이트 본문은 오른쪽에 나란히 표시됩니다. ' +
+      '체크한 항목(미선택 시 표시 중인 작업 전체)은 PPT 보고서로 내려받을 수 있습니다.');
+    content.appendChild(ci.root);
+    var jobBar = Ui.el('<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:10px"></div>');
+    ci.body.appendChild(jobBar);
+    var tools = Ui.el('<div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap"></div>');
+    var pptBtn = Ui.el('<button class="btn small primary">📑 PPT 보고서 다운로드</button>');
+    tools.appendChild(pptBtn);
+    ci.body.appendChild(tools);
+    var gallery = Ui.el('<div></div>');
+    ci.body.appendChild(gallery);
+    gallery.innerHTML = '<div class="status-empty">불러오는 중…</div>';
+
+    var items = [], curDs = null, group = null;
+    function gkey(it) { return it.dataset || '__none__'; }
+    function shown() {
+      return items.filter(function (it) { return gkey(it) === group; });
+    }
+    pptBtn.addEventListener('click', function () {
+      var ids = Array.prototype.slice.call(
+        gallery.querySelectorAll('input[type="checkbox"]:checked')
+      ).map(function (cb) { return cb.value; });
+      if (!ids.length) ids = shown().map(function (it) { return it.id; });
+      if (!ids.length) { Ui.toast('내려받을 인사이트가 없습니다.', 'warn'); return; }
+      Api.download('/api/insights-report', { ids: ids },
+        'ip_landscape_insights.pptx').catch(errToast);
+    });
+
+    function renderJobs() {
+      jobBar.innerHTML = '';
+      var groups = {};
+      items.forEach(function (it) {
+        var k = gkey(it);
+        if (!groups[k]) groups[k] = { label: it.dataset_label || '작업 미지정', n: 0 };
+        groups[k].n += 1;
+      });
+      var keys = Object.keys(groups);
+      keys.sort(function (a, b) {
+        if (a === curDs) return -1;
+        if (b === curDs) return 1;
+        return groups[b].n - groups[a].n;
+      });
+      jobBar.appendChild(Ui.el('<span style="font-size:12px;color:#647b8d">작업 선택:</span>'));
+      keys.forEach(function (k) {
+        var chip = Ui.el('<button class="btn small' + (k === group ? ' primary' : '') +
+          '">' + (k === curDs ? '📌 ' : '') + Ui.esc(groups[k].label) +
+          ' (' + groups[k].n + ')</button>');
+        chip.addEventListener('click', function () {
+          group = k; renderJobs(); renderGallery();
+        });
+        jobBar.appendChild(chip);
+      });
+    }
+
+    function renderGallery() {
+      gallery.innerHTML = '';
+      var list = shown();
+      if (!list.length) {
+        gallery.innerHTML = '<div class="status-empty">이 작업에 저장된 인사이트가 ' +
+          '없습니다 — 분석 화면의 "🤖 이 차트 인사이트" 버튼으로 생성하면 여기에 ' +
+          '차트와 함께 쌓입니다.</div>';
+        return;
+      }
+      list.forEach(function (it) {
+        var row = Ui.el('<div class="saved-item"></div>');
+        var head = Ui.el('<div class="saved-head"></div>');
+        head.appendChild(Ui.el('<input type="checkbox" value="' + Ui.esc(it.id) + '">'));
+        head.appendChild(Ui.el('<b style="flex:1">' +
+          Ui.esc(it.title || it.analysis) + '</b>'));
+        head.appendChild(Ui.el('<span class="saved-meta">' + Ui.esc(it.analysis) +
+          ' · ' + Ui.esc(it.created_at || '') + '</span>'));
+        row.appendChild(head);
+        var split = Ui.el('<div class="chart-split"></div>');
+        var main = Ui.el('<div class="chart-split-main"></div>');
+        var side = Ui.el('<div class="chart-split-side"></div>');
+        split.appendChild(main); split.appendChild(side);
+        if (it.has_image) {
+          var n = it.n_images || 1;
+          for (var i = 0; i < n; i++) {
+            var img = Ui.el('<img class="saved-img" loading="lazy">');
+            main.appendChild(img);
+            Api.image(img, '/api/insights-log/image?id=' +
+              encodeURIComponent(it.id) + '&i=' + i);
+          }
+        } else {
+          main.appendChild(Ui.el('<div class="status-empty">이 항목에는 차트 이미지가 ' +
+            '저장되어 있지 않습니다 (텍스트 인사이트만).</div>'));
+        }
+        var box = Ui.el('<div class="insight-box"><div class="insight-src">🤖 ' +
+          (it.kind === 'chat' ? '질의응답' : 'LLM 인사이트') + ' · 생성 당시 저장본</div></div>');
+        var ul = document.createElement('ul');
+        (it.sentences || []).forEach(function (sx) {
+          var li = document.createElement('li');
+          li.textContent = sx;
+          if (String(sx).indexOf('[') === 0) {
+            li.style.fontWeight = '700';
+            li.style.listStyle = 'none';
+            li.style.marginLeft = '-14px';
+            li.style.marginTop = '6px';
+          }
+          ul.appendChild(li);
+        });
+        box.appendChild(ul);
+        side.appendChild(box);
+        row.appendChild(split);
+        gallery.appendChild(row);
+      });
+    }
+
+    Api.get('/api/insights-log').then(function (d) {
+      items = d.items || [];
+      curDs = d.current_dataset || null;
+      group = (items.some(function (it) { return gkey(it) === curDs; }) && curDs) ||
+        (items.length ? gkey(items[items.length - 1]) : null);
+      renderJobs();
+      renderGallery();
+    }).catch(function (e) {
+      gallery.innerHTML = Render.statusBlock({ status: 'error', message: e.message });
+    });
+  };
+
+  /* ---------- 0-c. 사용자 정의 차트 (축·버블 크기 직접 선택) ---------- */
+  Views.builder = function (content) {
+    var intro = card('🧪 사용자 정의 차트 — 원하는 축으로 직접 그리기',
+      '① 차트 종류를 고르고 ② X축·Y축(그리고 버블이면 크기)에 넣을 항목을 선택하면 ' +
+      '그 구성으로 차트를 그립니다. 값은 현재 필터가 적용된 실제 데이터에서 계산되며, ' +
+      '점·막대를 클릭하면 근거 특허 목록이 열립니다 (지원 항목 한정). 오른쪽 패널에서 ' +
+      '이 차트에 대한 LLM 인사이트를 바로 생성할 수 있습니다.');
+    content.appendChild(intro.root);
+    intro.body.innerHTML = '<div class="status-empty">선택 항목을 불러오는 중…</div>';
+    var chartHolder = Ui.el('<div></div>');
+    content.appendChild(chartHolder);
+
+    Api.post('/api/custom-chart/fields', { filters: State.filters }).then(function (f) {
+      intro.body.innerHTML = '';
+      var dims = f.dimensions || [], meas = f.measures || [];
+      var types = f.chart_types || [];
+      if (!dims.length || !meas.length) {
+        intro.body.innerHTML = '<div class="status-empty">사용할 수 있는 축 항목이 ' +
+          '없습니다 — 컬럼 매핑을 먼저 확인하세요.</div>';
+        return;
+      }
+      var dimLabel = {}, measLabel = {};
+      dims.forEach(function (d) { dimLabel[d.key] = d.label; });
+      meas.forEach(function (m) { measLabel[m.key] = m.label; });
+
+      var spec = { chart_type: 'bar', x: 'applicant', y: 'count', top_n: 12 };
+      if (!dimLabel[spec.x]) spec.x = dims[0].key;
+
+      var form = Ui.el('<div class="builder-form"></div>');
+      intro.body.appendChild(form);
+      var runRow = Ui.el('<div style="display:flex;gap:8px;align-items:center;' +
+        'margin-top:10px;flex-wrap:wrap"></div>');
+      var drawBtn = Ui.el('<button class="btn primary">📈 이 구성으로 차트 그리기</button>');
+      var hintEl = Ui.el('<span style="font-size:11.5px;color:#647b8d"></span>');
+      runRow.appendChild(drawBtn); runRow.appendChild(hintEl);
+      intro.body.appendChild(runRow);
+
+      function fieldBox(labelText, help) {
+        var box = Ui.el('<div class="builder-field"><label>' + Ui.esc(labelText) +
+          '</label></div>');
+        var sel = document.createElement('select');
+        box.appendChild(sel);
+        if (help) {
+          box.appendChild(Ui.el('<span class="builder-help">' + Ui.esc(help) + '</span>'));
+        }
+        form.appendChild(box);
+        return sel;
+      }
+      function fill(sel, list, labels, value) {
+        sel.innerHTML = '';
+        list.forEach(function (o) {
+          var op = document.createElement('option');
+          op.value = o.key; op.textContent = o.label;
+          if (o.key === value) op.selected = true;
+          sel.appendChild(op);
+        });
+        return sel.value;
+      }
+
+      var built = null;   // analysisCard 핸들 (재사용해 재계산)
+      function drawChart() {
+        chartHolder.innerHTML = '';
+        disposeCharts(chartHolder);
+        var ct = (types.filter(function (t) { return t.key === spec.chart_type; })[0]) || {};
+        var titleBits = [];
+        if (spec.chart_type === 'bubble' || spec.chart_type === 'scatter') {
+          titleBits.push('점=' + (dimLabel[spec.group] || ''),
+            'X=' + (measLabel[spec.x] || ''), 'Y=' + (measLabel[spec.y] || ''));
+          if (spec.chart_type === 'bubble') titleBits.push('크기=' + (measLabel[spec.size] || ''));
+        } else if (spec.chart_type === 'bubble_matrix' || spec.chart_type === 'heatmap') {
+          titleBits.push('X=' + (dimLabel[spec.x] || ''), 'Y=' + (dimLabel[spec.y] || ''),
+            (spec.chart_type === 'heatmap' ? '색=' : '크기=') + (measLabel[spec.size] || ''));
+        } else {
+          titleBits.push('X=' + (dimLabel[spec.x] || ''), 'Y=' + (measLabel[spec.y] || ''));
+        }
+        built = analysisCard({
+          analysis: 'custom-chart', holder: chartHolder,
+          title: (ct.label || '사용자 정의 차트') + ' · ' + titleBits.join(' / '),
+          help: ct.desc || '',
+          guide: '이 차트는 사용자가 직접 고른 축 구성입니다 — ' + titleBits.join(', ') +
+            '. 값은 현재 필터가 적용된 데이터에서 계산되며, 클릭하면 근거 특허가 ' +
+            '열립니다(지원 항목 한정).',
+          body: { spec: JSON.parse(JSON.stringify(spec)) },
+          renderOk: function (r, c, setTarget) {
+            var h = Ui.el('<div class="chart-holder tall"></div>');
+            c.body.appendChild(h);
+            Render.plotly(h, r.figure, plotlyDrill);
+            setTarget({ kind: 'plotly', el: h });
+            var rows = r.rows || [];
+            if (rows.length) {
+              var isPoint = rows[0].x !== undefined;
+              var headers = isPoint
+                ? ['항목', (r.axis_info && r.axis_info.x) || 'X',
+                   (r.axis_info && r.axis_info.y) || 'Y',
+                   (r.axis_info && r.axis_info.size) || '크기', '문헌 수']
+                : ['항목', (r.axis_info && r.axis_info.y) || '값', '문헌 수'];
+              if (isPoint && !(r.axis_info && r.axis_info.size)) headers.splice(3, 1);
+              var tbl = Ui.el(simpleTable(headers, []));
+              rows.forEach(function (x) {
+                var tr = document.createElement('tr');
+                var td0 = document.createElement('td');
+                if (x.drill) td0.appendChild(drillCell(x.label, x.drill));
+                else td0.textContent = x.label;
+                tr.appendChild(td0);
+                var cells = isPoint
+                  ? ['<td class="num">' + Ui.num(x.x, 2) + '</td>' +
+                     '<td class="num">' + Ui.num(x.y, 2) + '</td>' +
+                     ((r.axis_info && r.axis_info.size)
+                       ? '<td class="num">' + Ui.num(x.size, 2) + '</td>' : '') +
+                     '<td class="num">' + Ui.num(x.n, 0) + '</td>']
+                  : ['<td class="num">' + Ui.esc(x.value_text) + '</td>' +
+                     '<td class="num">' + Ui.num(x.n, 0) + '</td>'];
+                tr.insertAdjacentHTML('beforeend', cells[0]);
+                tbl.querySelector('tbody').appendChild(tr);
+              });
+              var w = Ui.el('<div style="max-height:240px;overflow:auto"></div>');
+              w.appendChild(tbl);
+              c.body.appendChild(w);
+            }
+          }
+        });
+      }
+
+      function rebuildForm() {
+        form.innerHTML = '';
+        var stepNo = 0;
+        var CIRCLED = ['①', '②', '③', '④', '⑤', '⑥'];
+        function step() { return CIRCLED[Math.min(stepNo++, 5)]; }
+        var ctSel = fieldBox(step() + ' 차트 종류', null);
+        fill(ctSel, types, null, spec.chart_type);
+        ctSel.addEventListener('change', function () {
+          spec.chart_type = ctSel.value;
+          rebuildForm();
+        });
+        var ct = (types.filter(function (t) { return t.key === spec.chart_type; })[0]) || {};
+        hintEl.textContent = ct.desc || '';
+        var axes = ct.axes || [];
+
+        function ensure(key, list, fallbackIdx, prefer) {
+          if (spec[key] && list.some(function (o) { return o.key === spec[key]; })) return;
+          // 차트 종류를 바꾸면 축 의미(분류↔값)가 달라진다 — 그 차트에서 흔히
+          // 쓰는 항목을 우선 기본값으로 (없으면 첫 항목)
+          var pick = (prefer || []).filter(function (k) {
+            return list.some(function (o) { return o.key === k; });
+          })[0];
+          spec[key] = pick || list[Math.min(fallbackIdx || 0, list.length - 1)].key;
+        }
+        if (axes.indexOf('group_dim') >= 0) {
+          ensure('group', dims, 0, ['applicant', 'tech', 'country']);
+          var g = fieldBox(step() + ' 점 단위 (한 점 = 하나의 …)',
+            '예: 출원인을 고르면 회사 하나가 점 하나');
+          fill(g, dims, dimLabel, spec.group);
+          g.addEventListener('change', function () { spec.group = g.value; });
+        }
+        if (axes.indexOf('x_dim') >= 0) {
+          ensure('x', dims, 0);
+          var xd = fieldBox(step() + ' X축 (분류 항목)', null);
+          fill(xd, dims, dimLabel, spec.x);
+          xd.addEventListener('change', function () { spec.x = xd.value; });
+        }
+        if (axes.indexOf('x_measure') >= 0) {
+          ensure('x', meas, 0, ['count']);
+          var xm = fieldBox(step() + ' X축 (값 항목)', null);
+          fill(xm, meas, measLabel, spec.x);
+          xm.addEventListener('change', function () { spec.x = xm.value; });
+        }
+        if (axes.indexOf('y_dim') >= 0) {
+          if (!spec.y || !dims.some(function (o) { return o.key === spec.y; }) ||
+              spec.y === spec.x) {
+            var alt = dims.filter(function (o) { return o.key !== spec.x; });
+            spec.y = (alt[0] || dims[0]).key;
+          }
+          var yd = fieldBox(step() + ' Y축 (분류 항목)', 'X축과 다른 항목을 고르세요');
+          fill(yd, dims, dimLabel, spec.y);
+          yd.addEventListener('change', function () { spec.y = yd.value; });
+        }
+        if (axes.indexOf('y_measure') >= 0) {
+          if (axes.indexOf('x_measure') >= 0 && spec.y === spec.x) spec.y = null;
+          ensure('y', meas, 0,
+            (spec.chart_type === 'bubble' || spec.chart_type === 'scatter')
+              ? ['cites_forward_avg', 'family_size_avg', 'count']
+              : ['count']);
+          if (spec.y === spec.x && meas.length > 1) {
+            spec.y = meas.filter(function (o) { return o.key !== spec.x; })[0].key;
+          }
+          var ym = fieldBox(step() + ' Y축 (값 항목)', null);
+          fill(ym, meas, measLabel, spec.y);
+          ym.addEventListener('change', function () { spec.y = ym.value; });
+        }
+        if (axes.indexOf('size_measure') >= 0) {
+          ensure('size', meas, 0, ['count', 'family_size_avg']);
+          var sm = fieldBox(step() + (spec.chart_type === 'heatmap' ? ' 색 농도 (값 항목)'
+            : ' 버블 크기 (값 항목)'),
+            spec.chart_type === 'heatmap' ? '색이 진할수록 값이 큼'
+              : '버블이 클수록 값이 큼');
+          fill(sm, meas, measLabel, spec.size);
+          sm.addEventListener('change', function () { spec.size = sm.value; });
+        }
+        if (axes.indexOf('color_measure') >= 0) {
+          ensure('size', meas, 0, ['count']);
+          var cm = fieldBox(step() + ' 색 농도 (값 항목)', '색이 진할수록 값이 큼');
+          fill(cm, meas, measLabel, spec.size);
+          cm.addEventListener('change', function () { spec.size = cm.value; });
+        }
+        var tn = fieldBox('표시 개수 (상위 N)', '많으면 차트가 복잡해집니다');
+        [5, 8, 10, 12, 15, 20, 25, 30].forEach(function (n) {
+          var op = document.createElement('option');
+          op.value = n; op.textContent = n + '개';
+          if (n === spec.top_n) op.selected = true;
+          tn.appendChild(op);
+        });
+        tn.addEventListener('change', function () { spec.top_n = Number(tn.value); });
+      }
+
+      drawBtn.addEventListener('click', drawChart);
+      rebuildForm();
+      drawChart();
+    }).catch(function (e) {
+      intro.body.innerHTML = Render.statusBlock({ status: 'error', message: e.message });
+    });
+  };
+
   Views.start = function (content) {
     var s = (State.config && State.config.settings) || {};
     var hasDataset = !!(s.dataset || s.demo_mode);
@@ -2729,6 +3204,7 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
         attachPerChartTools(c, opts, r, currentBody);  // 차트별 출원인·인사이트 도구
         clampGuides(c.body);     // 긴 해석 박스는 접어 정돈 (클릭=펼침)
         paginateCharts(c.body);  // 카드에 차트가 여러 개면 한 화면 한 차트 페이저
+        splitChartInsight(c.body);  // 차트=가운데, 인사이트·AI 패널=오른쪽
       }).catch(function (e) {
         c.body.innerHTML = Render.statusBlock({ status: 'error', message: e.message });
       });
@@ -2739,6 +3215,43 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
   }
 
   function plotlyDrill(drill, _cd, el) { Drill.open(scopedDrill(el, drill), '근거 특허'); }
+
+  /* ---------- 차트 가운데 · 인사이트 오른쪽 2단 배치 ----------
+     카드 본문에 차트가 있으면 차트·표·컨트롤은 왼쪽(넓은) 열에 두고,
+     💡 인사이트 박스와 🤖 AI 패널(생성 버튼 포함)은 오른쪽 열로 옮긴다.
+     DOM 을 재배치만 하므로 기존 렌더 로직·이벤트·Excel 내보내기는 그대로
+     동작하고, 화면이 좁으면 CSS 가 한 줄(위·아래)로 되돌린다. */
+  function splitChartInsight(body) {
+    if (!body || body.querySelector('.chart-split')) return;
+    if (!body.querySelector('.chart-holder, .cy-holder, .echart-holder')) return;
+    var kids = Array.prototype.slice.call(body.children);
+    var side = kids.filter(function (el) {
+      return el.classList &&
+        (el.classList.contains('insight-box') || el.classList.contains('ai-panel'));
+    });
+    if (!side.length) return;
+    var wrap = Ui.el('<div class="chart-split"></div>');
+    var main = Ui.el('<div class="chart-split-main"></div>');
+    var aside = Ui.el('<div class="chart-split-side"></div>');
+    wrap.appendChild(main);
+    wrap.appendChild(aside);
+    body.appendChild(wrap);
+    kids.forEach(function (el) {
+      (side.indexOf(el) >= 0 ? aside : main).appendChild(el);
+    });
+    // 이동으로 폭이 바뀐 차트는 다시 그린다 (숨김 상태는 건너뜀 — Plotly 거부 방지)
+    setTimeout(function () {
+      try {
+        Array.prototype.forEach.call(main.querySelectorAll('.ipls-chart'), function (gd) {
+          if (window.Plotly && Plotly.Plots && Plotly.Plots.resize &&
+              gd.offsetParent !== null) {
+            var pr = Plotly.Plots.resize(gd);
+            if (pr && pr.catch) pr.catch(function () {});
+          }
+        });
+      } catch (e) { /* 무시 */ }
+    }, 30);
+  }
 
   /* ---------- 차트 페이저: 카드에 차트가 여러 개면 한 화면에 한 개씩 ----------
      카드 본문의 최상위 자식들을 "차트를 포함한 요소 = 새 페이지 시작, 그 뒤의
@@ -5462,9 +5975,9 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
               (nImg > 1 ? nImg + '개' : '포함') + '</span>'));
             for (var ii = 0; ii < nImg; ii++) {
               var img = Ui.el('<img style="max-width:100%;max-height:340px;border:1px solid #e8eff5;border-radius:6px;margin-bottom:8px" loading="lazy">');
-              img.src = backendUrl('/api/insights-log/image?id=' +
-                encodeURIComponent(it.id) + '&i=' + ii);
               detail.appendChild(img);
+              Api.image(img, '/api/insights-log/image?id=' +
+                encodeURIComponent(it.id) + '&i=' + ii);
             }
           }
           var ul = document.createElement('ul');
@@ -5518,7 +6031,7 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
       content.appendChild(c.root);
     }
     section('🚀 시작하기 (4단계)',
-      '<div style="margin-bottom:6px;font-size:12.5px">좌측 맨 위 <b>🚀 시작하기</b> 메뉴가 이 4단계를 순서대로 안내하는 화면입니다 — 처음 접속(데이터 미설정) 시 자동으로 열리며, ① 로그인(팀명/이름은 여기 한 번만 입력 — 이 계정이 곧 작업자 이름) → ② 작업명 입력 + 엑셀 업로드(저장하고 분석 시작) → ③ 분석 범위 선택(여러 회사/1개 회사) → ④ 분석 목적 선택 후 분석 시작 순서로 진행하면 됩니다. 완료된 단계는 ✔ 로 표시됩니다.</div>' +
+      '<div style="margin-bottom:6px;font-size:12.5px">앱을 열면 <b>🏠 시작 화면</b>에서 \'새 프로젝트 시작\'과 \'기존 결과 불러오기\' 중 하나를 먼저 고릅니다. 새 분석을 고르면 아래 4단계로 이어집니다. 좌측 <b>🚀 시작하기</b> 메뉴가 이 4단계를 순서대로 안내하는 화면입니다 — 처음 접속(데이터 미설정) 시 자동으로 열리며, ① 로그인(팀명/이름은 여기 한 번만 입력 — 이 계정이 곧 작업자 이름) → ② 작업명 입력 + 엑셀 업로드(저장하고 분석 시작) → ③ 분석 범위 선택(여러 회사/1개 회사) → ④ 분석 목적 선택 후 분석 시작 순서로 진행하면 됩니다. 완료된 단계는 ✔ 로 표시됩니다.</div>' +
       '<ol style="padding-left:18px;line-height:1.9">' +
       '<li><b>데이터 준비</b> — 🚀 시작하기 STEP 2 (또는 Settings &amp; Admin → "📤 엑셀 업로드" — 같은 업로드입니다)에서 <b>작업명을 입력</b>하고 WIPS Excel 을 직접 올리면 서버에 저장되고 바로 분석 Dataset 으로 설정됩니다 (작업자 이름은 로그인 계정으로 자동 기록 — 별도 입력 없음. 저장된 작업은 목록에서 언제든 다시 불러오기 가능). <b>시트가 여러 개인 엑셀</b>은 업로드 직후 분석할 시트를 고르는 창이 뜨고, Settings 의 작업 목록 "시트" 열에서도 재업로드 없이 다른 시트로 전환할 수 있습니다. 또는 Flow 에 이미 있는 Dataset 을 선택해도 됩니다. 업로드한 작업은 <b>내 계정 전용 선택</b>이라 다른 사용자가 나중에 파일을 올려도 내 분석 대상은 바뀌지 않습니다.</li>' +
       '<li><b>컬럼 매핑 확인</b> — Settings → 컬럼 매핑에서 자동 추천 결과를 확인하고, 잘못 잡힌 항목은 직접 수정 후 저장합니다. ' +
@@ -5530,6 +6043,9 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
       '<div class="disclaimer">모든 분석은 매핑된 실제 데이터로만 계산되며 값을 임의로 만들지 않습니다. 데이터가 없는 항목은 "계산 불가 + 사유"로 표시됩니다.</div>');
     section('🗺️ 메뉴 안내',
       '<table class="ipls-table"><thead><tr><th>메뉴</th><th>내용</th></tr></thead><tbody>' +
+      '<tr><td>🏠 시작 화면</td><td>앱을 열면 가장 먼저 나오는 갈림길 화면 — <b>🆕 새 프로젝트 시작</b>(엑셀 업로드부터)과 <b>📂 기존 결과 불러오기</b>(저장된 분석·인사이트 열람) 중 하나를 고릅니다. 분석 중이던 데이터가 있으면 \'이어서 분석하기\' 버튼도 표시됩니다.</td></tr>' +
+      '<tr><td>📂 저장된 결과 보기</td><td>경영진·검토자용 열람 화면. ① <b>분석 스냅샷</b>을 열면 그때의 Dataset·필터·화면이 그대로 복원되어 모든 차트가 다시 표시되고, ② <b>저장된 차트·인사이트</b>는 생성 당시 캡처된 차트 이미지와 인사이트 본문을 재계산 없이 왼쪽/오른쪽 나란히 보여줍니다 (PPT 다운로드 가능).</td></tr>' +
+      '<tr><td>🧪 사용자 정의 차트</td><td>정해진 분석 외에 <b>원하는 축으로 직접</b> 그리는 화면 — 차트 종류(막대/선/파이/버블/버블 매트릭스/산점도/히트맵)를 고르고 X축·Y축·(버블이면) 크기·(히트맵이면) 색에 넣을 항목을 선택하면 그 구성으로 계산됩니다. 점·막대 클릭 시 근거 특허가 열리고, 오른쪽 패널에서 이 차트의 LLM 인사이트를 바로 생성할 수 있습니다.</td></tr>' +
       '<tr><td>🚀 시작하기</td><td>로그인(팀명/이름 한 번만 입력) → 데이터 준비(작업명·엑셀 업로드 — 작업자는 로그인 계정 자동) → 분석 범위 → 분석 목적·분석 시작을 순서대로 안내하는 단계별 화면. 데이터가 설정되지 않은 상태로 접속하면 자동으로 열립니다.</td></tr>' +
       '<tr><td>🎯 목적 맞춤 분석</td><td>분석 목적(기술 동향·경쟁사·R&amp;D 방향·White Space·특허 회피·FTO·포트폴리오·M&amp;A·국가 R&amp;D·라이선스) 선택 → 목적별 추천 차트를 우선순위·이유와 함께 표시, [열기]로 바로 이동. 특허 회피·FTO 목적에는 법률 자문 아님 고지가 함께 표시됩니다.</td></tr>' +
       '<tr><td>📊 Executive Overview</td><td>경영 요약(KPI·경보·BCG 매트릭스·경쟁 포지션) + 경영 차트 6종: 📅만료 절벽 / 💰R&amp;D 효율 사분면 / 👤키맨 리스크 / ⏱️추격 시계 / 🚨위협 레이더 / ✂️포트폴리오 다이어트. 탭마다 자사 기준을 선택할 수 있고(미선택 시 최다 출원인 자동), <b>"자사 선택 안 함 (중립 분석)"</b>을 고르면 자사 강조 없이 출원인들을 동등하게 비교합니다 — 이때 자사 관점 전용 섹션(키맨·추격·위협·다이어트, 전략 대시보드)은 사유와 함께 생략됩니다.</td></tr>' +
@@ -5550,6 +6066,7 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
       '<div style="color:#647b8d;font-size:11.5px;margin-top:6px">좌측 메뉴는 🚀 시작하기·🎯 목적 맞춤 분석으로 시작해 ① 전체 동향 → ② 기술 분석(어떤 기술) → ③ 기업 분석(어느 회사) → ④ 심층·품질 순서로 배열되어 있습니다 — 전체를 훑고, 기술을 고르고, 회사를 파고드는 흐름입니다.</div>');
     section('🖱️ 차트 공통 기능',
       '<ul style="padding-left:18px;line-height:1.9">' +
+      '<li><b>🖥️ 화면 배치</b>: 차트는 화면 가운데(넓은 왼쪽 열)에, 💡 인사이트와 🤖 AI 인사이트 버튼·결과는 <b>차트 오른쪽 패널</b>에 나란히 표시됩니다 — 차트를 보면서 바로 인사이트를 생성·확인할 수 있고, 오른쪽 패널은 스크롤해도 따라옵니다. 화면 폭이 좁으면(노트북·태블릿) 자동으로 위·아래 배치로 전환됩니다.</li>' +
       '<li><b>드릴다운</b>: 차트의 점·막대·셀·노드를 클릭하면 근거 특허 목록이 열립니다. 표의 파란 텍스트도 클릭 가능합니다.</li>' +
       '<li><b>🚫 제외 출원인 (필터)</b>: 상세 필터의 "제외 출원인"에서 고른 이름은 출원인별 집계·순위·비교(출원인 순위, DNA, 엔트로피, 심층 시그널의 기업별 차트 등)에서 제외됩니다 — 대학·개인 등 불필요한 출원인이 순위에 끼어드는 노이즈를 제거합니다. 특허 문헌 자체는 유지되므로 전체 건수·기술 차트는 변하지 않고, 협력 네트워크 등 <b>공동출원 자체 분석에는 적용되지 않습니다</b>.</li>' +
       '<li><b>🧩 기술분류 정비</b>: Settings 의 "기술분류 정비 관리"에서 비슷한 표기(대소문자·공백·유사 문자열)를 묶을지 제안받아 병합하거나, 표준 분류명을 직접 입력해 수동으로 묶고, 의미 없는 분류를 노이즈로 지정해 "미분류"로 표기할 수 있습니다. 특수문자·순수 숫자·결측 표기는 자동으로 미분류 처리되며, 규칙은 모든 기술 차트에 즉시 반영됩니다.</li>' +
@@ -6694,12 +7211,22 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
   });
 
   function injectStartMenu() {
-    // 좌측 메뉴 맨 위에 🚀 시작하기 (단계별 가이드) — HTML 수정 없이 JS 주입
+    // 좌측 메뉴 주입 (HTML 탭 수정 없이): 🏠 시작 화면 · 🚀 시작하기 ·
+    // 📂 저장된 결과 · 🧪 사용자 정의 차트
     var menu = document.getElementById('ipls-menu');
-    if (!menu || menu.querySelector('li[data-view="start"]')) return;
-    var li = Ui.el('<li data-view="start">🚀 시작하기</li>');
-    li.addEventListener('click', function () { Views.render('start'); });
-    menu.insertBefore(li, menu.firstElementChild);
+    if (!menu) return;
+    function add(view, label, beforeEl) {
+      if (menu.querySelector('li[data-view="' + view + '"]')) return null;
+      var li = Ui.el('<li data-view="' + view + '">' + label + '</li>');
+      li.addEventListener('click', function () { Views.render(view); });
+      menu.insertBefore(li, beforeEl || null);
+      return li;
+    }
+    add('start', '🚀 시작하기', menu.firstElementChild);
+    add('results', '📂 저장된 결과 보기', menu.querySelector('li[data-view="start"]'));
+    add('home', '🏠 시작 화면', menu.querySelector('li[data-view="results"]'));
+    // 사용자 정의 차트: 데이터 품질 메뉴 앞(분석 메뉴들 뒤)에 배치
+    add('builder', '🧪 사용자 정의 차트', menu.querySelector('li[data-view="quality"]'));
   }
 
   function boot(keepView) {
@@ -6713,16 +7240,17 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
           ? "현재 앱의 전역 선택은 '" + cfg.settings.dataset_blocked_owner +
             "' 사용자의 작업입니다 — 🚀 시작하기에서 본인 엑셀을 업로드하거나 " +
             '본인 작업을 불러오세요 (다른 사용자 화면에는 영향 없음).'
-          : '먼저 🚀 시작하기에서 작업자·작업명을 입력하고 엑셀을 업로드하세요.', 'warn');
-        Views.render('start');
+          : '새 분석은 🆕 새 프로젝트 시작, 예전 결과 열람은 📂 기존 결과 불러오기를 '
+            + '선택하세요.', 'warn');
+        Views.render(keepView ? State.view : 'home');
         refreshProjects();
         return;
       }
       renderPurposeChip();
       Filters.load().then(function () {
-        // 목적이 설정되어 있으면 목적 맞춤 화면을 첫 화면으로 (추천 차트 우선)
-        var landing = cfg.settings.analysis_purpose ? 'purpose' : 'overview';
-        Views.render(keepView ? State.view : landing);
+        // 첫 진입은 🏠 시작 화면(새 프로젝트 / 기존 결과 보기 선택) —
+        // 업로드 직후 등 keepView 호출은 보던 화면을 유지한다.
+        Views.render(keepView ? State.view : 'home');
         refreshProjects();
       }).catch(function (e) {
         errToast(e);

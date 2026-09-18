@@ -98,6 +98,7 @@ from src.analyses.problem_solution import compute_problem_solution, cell_detail,
 from src.analyses.transition import compute_transition, TRANSITION_MODES
 from src.analyses.trajectory import compute_trajectory
 from src.analyses.company_dna import compute_company_dna
+from src.analyses.custom_chart import compute_custom_chart, chart_fields
 from src.analyses.lead_lag import compute_lead_lag
 from src.analyses.claim_density import compute_claim_density
 from src.analyses.citation_influence import compute_citation_influence
@@ -661,6 +662,11 @@ def register_routes(app):
             extra_key_fields=("companies",)),
         "combo-upset": _analysis_route(
             "combo-upset", lambda df, s, b: compute_combo_upset(df, s)),
+        # 사용자 정의 차트 — 차트 종류·축 항목을 요청 body(spec)로 받아 계산
+        "custom-chart": _analysis_route(
+            "custom-chart",
+            lambda df, s, b: compute_custom_chart(df, s, spec=b.get("spec")),
+            extra_key_fields=("spec",)),
         "emerging-clusters": _analysis_route(
             "emerging-clusters",
             lambda df, s, b: compute_emerging_clusters(
@@ -1113,6 +1119,24 @@ def register_routes(app):
         storage.save_applicant_rules(rules)
         clear_all_caches()
         return {"status": "ok", "rules": rules}
+
+    @app.route("/api/custom-chart/fields", methods=["GET", "POST"])
+    @wrap
+    def api_custom_chart_fields():
+        """사용자 정의 차트에서 고를 수 있는 항목 카탈로그.
+
+        → {"chart_types":[{key,label,axes,desc}],
+           "dimensions":[{key,label,drillable}],  # X/Y 에 쓸 분류 항목
+           "measures":[{key,label,fmt}]}          # 값(Y·크기·색) 항목
+        현재 데이터에 값이 실제로 있는 항목만 반환한다 (빈 축 선택 방지).
+        """
+        body = json_body() if request.method == "POST" else {}
+        df, settings, dataset, mapping, _f = _prepared_for(body)
+        out = chart_fields(df)
+        out["status"] = "ok"
+        out["dataset"] = dataset
+        out["n_rows"] = int(len(df))
+        return out
 
     @app.route("/api/tech-rules", methods=["GET", "POST"])
     @wrap
