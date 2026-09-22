@@ -364,10 +364,36 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
       });
     }
 
+    /* 차트가 화면보다 세로로 길어지지 않게 높이를 제한한다.
+       백엔드가 항목 수에 비례해 height 를 키우는 차트(히트맵·버블 등)가 800px 를
+       넘으면 한 화면에 안 들어와 가시성이 떨어지므로, 일반 화면에서는 뷰포트
+       기준 상한을 적용하고 원래 높이는 기억해 전체화면에서 복원한다. */
+    function capHeight(holder, fig) {
+      var lay = fig.layout || (fig.layout = {});
+      var vh = window.innerHeight || 900;
+      var tall = holder.classList.contains('tall');
+      // 높이 미지정 차트는 Plotly 가 컨테이너 상황에 따라 임의 높이(때로 850px+)를
+      // 잡아 화면을 넘기므로, 뷰포트 기준 기본 높이를 명시해 예측 가능하게 만든다.
+      var base = Math.max(320, Math.min(tall ? 560 : 500,
+                                        Math.round(vh * (tall ? 0.56 : 0.50))));
+      var cap = Math.max(340, Math.min(640, Math.round(vh * 0.60)));
+      if (lay.height && lay.height > cap) {
+        holder.__iplsFullHeight = lay.height;   // 전체화면에서 원래 높이로 복원
+      }
+      var h = lay.height ? Math.min(lay.height, cap) : base;
+      lay.height = h;
+      // responsive 모드의 Plotly 는 layout.height 대신 컨테이너 높이를 따르는데,
+      // 컨테이너가 높이 auto 면 "차트 높이 → 컨테이너 높이 → 차트 높이" 되먹임으로
+      // 화면을 훌쩍 넘길 때가 있다. 컨테이너 높이를 확정해 이를 끊는다.
+      holder.style.height = (h + 12) + 'px';
+      holder.style.minHeight = '0';
+    }
+
     function plotly(holder, fig, onDrill) {
       holder.classList.add('ipls-chart');
       forceYearTicks(fig);
       addValueLabels(fig);
+      capHeight(holder, fig);
       Plotly.newPlot(holder, fig.data, fig.layout, {
         responsive: true, displaylogo: false,
         scrollZoom: false,  // 마우스 휠 스크롤이 차트 확대/축소로 먹히지 않도록
@@ -389,6 +415,13 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
       opts = opts || {};
       holder.classList.add('ipls-cy');
       holder.__iplsNetwork = network;
+      holder.__iplsCyOpts = opts;
+      // 숨겨진 컨테이너(차트 페이저의 2번째 이후 페이지·비활성 탭)에서 생성되면
+      // 크기가 0 이라 그래프가 빈 화면으로 남는다 — 표시될 때 다시 배치하도록 표시
+      holder.__iplsCyPending = (holder.clientWidth < 20 || holder.clientHeight < 20 ||
+                                holder.offsetParent === null);
+      holder.__iplsCyLayout = { name: 'cose', animate: false,
+                                nodeRepulsion: 9000, idealEdgeLength: 90 };
       var cy = holder.__iplsCy = cytoscape({
         container: holder,
         elements: network,
@@ -430,6 +463,71 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
         else if (d.drill) Drill.open(scopedDrill(holder, d.drill), d.source + ' × ' + d.target);
       });
       return cy;
+    }
+
+    /* 네트워크(cytoscape) 인스턴스를 현재 컨테이너 크기로 다시 만든다.
+       DOM 이동 후 캔버스가 옛 크기로 남아 빈 화면이 되는 문제의 확실한 복구책 —
+       저장해 둔 elements·opts 로 재생성하므로 클릭(드릴다운) 동작도 유지된다. */
+    function remountCy(el) {
+      var net = el.__iplsNetwork;
+      if (!net) return;
+      try { if (el.__iplsCy) el.__iplsCy.destroy(); } catch (e) { /* 무시 */ }
+      el.innerHTML = '';   // cytoscape 가 만든 캔버스·부가 요소 정리
+      el.__iplsCyPending = false;
+      cytoscape_(el, net, el.__iplsCyOpts || {});
+      // 컨테이너를 비웠으므로 ⛶ 전체화면 버튼을 다시 붙인다 (자기 복구)
+      try {
+        el.__iplsFsBtn = null;
+        attachFullscreenButtons(el.closest('.card-body') || el.parentNode);
+      } catch (e) { /* 무시 */ }
+    }
+
+    /* 보이게 된(또는 크기가 바뀐) 차트를 다시 맞춘다.
+       - Plotly: resize (숨김 상태면 건너뜀 — Plotly 가 비동기 거부)
+       - Cytoscape: resize + 필요 시 레이아웃 재실행 후 fit
+                    (숨김 컨테이너에서 생성된 네트워크가 빈 화면으로 남는 문제)
+       - ECharts: resize */
+    function refit(scope) {
+      if (!scope) return;
+      var root = scope.querySelectorAll ? scope : document;
+      function each(sel, fn) {
+        var list = (root.querySelectorAll ? root.querySelectorAll(sel) : []);
+        Array.prototype.forEach.call(list, fn);
+        if (root.matches && root.matches(sel)) fn(root);
+      }
+      each('.ipls-chart', function (gd) {
+        try {
+          if (window.Plotly && Plotly.Plots && Plotly.Plots.resize &&
+              gd.offsetParent !== null) {
+            var pr = Plotly.Plots.resize(gd);
+            if (pr && pr.catch) pr.catch(function () {});
+          }
+        } catch (e) { /* 무시 */ }
+      });
+      each('.ipls-cy', function (el) {
+        var cy = el.__iplsCy;
+        if (!cy || el.offsetParent === null || el.clientWidth < 20) return;
+        try {
+          // cytoscape 는 컨테이너가 DOM 에서 옮겨지거나(2단 배치·전체화면)
+          // 숨김 상태로 만들어지면 캔버스 크기를 스스로 갱신하지 못해 그래프가
+          // 통째로 안 보인다. cy.resize() 로도 캔버스가 따라오지 않으므로,
+          // 캔버스 CSS 폭이 컨테이너와 어긋나면 인스턴스를 다시 만든다.
+          var cvs = el.querySelector('canvas');
+          var cssW = cvs ? parseFloat(cvs.style.width || '0') : 0;
+          var mismatch = cvs && Math.abs(cssW - el.clientWidth) > 2;
+          if (mismatch || el.__iplsCyPending) {
+            remountCy(el);
+            return;
+          }
+          cy.resize();
+          cy.fit(undefined, 24);
+        } catch (e) { /* 무시 */ }
+      });
+      each('.ipls-echart', function (el) {
+        try {
+          if (el.__iplsChart && el.offsetParent !== null) el.__iplsChart.resize();
+        } catch (e) { /* 무시 */ }
+      });
     }
 
     function echarts_(holder, option) {
@@ -727,7 +825,7 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
     }
     return { statusBlock: statusBlock, plotly: plotly, cytoscape: cytoscape_,
              echarts: echarts_, chartButtons: chartButtons, excelButton: excelButton,
-             extractChartSheets: extractChartSheets };
+             extractChartSheets: extractChartSheets, refit: refit };
   })();
 
   /* PPT 저장용: 차트 1개 → PNG data URL 캡처 (Plotly/Cytoscape/ECharts).
@@ -3089,6 +3187,7 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
             try { Plotly.purge(ch.el); } catch (e) { /* 무시 */ }
             ch.el.innerHTML = '';
             Render.plotly(ch.el, fig, plotlyDrill);
+            attachFullscreenButtons(c.body);   // 재렌더로 지워진 ⛶ 버튼 복구
             chCompany = sel.value || null;
             status.textContent = chCompany
               ? '적용: ' + chCompany + ' (이 차트에만 · 공동출원 포함)' : '전체 기준';
@@ -3111,9 +3210,10 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
           }).then(function (data) {
             var old = row.__insEl;
             if (old && old.parentNode) old.parentNode.removeChild(old);
-            var box2 = Ui.el('<div class="chart-guide" style="border-left:3px solid ' +
-              '#4E79A7"><b>🤖 이 차트의 AI 인사이트 (' +
-              (data.source === 'llm' ? 'LLM' : '규칙 기반 폴백') + ')</b></div>');
+            var box2 = Ui.el('<div class="insight-box per-chart-insight">' +
+              '<div class="insight-src">🤖 이 차트의 AI 인사이트 (' +
+              (data.source === 'llm' ? 'LLM' : '규칙 기반 폴백') + ') · ' +
+              Ui.esc(ch.title.slice(0, 40)) + '</div></div>');
             var ul2 = document.createElement('ul');
             ul2.style.cssText = 'padding-left:16px;margin:4px 0 0;white-space:pre-wrap';
             (data.sentences || []).forEach(function (s) {
@@ -3123,7 +3223,17 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
             });
             box2.appendChild(ul2);
             if (data.llm_note) Ui.toast(data.llm_note, 'warn');
-            row.parentNode.insertBefore(box2, row.nextSibling);
+            // 차트를 보면서 읽을 수 있도록 오른쪽 인사이트 패널 맨 위에 표시
+            // (2단 배치가 없는 좁은 화면 등에서는 기존처럼 차트 아래에 표시)
+            var sideEl = c.body.querySelector('.chart-split-side') ||
+              (_fsOpen && _fsOpen.side);
+            if (sideEl) {
+              sideEl.insertBefore(box2, sideEl.firstChild);
+              try { box2.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); }
+              catch (e) { /* 무시 */ }
+            } else {
+              row.parentNode.insertBefore(box2, row.nextSibling);
+            }
             row.__insEl = box2;
             if (data.saved_id) {
               Ui.toast('🗂️ 이 차트의 인사이트가 보관함에 저장되었습니다 ' +
@@ -3205,6 +3315,7 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
         clampGuides(c.body);     // 긴 해석 박스는 접어 정돈 (클릭=펼침)
         paginateCharts(c.body);  // 카드에 차트가 여러 개면 한 화면 한 차트 페이저
         splitChartInsight(c.body);  // 차트=가운데, 인사이트·AI 패널=오른쪽
+        attachFullscreenButtons(c.body);  // 차트별 ⛶ 전체화면
       }).catch(function (e) {
         c.body.innerHTML = Render.statusBlock({ status: 'error', message: e.message });
       });
@@ -3215,6 +3326,120 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
   }
 
   function plotlyDrill(drill, _cd, el) { Drill.open(scopedDrill(el, drill), '근거 특허'); }
+
+  /* ---------- ⛶ 차트 전체화면 (차트 왼쪽 · 인사이트 오른쪽) ----------
+     차트 요소와 카드의 인사이트 패널을 오버레이로 "이동"시킨 뒤 닫을 때
+     원위치로 되돌린다 — 복제가 아니므로 드릴다운·AI 생성 버튼이 그대로
+     동작하고, 전체화면에서는 높이 상한을 풀어 화면을 꽉 채운다. */
+  var _fsOpen = null;
+
+  function closeChartFullscreen() {
+    var fs = _fsOpen;
+    if (!fs) return;
+    _fsOpen = null;
+    document.removeEventListener('keydown', fs.onKey);
+    // 원위치 복원
+    if (fs.holder && fs.holderMark && fs.holderMark.parentNode) {
+      fs.holderMark.parentNode.insertBefore(fs.holder, fs.holderMark);
+      fs.holderMark.parentNode.removeChild(fs.holderMark);
+    }
+    if (fs.side && fs.sideMark && fs.sideMark.parentNode) {
+      fs.sideMark.parentNode.insertBefore(fs.side, fs.sideMark);
+      fs.sideMark.parentNode.removeChild(fs.sideMark);
+    }
+    fs.holder.style.height = fs.prevHeight || '';
+    fs.holder.style.minHeight = fs.prevMinHeight || '';
+    fs.holder.classList.remove('fs-holder');
+    if (fs.gd && fs.cappedHeight) {
+      try { Plotly.relayout(fs.gd, { height: fs.cappedHeight }); } catch (e) { /* 무시 */ }
+    } else if (fs.gd && fs.prevHeight) {
+      try {
+        Plotly.relayout(fs.gd, { height: parseFloat(fs.prevHeight) - 12 });
+      } catch (e) { /* 무시 */ }
+    }
+    if (fs.overlay && fs.overlay.parentNode) fs.overlay.parentNode.removeChild(fs.overlay);
+    document.body.classList.remove('fs-lock');
+    setTimeout(function () { Render.refit(fs.holder.parentNode || document); }, 30);
+  }
+
+  function openChartFullscreen(chartEl, cardBody, title) {
+    if (_fsOpen) closeChartFullscreen();
+    var holder = chartEl.closest('.chart-holder, .cy-holder, .echart-holder') || chartEl;
+    var side = cardBody ? cardBody.querySelector('.chart-split-side') : null;
+    var ov = Ui.el('<div class="chart-fs" role="dialog" aria-modal="true">' +
+      '<div class="chart-fs-head">' +
+      '<span class="chart-fs-title"></span>' +
+      '<span class="chart-fs-hint">Esc 또는 닫기 버튼으로 돌아갑니다</span>' +
+      '<button class="btn small chart-fs-close">✕ 닫기</button></div>' +
+      '<div class="chart-fs-body"><div class="chart-fs-main"></div>' +
+      '<div class="chart-fs-side"></div></div></div>');
+    ov.querySelector('.chart-fs-title').textContent = title || '차트 전체화면';
+    var main = ov.querySelector('.chart-fs-main');
+    var aside = ov.querySelector('.chart-fs-side');
+
+    var holderMark = document.createComment('ipls-fs-holder');
+    holder.parentNode.insertBefore(holderMark, holder);
+    var sideMark = null;
+    if (side) {
+      sideMark = document.createComment('ipls-fs-side');
+      side.parentNode.insertBefore(sideMark, side);
+    }
+    document.body.appendChild(ov);
+    document.body.classList.add('fs-lock');
+    main.appendChild(holder);
+    if (side) aside.appendChild(side);
+    else {
+      aside.appendChild(Ui.el('<div class="status-empty">이 차트에는 함께 볼 ' +
+        '인사이트 패널이 없습니다.</div>'));
+    }
+
+    var gd = holder.classList.contains('ipls-chart') ? holder
+      : holder.querySelector('.ipls-chart');
+    var fs = {
+      overlay: ov, holder: holder, holderMark: holderMark, side: side,
+      sideMark: sideMark, gd: gd,
+      prevHeight: holder.style.height, prevMinHeight: holder.style.minHeight,
+      cappedHeight: gd && gd.layout ? gd.layout.height : null
+    };
+    fs.onKey = function (ev) { if (ev.key === 'Escape') closeChartFullscreen(); };
+    document.addEventListener('keydown', fs.onKey);
+    ov.querySelector('.chart-fs-close').addEventListener('click', closeChartFullscreen);
+    _fsOpen = fs;
+
+    holder.classList.add('fs-holder');
+    holder.style.minHeight = '0';
+    setTimeout(function () {
+      var h = Math.max(320, main.clientHeight - 16);
+      holder.style.height = h + 'px';
+      if (gd) {
+        // 원래(캡 적용 전) 높이가 더 크면 그 높이까지 활용 — 항목이 많은
+        // 히트맵·버블 매트릭스는 전체화면에서 스크롤로 전부 볼 수 있게 한다
+        var want = Math.max(h, Math.min(holder.__iplsFullHeight || 0, 4000));
+        try { Plotly.relayout(gd, { height: want }); } catch (e) { /* 무시 */ }
+      }
+      Render.refit(main);
+    }, 40);
+  }
+
+  /* 각 차트 좌상단에 ⛶ 전체화면 버튼을 붙인다 (Plotly 모드바와 겹치지 않게 왼쪽). */
+  function attachFullscreenButtons(body) {
+    if (!body) return;
+    cardCharts(body).forEach(function (ch) {
+      var holder = ch.el.closest('.chart-holder, .cy-holder, .echart-holder') || ch.el;
+      // Plotly 재렌더(차트별 출원인 변경 등)는 컨테이너 자식을 지우므로
+      // 실제 DOM 에 남아 있는지로 판정해 다시 붙인다
+      if (holder.__iplsFsBtn && holder.__iplsFsBtn.parentNode === holder) return;
+      var btn = Ui.el('<button class="btn small chart-fs-btn" title="이 차트를 ' +
+        '전체화면으로 보기 (인사이트는 오른쪽에 함께 표시)">⛶ 전체화면</button>');
+      btn.addEventListener('click', function (ev) {
+        ev.stopPropagation();
+        openChartFullscreen(ch.el, body, ch.title);
+      });
+      holder.__iplsFsBtn = btn;
+      holder.style.position = 'relative';
+      holder.appendChild(btn);
+    });
+  }
 
   /* ---------- 차트 가운데 · 인사이트 오른쪽 2단 배치 ----------
      카드 본문에 차트가 있으면 차트·표·컨트롤은 왼쪽(넓은) 열에 두고,
@@ -3239,18 +3464,8 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
     kids.forEach(function (el) {
       (side.indexOf(el) >= 0 ? aside : main).appendChild(el);
     });
-    // 이동으로 폭이 바뀐 차트는 다시 그린다 (숨김 상태는 건너뜀 — Plotly 거부 방지)
-    setTimeout(function () {
-      try {
-        Array.prototype.forEach.call(main.querySelectorAll('.ipls-chart'), function (gd) {
-          if (window.Plotly && Plotly.Plots && Plotly.Plots.resize &&
-              gd.offsetParent !== null) {
-            var pr = Plotly.Plots.resize(gd);
-            if (pr && pr.catch) pr.catch(function () {});
-          }
-        });
-      } catch (e) { /* 무시 */ }
-    }, 30);
+    // 이동으로 폭이 바뀐 차트는 다시 맞춘다 (네트워크·히트맵 포함)
+    setTimeout(function () { Render.refit(main); }, 30);
   }
 
   /* ---------- 차트 페이저: 카드에 차트가 여러 개면 한 화면에 한 개씩 ----------
@@ -3352,32 +3567,12 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
       prev.disabled = showAll || idx === 0;
       next.disabled = showAll || idx === pages.length - 1;
       sel.disabled = showAll;
-      // 보이게 된 차트만 재배치 — 숨김 plot 에 resize 를 걸면 Plotly 가
-      // 거부(콘솔 오류)하므로 현재 페이지의 요소만 대상
+      // 보이게 된 차트만 재배치 — 숨김 상태에 resize 를 걸면 Plotly 가 거부하고,
+      // 숨김 컨테이너에서 만들어진 네트워크(cytoscape)는 0 크기로 그려져 빈 화면이
+      // 되므로 표시되는 순간 레이아웃을 다시 실행한다 (Render.refit).
       pages.forEach(function (pg, i) {
         if (!showAll && i !== idx) return;
-        pg.els.forEach(function (el) {
-          try {
-            var gds = el.classList.contains('ipls-chart') ? [el]
-              : Array.prototype.slice.call(
-                  el.querySelectorAll ? el.querySelectorAll('.ipls-chart') : []);
-            gds.forEach(function (gd) {
-              // 탭 전환 직후 등 숨김 상태면 건너뜀 — Plotly.resize 는 Promise 로
-              // 비동기 거부되어 try/catch 로 잡히지 않으므로 사전 차단 + catch
-              if (window.Plotly && Plotly.Plots && Plotly.Plots.resize &&
-                  gd.offsetParent !== null) {
-                var pr = Plotly.Plots.resize(gd);
-                if (pr && pr.catch) pr.catch(function () { });
-              }
-            });
-            var cys = el.classList.contains('cy-holder') ? [el]
-              : Array.prototype.slice.call(
-                  el.querySelectorAll ? el.querySelectorAll('.cy-holder') : []);
-            cys.forEach(function (ch) {
-              if (ch.__iplsCy && ch.__iplsCy.resize) ch.__iplsCy.resize();
-            });
-          } catch (e) { /* 재배치 실패는 표시에 치명적이지 않음 */ }
-        });
+        pg.els.forEach(function (el) { Render.refit(el); });
       });
     }
     prev.addEventListener('click', function () { if (idx > 0) { idx--; apply(); } });
@@ -6066,7 +6261,8 @@ IP Landscape Advanced Insight — Dataiku Standard Webapp "JavaScript" 탭.
       '<div style="color:#647b8d;font-size:11.5px;margin-top:6px">좌측 메뉴는 🚀 시작하기·🎯 목적 맞춤 분석으로 시작해 ① 전체 동향 → ② 기술 분석(어떤 기술) → ③ 기업 분석(어느 회사) → ④ 심층·품질 순서로 배열되어 있습니다 — 전체를 훑고, 기술을 고르고, 회사를 파고드는 흐름입니다.</div>');
     section('🖱️ 차트 공통 기능',
       '<ul style="padding-left:18px;line-height:1.9">' +
-      '<li><b>🖥️ 화면 배치</b>: 차트는 화면 가운데(넓은 왼쪽 열)에, 💡 인사이트와 🤖 AI 인사이트 버튼·결과는 <b>차트 오른쪽 패널</b>에 나란히 표시됩니다 — 차트를 보면서 바로 인사이트를 생성·확인할 수 있고, 오른쪽 패널은 스크롤해도 따라옵니다. 화면 폭이 좁으면(노트북·태블릿) 자동으로 위·아래 배치로 전환됩니다.</li>' +
+      '<li><b>🖥️ 화면 배치</b>: 차트는 화면 가운데(넓은 왼쪽 열)에, 💡 인사이트와 🤖 AI 인사이트 버튼·결과는 <b>차트 오른쪽 패널</b>에 나란히 표시됩니다 — 차트별 "🤖 이 차트 인사이트" 결과도 오른쪽 패널 맨 위에 쌓여 차트를 보면서 바로 읽을 수 있습니다. 오른쪽 패널은 스크롤해도 따라오고, 화면 폭이 좁으면(노트북·태블릿) 자동으로 위·아래 배치로 전환됩니다. 차트는 한 화면에 들어오도록 화면 높이에 맞춰 자동으로 크기가 조정됩니다.</li>' +
+      '<li><b>⛶ 전체화면</b>: 차트 왼쪽 위의 <b>⛶ 전체화면</b> 버튼을 누르면 그 차트만 화면 전체로 크게 보고, <b>오른쪽에는 인사이트와 AI 생성 버튼</b>이 함께 표시됩니다 (항목이 많아 원래 길었던 차트는 전체화면에서 원래 크기로 펼쳐집니다). Esc 키 또는 닫기 버튼으로 원래 화면으로 돌아옵니다.</li>' +
       '<li><b>드릴다운</b>: 차트의 점·막대·셀·노드를 클릭하면 근거 특허 목록이 열립니다. 표의 파란 텍스트도 클릭 가능합니다.</li>' +
       '<li><b>🚫 제외 출원인 (필터)</b>: 상세 필터의 "제외 출원인"에서 고른 이름은 출원인별 집계·순위·비교(출원인 순위, DNA, 엔트로피, 심층 시그널의 기업별 차트 등)에서 제외됩니다 — 대학·개인 등 불필요한 출원인이 순위에 끼어드는 노이즈를 제거합니다. 특허 문헌 자체는 유지되므로 전체 건수·기술 차트는 변하지 않고, 협력 네트워크 등 <b>공동출원 자체 분석에는 적용되지 않습니다</b>.</li>' +
       '<li><b>🧩 기술분류 정비</b>: Settings 의 "기술분류 정비 관리"에서 비슷한 표기(대소문자·공백·유사 문자열)를 묶을지 제안받아 병합하거나, 표준 분류명을 직접 입력해 수동으로 묶고, 의미 없는 분류를 노이즈로 지정해 "미분류"로 표기할 수 있습니다. 특수문자·순수 숫자·결측 표기는 자동으로 미분류 처리되며, 규칙은 모든 기술 차트에 즉시 반영됩니다.</li>' +
